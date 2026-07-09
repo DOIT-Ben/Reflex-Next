@@ -17,6 +17,9 @@
   --accent: #5361c8;
   --accent-soft: #eef0fc;
   --success: #4f8a68;
+  --danger: #dc2626;
+  --danger-soft: #fff8f8;
+  --danger-line: #f4caca;
 }
 
 * {
@@ -126,7 +129,8 @@ button:disabled {
 .default-view,
 .adjust-view,
 .generation-view,
-.complete-view {
+.complete-view,
+.error-view {
   position: relative;
   min-height: 480px;
   padding: 22px 28px 24px;
@@ -260,7 +264,8 @@ select {
 
 .adjust-view h1,
 .generation-view h1,
-.complete-view h1 {
+.complete-view h1,
+.error-view h1 {
   margin-top: 2px;
 }
 
@@ -417,6 +422,36 @@ pre {
   margin-top: 20px;
 }
 
+.error-panel {
+  display: grid;
+  gap: 12px;
+  min-height: 92px;
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-line);
+  border-radius: 12px;
+}
+
+.error-panel strong {
+  color: var(--danger);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.error-panel span {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 22px;
+}
+
 .recent {
   margin-top: 14px;
 }
@@ -512,5 +547,10 @@ pre {
 
   .result-actions {
     flex-wrap: wrap;
+  }
+
+  .error-actions .primary,
+  .error-actions .outline {
+    flex: 1 1 150px;
   }
 }

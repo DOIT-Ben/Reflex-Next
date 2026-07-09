@@ -11,7 +11,7 @@
 - `docs/CODEX-DELIVERY-PLAN.md` 已冻结分阶段交付路线；
 - `packages/reflex-core` 已具备稳定事件协议、请求规范化、取消语义、L0 场景规则、安全纯函数和无网络优化用例；
 - `packages/reflex-runtime` 已具备 NDJSON 命令循环、Mock Provider、取消和多请求隔离；
-- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗、`CoreBridge` 抽象、Tauri API 适配层、Figma Current 主状态机和窗口内快捷键契约；
+- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗、`CoreBridge` 抽象、Tauri API 适配层、Figma Current 主状态机、窗口内快捷键契约和错误恢复态；
 - Core 自动测试已覆盖导入边界、事件协议、优化用例、安全、场景和 sidecar；
 - Core 导入不引入 PyQt、PySide、sqlite3、pyperclip、torch、sentence-transformers 或 huggingface-hub。
 
@@ -46,6 +46,7 @@
 - 完成前端 `TauriRuntimeBridge`、`tauriHostApi` 适配和 `runtime_cancel` 触发；
 - 完成 Figma Current 单浮窗主体验、Host 状态机、调整草稿和剪贴板确认弹窗；
 - 完成窗口内 `Ctrl + Enter` / `Esc` 快捷键解析、取消回到可执行态、Empty/Copied 专门截图验证；
+- 完成 Error Recovery UI、provider 不可用 Mock 错误链、诊断 ID 复制和错误态截图验证；
 - 当前机器未安装 Rust 工具链，尚未运行 Rust Host 编译和测试；
 - Stage 1 已通过独立 QA 并合入 `main`。
 

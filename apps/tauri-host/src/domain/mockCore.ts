@@ -3,8 +3,30 @@ import type { CoreEvent, OptimizeRequestDraft } from "./reflexSession";
 export async function* streamMockOptimization(
   request: OptimizeRequestDraft
 ): AsyncGenerator<CoreEvent> {
-  yield { type: "status", data: { message: "正在分析场景" } };
+  yield { type: "status", data: { phase: "analyzing_scene", message: "正在分析场景" } };
   await delay(180);
+
+  if (shouldSimulateProviderUnavailable(request.text)) {
+    yield {
+      type: "request",
+      data: {
+        provider: request.provider ?? "MiniMax",
+        model: request.model ?? "abab6.5"
+      }
+    };
+    await delay(180);
+    yield {
+      type: "error",
+      data: {
+        code: "provider_unavailable",
+        message: "模型服务暂时不可用，请稍后重试。",
+        recoverable: true,
+        action: "retry",
+        diagnostic_id: "mock-provider-unavailable"
+      }
+    };
+    return;
+  }
 
   yield {
     type: "scene",
@@ -16,7 +38,14 @@ export async function* streamMockOptimization(
   };
   await delay(180);
 
-  yield { type: "status", data: { message: "正在连接模型服务" } };
+  yield { type: "status", data: { phase: "connecting_provider", message: "正在连接模型服务" } };
+  yield {
+    type: "request",
+    data: {
+      provider: request.provider ?? "MiniMax",
+      model: request.model ?? "abab6.5"
+    }
+  };
   await delay(220);
 
   const text = buildDemoResult(request);
@@ -57,6 +86,10 @@ function inferDemoScene(text: string): string {
   return "general";
 }
 
+function shouldSimulateProviderUnavailable(text: string): boolean {
+  return /服务不可用|provider unavailable/i.test(text);
+}
+
 function chunkText(text: string, size: number): string[] {
   const chunks: string[] = [];
   for (let index = 0; index < text.length; index += size) {
@@ -66,5 +99,5 @@ function chunkText(text: string, size: number): string[] {
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+  return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
 }

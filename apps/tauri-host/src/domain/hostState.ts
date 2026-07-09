@@ -52,6 +52,10 @@ export type HostState = {
   providerSummary: string;
   output: string;
   errorMessage: string | null;
+  errorCode: string | null;
+  errorRecoverable: boolean;
+  errorAction: string | null;
+  diagnosticId: string | null;
   canGenerate: boolean;
   copied: boolean;
 };
@@ -69,6 +73,10 @@ export function createHostState(): HostState {
     providerSummary: providerLabel(requestDraft),
     output: "",
     errorMessage: null,
+    errorCode: null,
+    errorRecoverable: false,
+    errorAction: null,
+    diagnosticId: null,
     canGenerate: false,
     copied: false
   };
@@ -82,7 +90,11 @@ export function updateInput(state: HostState, inputText: string): HostState {
     phase: trimmed ? "ready" : "empty",
     canGenerate: Boolean(trimmed),
     output: trimmed ? state.output : "",
-    errorMessage: null
+    errorMessage: null,
+    errorCode: null,
+    errorRecoverable: false,
+    errorAction: null,
+    diagnosticId: null
   };
 }
 
@@ -120,6 +132,10 @@ export function startGeneration(state: HostState, requestId: string): HostState 
     activeRequestId: requestId,
     output: "",
     errorMessage: null,
+    errorCode: null,
+    errorRecoverable: false,
+    errorAction: null,
+    diagnosticId: null,
     copied: false
   };
 }
@@ -131,7 +147,23 @@ export function cancelGeneration(state: HostState): HostState {
     activeRequestId: null,
     output: "",
     errorMessage: null,
+    errorCode: null,
+    errorRecoverable: false,
+    errorAction: null,
+    diagnosticId: null,
     copied: false
+  };
+}
+
+export function retryAfterError(state: HostState): HostState {
+  return {
+    ...state,
+    phase: state.inputText.trim() ? "ready" : "empty",
+    errorMessage: null,
+    errorCode: null,
+    errorRecoverable: false,
+    errorAction: null,
+    diagnosticId: null
   };
 }
 
@@ -182,7 +214,11 @@ function applyCoreEvent(state: HostState, event: CoreEvent): HostState {
     return {
       ...state,
       phase: phaseFromStatus(event.data.phase, state.phase),
-      errorMessage: null
+      errorMessage: null,
+      errorCode: null,
+      errorRecoverable: false,
+      errorAction: null,
+      diagnosticId: null
     };
   }
   if (event.type === "scene") {
@@ -220,7 +256,11 @@ function applyCoreEvent(state: HostState, event: CoreEvent): HostState {
       ...state,
       phase: "error",
       activeRequestId: null,
-      errorMessage: redactVisibleError(stringFrom(event.data.message, "模型服务暂时不可用"))
+      errorMessage: redactVisibleError(stringFrom(event.data.message, "模型服务暂时不可用")),
+      errorCode: stringOrNull(event.data.code),
+      errorRecoverable: event.data.recoverable === true,
+      errorAction: stringOrNull(event.data.action),
+      diagnosticId: stringOrNull(event.data.diagnostic_id)
     };
   }
   return state;
@@ -264,4 +304,8 @@ function redactVisibleError(message: string): string {
 
 function stringFrom(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }

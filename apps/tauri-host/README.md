@@ -32,6 +32,7 @@ Tauri Host 是 Reflex Next 的轻量桌面外壳。
 - Complete：结果、复制、替换剪贴板和重新生成
 - Copied：复制成功 Toast
 - Clipboard Confirm：首次替换剪贴板确认
+- Error：脱敏错误说明、重试、打开设置和复制诊断 ID
 
 本切片只消费 Runtime/Core 事件流，不承载 Prompt 构建、Provider 请求或场景路由业务。
 
@@ -46,7 +47,8 @@ Tauri Host 是 Reflex Next 的轻量桌面外壳。
 - `tauriHostApi` 动态加载 `@tauri-apps/api/core` 和 `@tauri-apps/api/event`，浏览器预览不可用时自动回退演示桥。
 - `parseNdjsonEvents` 可解析 Python sidecar 输出的 NDJSON 事件。
 - `parseNdjsonEnvelopes` 和 `selectEventsForRequest` 用于按 `request_id` 丢弃迟到事件。
-- `hostState` 负责 Host 状态机、调整草稿、事件映射和迟到事件过滤。
+- `hostState` 负责 Host 状态机、调整草稿、事件映射、错误恢复元数据和迟到事件过滤。
+- `mockCore` 支持成功链和 provider 不可用错误链，便于无网络验证 Error Recovery。
 - UI reducer 同时兼容 `done.data.final_text` 与 `done.data.text`。
 
 下一步需要补齐 Tauri/Rust 宿主命令：启动 Python sidecar、转发 `runtime_optimize/runtime_cancel`、读取 stdout 事件流并向前端发送 `reflex://core-event`。

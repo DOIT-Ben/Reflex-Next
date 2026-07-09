@@ -10,6 +10,7 @@
     createRequestDraft,
     openAdjust,
     resolveHostShortcut,
+    retryAfterError,
     startGeneration,
     updateInput,
     type HostState,
@@ -46,6 +47,7 @@
   let draft: RequestSettings = { ...state.requestDraft };
   let activeRun: AbortController | null = null;
   let toastVisible = false;
+  let toastText = "✓ 已复制到剪贴板";
 
   onMount(() => {
     void createTauriHostApi().then((host) => {
@@ -116,6 +118,7 @@
     if (!state.output) return;
     await navigator.clipboard?.writeText(state.output);
     state = { ...state, copied: true };
+    toastText = "✓ 已复制到剪贴板";
     toastVisible = true;
     window.setTimeout(() => {
       toastVisible = false;
@@ -131,6 +134,25 @@
   async function confirmReplaceClipboard() {
     await copyResult();
     state = { ...state, overlay: null };
+  }
+
+  async function copyDiagnosticId() {
+    if (!state.diagnosticId) return;
+    await navigator.clipboard?.writeText(state.diagnosticId);
+    toastText = "✓ 诊断 ID 已复制";
+    toastVisible = true;
+    window.setTimeout(() => {
+      toastVisible = false;
+    }, 1400);
+  }
+
+  function retryRun() {
+    state = retryAfterError(state);
+    void runOptimization();
+  }
+
+  function openSettings() {
+    void hostApi?.invoke("open_settings").catch(() => undefined);
   }
 
   function closeOverlay() {
@@ -282,7 +304,32 @@
         </div>
         <p class="recent">最近一次结果</p>
         {#if toastVisible}
-          <div class="toast">✓ 已复制到剪贴板</div>
+          <div class="toast">{toastText}</div>
+        {/if}
+      </section>
+    {:else if state.phase === "error"}
+      <section class="error-view" aria-label="生成失败">
+        <div class="badge">当前方案</div>
+        <h1>生成失败</h1>
+        <p class="subline">{summary}</p>
+        <article class="error-panel">
+          <strong>{state.errorMessage ?? "模型服务暂时不可用"}</strong>
+          <span>
+            {state.errorRecoverable ? "可以稍后重试，或检查当前 Provider 设置。" : "请检查文本或设置后再试。"}
+          </span>
+        </article>
+        <div class="error-actions">
+          {#if state.errorRecoverable}
+            <button class="primary small" on:click={retryRun}>重试</button>
+          {/if}
+          <button class="outline" on:click={openSettings}>打开设置</button>
+          <button class="outline" disabled={!state.diagnosticId} on:click={copyDiagnosticId}>复制诊断 ID</button>
+        </div>
+        <p class="recent">
+          {state.errorCode ? `错误代码：${state.errorCode}` : "错误信息已脱敏"}
+        </p>
+        {#if toastVisible}
+          <div class="toast">{toastText}</div>
         {/if}
       </section>
     {:else}

@@ -8,6 +8,7 @@ import {
   createRequestDraft,
   openAdjust,
   resolveHostShortcut,
+  retryAfterError,
   startGeneration,
   updateInput
 } from "./hostState";
@@ -132,6 +133,38 @@ describe("host state", () => {
     expect(resolveHostShortcut(withOverlay, { key: "Escape" })).toBe("close_overlay");
     expect(resolveHostShortcut(adjusting, { key: "Escape" })).toBe("leave_adjust");
     expect(resolveHostShortcut(ready, { key: "Escape" })).toBe("hide_window");
+  });
+
+  it("stores recoverable error details without leaking secrets", () => {
+    const generating = startGeneration(updateInput(createHostState(), "写一封邮件"), "req-1");
+
+    const failed = applyCoreEnvelope(generating, {
+      version: 1,
+      request_id: "req-1",
+      event: {
+        type: "error",
+        data: {
+          code: "provider_unavailable",
+          message: "模型服务暂时不可用 Bearer sk-1234567890abcdef",
+          recoverable: true,
+          action: "retry",
+          diagnostic_id: "diag-42"
+        }
+      }
+    });
+
+    expect(failed.phase).toBe("error");
+    expect(failed.activeRequestId).toBeNull();
+    expect(failed.errorMessage).toBe("模型服务暂时不可用 Bearer [已隐藏]");
+    expect(failed.errorCode).toBe("provider_unavailable");
+    expect(failed.errorRecoverable).toBe(true);
+    expect(failed.errorAction).toBe("retry");
+    expect(failed.diagnosticId).toBe("diag-42");
+
+    const ready = retryAfterError(failed);
+    expect(ready.phase).toBe("ready");
+    expect(ready.errorMessage).toBeNull();
+    expect(ready.canGenerate).toBe(true);
   });
 
   it("creates an OptimizeRequest draft from host state", () => {
