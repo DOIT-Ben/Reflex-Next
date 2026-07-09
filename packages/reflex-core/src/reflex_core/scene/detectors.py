@@ -34,7 +34,7 @@ class RuleSceneDetector:
         if any(marker in lowered for marker in _CODE_MARKERS):
             return SceneDetectionResult("code", 0.88, "rule", "code_marker")
         if _EMAIL_RE.search(normalized) or any(
-            marker in normalized for marker in ("主题：", "收件人：", "发件人：")
+            marker in normalized for marker in ("邮件", "求职信", "商务信函", "主题：", "收件人：", "发件人：")
         ):
             return SceneDetectionResult("email", 0.84, "rule", "email_structure")
         if any(marker in lowered for marker in _TRANSLATION_MARKERS):

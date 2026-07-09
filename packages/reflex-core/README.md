@@ -21,3 +21,28 @@
 - 历史库
 - 本地语义模型下载
 
+## 当前能力
+
+当前已建立第一阶段最小闭环：
+
+- `OptimizeUseCase` 可在无 UI 环境中执行一次优化。
+- 内置 L0 规则场景识别，支持邮件、代码、翻译、报告等常用场景，未命中时回退 `general`。
+- 统一输出 `status`、`scene`、`request`、`chunk`、`done`、`metric`、`error` 事件。
+- 输入为空时返回用户可见错误事件。
+- Provider 类错误进入事件前会脱敏。
+- `python -m reflex_core.sidecar` 可输出宿主可消费的 NDJSON 事件流。
+
+## 本地验证
+
+```powershell
+cd packages\reflex-core
+uv run --python 3.12 --with pytest pytest
+```
+
+Sidecar 示例：
+
+```powershell
+cd packages\reflex-core
+$env:PYTHONPATH = "src"
+python -m reflex_core.sidecar --request-json '{"text":"请写一封商务邮件确认会议时间。"}'
+```

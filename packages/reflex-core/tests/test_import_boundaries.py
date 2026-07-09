@@ -13,10 +13,13 @@ forbidden = [
     if name == 'sqlite3'
     or name.startswith('PyQt')
     or name.startswith('PySide')
+    or name == 'pyperclip'
     or name == 'torch'
     or name.startswith('torch.')
     or name == 'sentence_transformers'
     or name.startswith('sentence_transformers.')
+    or name == 'huggingface_hub'
+    or name.startswith('huggingface_hub.')
 ]
 print(json.dumps(forbidden))
 """
