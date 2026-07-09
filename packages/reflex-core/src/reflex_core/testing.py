@@ -25,7 +25,12 @@ class FakeSceneDetector:
 
 
 class FakeTemplateResolver:
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.error = error
+
     def render(self, request: OptimizeRequest, scene: SceneDetectionResult) -> dict[str, Any]:
+        if self.error is not None:
+            raise self.error
         return {"text": request.text, "scene": scene.scene}
 
 
