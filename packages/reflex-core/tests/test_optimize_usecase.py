@@ -2,12 +2,12 @@ from reflex_core import CancellationToken, EventType, OptimizeRequest, OptimizeU
 from reflex_core.testing import FakeProvider, FakeSceneDetector, FakeTemplateResolver
 
 
-def make_use_case(provider=None, detector=None):
+def make_use_case(provider=None, detector=None, resolver=None):
     return OptimizeUseCase(
         scene_detector=detector or FakeSceneDetector(
             SceneDetectionResult("report_writing", 0.9, "fake")
         ),
-        template_resolver=FakeTemplateResolver(),
+        template_resolver=resolver or FakeTemplateResolver(),
         provider=provider or FakeProvider(("hello ", "world")),
     )
 
@@ -92,3 +92,12 @@ def test_empty_provider_result_is_recoverable_error():
     events = list(make_use_case(provider=FakeProvider(())).optimize(OptimizeRequest("input")))
     assert events[-1].event.type is EventType.ERROR
     assert events[-1].event.data["code"] == "empty_result"
+
+
+def test_template_error_happens_before_provider_request_and_is_safe():
+    resolver = FakeTemplateResolver(error=RuntimeError("api_key=template-secret"))
+    events = list(make_use_case(resolver=resolver).optimize(OptimizeRequest("input")))
+
+    assert event_types(events) == [EventType.STATUS, EventType.SCENE, EventType.ERROR]
+    assert events[-1].event.data["code"] == "template_render_error"
+    assert "template-secret" not in events[-1].event.data["message"]
