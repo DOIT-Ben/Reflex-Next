@@ -22,18 +22,18 @@ Tauri Host 是 Reflex Next 的轻量桌面外壳。
 
 ## 当前前端切片
 
-当前已建立 Svelte + Vite 前端原型，用于承接 Tauri 小浮窗体验。
+当前已建立 Svelte + Vite 前端原型，用于承接 Tauri 小浮窗体验。主界面已对齐 Figma `Current` 的 760×540 单浮窗结构。
 
 覆盖画面：
 
-- 快捷浮窗输入区
-- 模式、风格、场景、识别策略控制
-- Core 事件流渲染区
-- 完成态结果操作
-- 最小设置入口
-- 插件开关入口
+- Default：输入内容、配置摘要和主操作
+- Adjust：模式、风格、场景、模型调整
+- Generating：流式生成和取消
+- Complete：结果、复制、替换剪贴板和重新生成
+- Copied：复制成功 Toast
+- Clipboard Confirm：首次替换剪贴板确认
 
-本切片只模拟 Core 事件流，不承载 Prompt 构建、Provider 请求或场景路由业务。
+本切片只消费 Runtime/Core 事件流，不承载 Prompt 构建、Provider 请求或场景路由业务。
 
 ## Core Bridge
 
@@ -46,6 +46,7 @@ Tauri Host 是 Reflex Next 的轻量桌面外壳。
 - `tauriHostApi` 动态加载 `@tauri-apps/api/core` 和 `@tauri-apps/api/event`，浏览器预览不可用时自动回退演示桥。
 - `parseNdjsonEvents` 可解析 Python sidecar 输出的 NDJSON 事件。
 - `parseNdjsonEnvelopes` 和 `selectEventsForRequest` 用于按 `request_id` 丢弃迟到事件。
+- `hostState` 负责 Host 状态机、调整草稿、事件映射和迟到事件过滤。
 - UI reducer 同时兼容 `done.data.final_text` 与 `done.data.text`。
 
 下一步需要补齐 Tauri/Rust 宿主命令：启动 Python sidecar、转发 `runtime_optimize/runtime_cancel`、读取 stdout 事件流并向前端发送 `reflex://core-event`。

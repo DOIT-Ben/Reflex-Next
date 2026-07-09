@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-项目已完成架构契约冻结、`reflex-core` Stage 1、Runtime Mock Sidecar、Tauri Host 前端原型和前端 Tauri API Bridge，当前进入 Rust Host 真实桥接准备阶段。
+项目已完成架构契约冻结、`reflex-core` Stage 1、Runtime Mock Sidecar、前端 Tauri API Bridge，以及 Figma Current 主浮窗重构，当前进入 Rust Host 真实桥接准备阶段。
 
 当前主线基线：
 
@@ -11,7 +11,7 @@
 - `docs/CODEX-DELIVERY-PLAN.md` 已冻结分阶段交付路线；
 - `packages/reflex-core` 已具备稳定事件协议、请求规范化、取消语义、L0 场景规则、安全纯函数和无网络优化用例；
 - `packages/reflex-runtime` 已具备 NDJSON 命令循环、Mock Provider、取消和多请求隔离；
-- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗前端原型、`CoreBridge` 抽象和 Tauri API 适配层；
+- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗、`CoreBridge` 抽象、Tauri API 适配层和 Figma Current 主状态机；
 - Core 自动测试已覆盖导入边界、事件协议、优化用例、安全、场景和 sidecar；
 - Core 导入不引入 PyQt、PySide、sqlite3、pyperclip、torch、sentence-transformers 或 huggingface-hub。
 
@@ -27,6 +27,7 @@
 - `docs/dev-records/2026-07-10-core-and-host-bridge.md`
 - `docs/dev-records/2026-07-10-runtime-sidecar.md`
 - `docs/dev-records/2026-07-10-tauri-api-bridge.md`
+- `docs/dev-records/2026-07-10-figma-current-host-state.md`
 - `workbench/known-pitfalls.md`
 
 ## 最近变更摘要
@@ -43,6 +44,7 @@
 - 完成 Runtime Mock Provider、进程级测试、多请求隔离和取消测试；
 - 完成前端 Runtime 命令信封创建与 `request_id` 过滤；
 - 完成前端 `TauriRuntimeBridge`、`tauriHostApi` 适配和 `runtime_cancel` 触发；
+- 完成 Figma Current 单浮窗主体验、Host 状态机、调整草稿和剪贴板确认弹窗；
 - 当前机器未安装 Rust 工具链，尚未运行 Rust Host 编译和测试；
 - Stage 1 已通过独立 QA 并合入 `main`。
 
