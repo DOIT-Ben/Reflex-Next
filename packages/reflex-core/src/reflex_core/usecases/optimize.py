@@ -94,10 +94,23 @@ class OptimizeUseCase:
 
         provider_id = request.provider or getattr(self._provider, "id", None)
         model = request.model or getattr(self._provider, "model", None)
-        yield self._envelope(current_request_id, request_event(provider_id, model))
 
         try:
             rendered = self._template_resolver.render(request, detected_scene)
+        except Exception:
+            yield self._envelope(
+                current_request_id,
+                error_event(
+                    "template_render_error",
+                    "Unable to prepare model request.",
+                    recoverable=False,
+                ),
+            )
+            return
+
+        yield self._envelope(current_request_id, request_event(provider_id, model))
+
+        try:
             chunks: list[str] = []
             for raw_chunk in self._provider.stream(rendered, request, token):
                 if token.is_cancelled:
