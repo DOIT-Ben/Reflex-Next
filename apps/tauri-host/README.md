@@ -42,10 +42,13 @@ Tauri Host 是 Reflex Next 的轻量桌面外壳。
 当前实现：
 
 - `DemoCoreBridge` 用于前端原型交互。
+- `TauriRuntimeBridge` 用于 Tauri WebView 内通过 `invoke/listen` 消费 Runtime 事件。
+- `tauriHostApi` 动态加载 `@tauri-apps/api/core` 和 `@tauri-apps/api/event`，浏览器预览不可用时自动回退演示桥。
 - `parseNdjsonEvents` 可解析 Python sidecar 输出的 NDJSON 事件。
+- `parseNdjsonEnvelopes` 和 `selectEventsForRequest` 用于按 `request_id` 丢弃迟到事件。
 - UI reducer 同时兼容 `done.data.final_text` 与 `done.data.text`。
 
-下一步需要由 Tauri/Rust 宿主实现真实 bridge：启动 Python sidecar、传入 `OptimizeRequest`、读取 stdout 事件流，并把取消信号转为进程或请求级取消。
+下一步需要补齐 Tauri/Rust 宿主命令：启动 Python sidecar、转发 `runtime_optimize/runtime_cancel`、读取 stdout 事件流并向前端发送 `reflex://core-event`。
 
 ## 本地运行
 

@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-项目已完成架构契约冻结、`reflex-core` Stage 1、Runtime Mock Sidecar 和 Tauri Host 前端原型，当前进入 Tauri/Rust 真实桥接准备阶段。
+项目已完成架构契约冻结、`reflex-core` Stage 1、Runtime Mock Sidecar、Tauri Host 前端原型和前端 Tauri API Bridge，当前进入 Rust Host 真实桥接准备阶段。
 
 当前主线基线：
 
@@ -11,7 +11,7 @@
 - `docs/CODEX-DELIVERY-PLAN.md` 已冻结分阶段交付路线；
 - `packages/reflex-core` 已具备稳定事件协议、请求规范化、取消语义、L0 场景规则、安全纯函数和无网络优化用例；
 - `packages/reflex-runtime` 已具备 NDJSON 命令循环、Mock Provider、取消和多请求隔离；
-- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗前端原型和 `CoreBridge` 抽象；
+- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗前端原型、`CoreBridge` 抽象和 Tauri API 适配层；
 - Core 自动测试已覆盖导入边界、事件协议、优化用例、安全、场景和 sidecar；
 - Core 导入不引入 PyQt、PySide、sqlite3、pyperclip、torch、sentence-transformers 或 huggingface-hub。
 
@@ -26,6 +26,7 @@
 - `docs/CODEX-DELIVERY-PLAN.md`
 - `docs/dev-records/2026-07-10-core-and-host-bridge.md`
 - `docs/dev-records/2026-07-10-runtime-sidecar.md`
+- `docs/dev-records/2026-07-10-tauri-api-bridge.md`
 - `workbench/known-pitfalls.md`
 
 ## 最近变更摘要
@@ -41,6 +42,8 @@
 - 完成 `packages/reflex-runtime` 的 `optimize/cancel/ping/shutdown` 命令循环；
 - 完成 Runtime Mock Provider、进程级测试、多请求隔离和取消测试；
 - 完成前端 Runtime 命令信封创建与 `request_id` 过滤；
+- 完成前端 `TauriRuntimeBridge`、`tauriHostApi` 适配和 `runtime_cancel` 触发；
+- 当前机器未安装 Rust 工具链，尚未运行 Rust Host 编译和测试；
 - Stage 1 已通过独立 QA 并合入 `main`。
 
 ## 下一阶段
@@ -49,9 +52,9 @@
 
 必须完成：
 
-1. 初始化 `apps\tauri-host\src-tauri`；
-2. 用 Rust 启动和复用 `python -m reflex_runtime.cli`；
-3. 将前端 `DemoCoreBridge` 替换为真实 Tauri bridge；
+1. 安装或切换到可用 Rust 工具链；
+2. 初始化 `apps\tauri-host\src-tauri`；
+3. 用 Rust 启动和复用 `python -m reflex_runtime.cli`；
 4. 保留 Mock Provider，不接真实 MiniMax；
 5. 补 Rust 侧进程启动、事件读取、取消和退出测试；
 6. 做 Figma Current 多状态截图证据。

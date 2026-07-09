@@ -20,6 +20,18 @@ export type CoreEventEnvelope = {
   event: CoreEvent;
 };
 
+export type TauriEvent<T> = {
+  payload: T;
+};
+
+export type TauriHostApi = {
+  invoke<T = unknown>(command: string, args?: Record<string, unknown>): Promise<T>;
+  listen<T>(
+    eventName: string,
+    handler: (event: TauriEvent<T>) => void
+  ): Promise<() => void>;
+};
+
 export interface CoreBridge {
   optimize(
     request: OptimizeRequestDraft,
@@ -39,8 +51,62 @@ export class DemoCoreBridge implements CoreBridge {
   }
 }
 
-export function createDefaultCoreBridge(): CoreBridge {
-  return new DemoCoreBridge();
+export class TauriRuntimeBridge implements CoreBridge {
+  private readonly requestIdFactory: () => string;
+
+  constructor(
+    private readonly host: TauriHostApi,
+    options: { requestIdFactory?: () => string } = {}
+  ) {
+    this.requestIdFactory = options.requestIdFactory ?? createRequestId;
+  }
+
+  async *optimize(
+    request: OptimizeRequestDraft,
+    options: OptimizeRunOptions = {}
+  ): AsyncGenerator<CoreEvent> {
+    const requestId = this.requestIdFactory();
+    const queue = createAsyncEventQueue();
+    const unlisten = await this.host.listen<CoreEventEnvelope>(
+      "reflex://core-event",
+      ({ payload }) => {
+        if (payload.request_id !== requestId) return;
+        queue.push(payload.event);
+        if (payload.event.type === "done" || payload.event.type === "error") {
+          queue.close();
+        }
+      }
+    );
+    const abort = () => {
+      void this.host
+        .invoke("runtime_cancel", { command: createCancelCommand(requestId) })
+        .finally(() => queue.close());
+    };
+
+    try {
+      if (options.signal?.aborted) {
+        abort();
+        return;
+      }
+      options.signal?.addEventListener("abort", abort, { once: true });
+      await this.host.invoke("runtime_optimize", {
+        command: createOptimizeCommand(requestId, request)
+      });
+
+      while (true) {
+        const item = await queue.next();
+        if (item.done) return;
+        yield item.value;
+      }
+    } finally {
+      options.signal?.removeEventListener("abort", abort);
+      unlisten();
+    }
+  }
+}
+
+export function createDefaultCoreBridge(host?: TauriHostApi | null): CoreBridge {
+  return host ? new TauriRuntimeBridge(host) : new DemoCoreBridge();
 }
 
 export function parseNdjsonEvents(payload: string): CoreEvent[] {
@@ -127,4 +193,43 @@ function isCoreEventType(value: unknown): value is CoreEvent["type"] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function createRequestId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function createAsyncEventQueue() {
+  const values: CoreEvent[] = [];
+  const waiters: Array<(item: IteratorResult<CoreEvent>) => void> = [];
+  let closed = false;
+
+  return {
+    push(value: CoreEvent) {
+      if (closed) return;
+      const waiter = waiters.shift();
+      if (waiter) {
+        waiter({ done: false, value });
+        return;
+      }
+      values.push(value);
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      while (waiters.length > 0) {
+        waiters.shift()?.({ done: true, value: undefined });
+      }
+    },
+    next(): Promise<IteratorResult<CoreEvent>> {
+      const value = values.shift();
+      if (value) {
+        return Promise.resolve({ done: false, value });
+      }
+      if (closed) {
+        return Promise.resolve({ done: true, value: undefined });
+      }
+      return new Promise((resolve) => waiters.push(resolve));
+    }
+  };
 }

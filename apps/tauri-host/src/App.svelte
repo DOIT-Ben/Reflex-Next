@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import {
     applyCoreEvent,
     createDraftRequest,
@@ -9,10 +10,11 @@
     type ScenePolicy
   } from "./domain/reflexSession";
   import { createDefaultCoreBridge } from "./domain/coreBridge";
+  import { createTauriHostApi } from "./domain/tauriHostApi";
 
   type ViewName = "compose" | "settings" | "plugins";
 
-  const coreBridge = createDefaultCoreBridge();
+  let coreBridge = createDefaultCoreBridge();
   const scenes = listPrototypeScenes();
   const styles: Array<{ id: OptimizeStyle; label: string }> = [
     { id: "concise", label: "简洁" },
@@ -66,6 +68,14 @@
       permissions: ["model_cache"]
     }
   ];
+
+  onMount(() => {
+    void createTauriHostApi().then((host) => {
+      if (host) {
+        coreBridge = createDefaultCoreBridge(host);
+      }
+    });
+  });
 
   $: canRun = inputText.trim().length > 0 && !isRunning;
   $: activeSceneLabel =
