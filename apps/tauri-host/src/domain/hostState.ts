@@ -16,7 +16,7 @@ export type HostPhase =
   | "cancelled"
   | "error";
 
-export type Overlay = null | "clipboard_confirm";
+export type Overlay = null | "clipboard_confirm" | "settings";
 
 export type HostShortcutAction =
   | "none"
@@ -41,12 +41,24 @@ export type RequestSettings = {
   model: string | null;
 };
 
+export type ClipboardPolicy = "startup" | "manual" | "auto_replace";
+
+export type HostSettingsDraft = {
+  default_provider: string | null;
+  default_model: string | null;
+  default_mode: OptimizeMode;
+  default_style: OptimizeStyle;
+  scene_policy: ScenePolicy;
+  clipboard_policy: ClipboardPolicy;
+};
+
 export type HostState = {
   phase: HostPhase;
   overlay: Overlay;
   inputText: string;
   requestDraft: RequestSettings;
   adjustDraft: RequestSettings | null;
+  settingsDraft: HostSettingsDraft | null;
   activeRequestId: string | null;
   detectedScene: string | null;
   providerSummary: string;
@@ -68,6 +80,7 @@ export function createHostState(): HostState {
     inputText: "",
     requestDraft,
     adjustDraft: null,
+    settingsDraft: null,
     activeRequestId: null,
     detectedScene: null,
     providerSummary: providerLabel(requestDraft),
@@ -121,6 +134,43 @@ export function applyAdjustDraft(state: HostState, draft: RequestSettings): Host
     requestDraft: { ...draft },
     adjustDraft: null,
     providerSummary: providerLabel(draft)
+  };
+}
+
+export function openSettings(state: HostState): HostState {
+  return {
+    ...state,
+    overlay: "settings",
+    settingsDraft: createSettingsDraft(state)
+  };
+}
+
+export function cancelSettings(state: HostState): HostState {
+  return {
+    ...state,
+    overlay: null,
+    settingsDraft: null
+  };
+}
+
+export function applySettingsDraft(
+  state: HostState,
+  draft: HostSettingsDraft
+): HostState {
+  const nextRequestDraft = {
+    ...state.requestDraft,
+    mode: draft.default_mode,
+    style: draft.default_style,
+    scene_policy: draft.scene_policy,
+    provider: draft.default_provider,
+    model: draft.default_model
+  };
+  return {
+    ...state,
+    overlay: null,
+    settingsDraft: null,
+    requestDraft: nextRequestDraft,
+    providerSummary: providerLabel(nextRequestDraft)
   };
 }
 
@@ -278,6 +328,17 @@ function createDefaultSettings(): RequestSettings {
     scene_policy: "auto",
     provider: "MiniMax",
     model: "abab6.5"
+  };
+}
+
+function createSettingsDraft(state: HostState): HostSettingsDraft {
+  return {
+    default_provider: state.requestDraft.provider,
+    default_model: state.requestDraft.model,
+    default_mode: state.requestDraft.mode,
+    default_style: state.requestDraft.style,
+    scene_policy: state.requestDraft.scene_policy,
+    clipboard_policy: "manual"
   };
 }
 

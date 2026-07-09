@@ -4,16 +4,20 @@
   import {
     applyAdjustDraft,
     applyCoreEnvelope,
+    applySettingsDraft,
     cancelGeneration,
     cancelAdjust,
+    cancelSettings,
     createHostState,
     createRequestDraft,
     openAdjust,
+    openSettings,
     resolveHostShortcut,
     retryAfterError,
     startGeneration,
     updateInput,
     type HostState,
+    type HostSettingsDraft,
     type RequestSettings
   } from "./domain/hostState";
   import { createTauriHostApi } from "./domain/tauriHostApi";
@@ -37,6 +41,16 @@
     { id: "code_review", label: "代码审查" },
     { id: "doc_translation", label: "文档翻译" }
   ];
+  const clipboardPolicies: Array<{ id: HostSettingsDraft["clipboard_policy"]; label: string }> = [
+    { id: "startup", label: "启动时读取" },
+    { id: "manual", label: "仅手动读取" },
+    { id: "auto_replace", label: "生成后自动替换" }
+  ];
+  const scenePolicies: Array<{ id: ScenePolicy; label: string }> = [
+    { id: "auto", label: "自动" },
+    { id: "ask", label: "每次询问" },
+    { id: "manual", label: "手动固定" }
+  ];
 
   let coreBridge = createDefaultCoreBridge();
   let hostApi: TauriHostApi | null = null;
@@ -45,6 +59,14 @@
     "帮我把这段产品说明改得更清晰，并保留专业语气。"
   );
   let draft: RequestSettings = { ...state.requestDraft };
+  let settingsDraft: HostSettingsDraft = {
+    default_provider: state.requestDraft.provider,
+    default_model: state.requestDraft.model,
+    default_mode: state.requestDraft.mode,
+    default_style: state.requestDraft.style,
+    scene_policy: state.requestDraft.scene_policy,
+    clipboard_policy: "manual"
+  };
   let activeRun: AbortController | null = null;
   let toastVisible = false;
   let toastText = "✓ 已复制到剪贴板";
@@ -83,6 +105,33 @@
   function cancelAdjustView() {
     state = cancelAdjust(state);
     draft = { ...state.requestDraft };
+  }
+
+  function beginSettings() {
+    state = openSettings(state);
+    settingsDraft = { ...(state.settingsDraft ?? settingsDraft) };
+  }
+
+  function saveSettings() {
+    state = applySettingsDraft(state, settingsDraft);
+    draft = { ...state.requestDraft };
+    toastText = "✓ 设置已保存";
+    toastVisible = true;
+    window.setTimeout(() => {
+      toastVisible = false;
+    }, 1400);
+  }
+
+  function cancelSettingsView() {
+    state = cancelSettings(state);
+    settingsDraft = {
+      default_provider: state.requestDraft.provider,
+      default_model: state.requestDraft.model,
+      default_mode: state.requestDraft.mode,
+      default_style: state.requestDraft.style,
+      scene_policy: state.requestDraft.scene_policy,
+      clipboard_policy: settingsDraft.clipboard_policy
+    };
   }
 
   async function runOptimization() {
@@ -151,11 +200,15 @@
     void runOptimization();
   }
 
-  function openSettings() {
-    void hostApi?.invoke("open_settings").catch(() => undefined);
+  function openSettingsView() {
+    beginSettings();
   }
 
   function closeOverlay() {
+    if (state.overlay === "settings") {
+      cancelSettingsView();
+      return;
+    }
     state = { ...state, overlay: null };
   }
 
@@ -214,7 +267,7 @@
         <strong>Reflex</strong>
       </div>
       <div class="provider-pill"><span></span>{state.requestDraft.provider ?? "未配置"}</div>
-      <button class="icon-button" aria-label="设置">⚙</button>
+      <button class="icon-button" aria-label="设置" on:click={beginSettings}>⚙</button>
     </header>
 
     {#if state.phase === "adjusting"}
@@ -322,7 +375,7 @@
           {#if state.errorRecoverable}
             <button class="primary small" on:click={retryRun}>重试</button>
           {/if}
-          <button class="outline" on:click={openSettings}>打开设置</button>
+          <button class="outline" on:click={openSettingsView}>打开设置</button>
           <button class="outline" disabled={!state.diagnosticId} on:click={copyDiagnosticId}>复制诊断 ID</button>
         </div>
         <p class="recent">
@@ -374,6 +427,118 @@
           <div>
             <button class="outline" on:click={closeOverlay}>取消</button>
             <button class="primary small" on:click={confirmReplaceClipboard}>确认替换</button>
+          </div>
+        </section>
+      </div>
+    {/if}
+
+    {#if state.overlay === "settings"}
+      <div class="settings-layer" role="presentation">
+        <section class="settings-dialog" aria-label="设置">
+          <div class="settings-head">
+            <div>
+              <h2>设置</h2>
+              <p>最小但完整：模型、默认行为、剪贴板与安全。</p>
+            </div>
+            <button class="icon-button" aria-label="关闭设置" on:click={cancelSettingsView}>×</button>
+          </div>
+
+          <div class="settings-layout">
+            <nav class="settings-nav" aria-label="设置分类">
+              <button class="active">模型与 Provider</button>
+              <button>默认行为</button>
+              <button>剪贴板</button>
+              <button>安全与隐私</button>
+              <button>插件</button>
+            </nav>
+
+            <div class="settings-content">
+              <h3>模型与 Provider</h3>
+              <div class="settings-grid">
+                <label>
+                  <span>默认 Provider</span>
+                  <select bind:value={settingsDraft.default_provider}>
+                    <option value="MiniMax">MiniMax</option>
+                    <option value="">未配置</option>
+                  </select>
+                </label>
+                <label>
+                  <span>默认模型</span>
+                  <select bind:value={settingsDraft.default_model}>
+                    <option value="abab6.5">abab6.5</option>
+                    <option value="abab6.5-chat">abab6.5-chat</option>
+                    <option value="local-preview">本地预览 / 预览流</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="api-key-row">
+                <label>
+                  <span>API Key</span>
+                  <input value="••••••••••••••••••••" readonly aria-label="API Key 掩码" />
+                </label>
+                <button class="outline" type="button">显示</button>
+                <button class="outline" type="button">测试连接</button>
+              </div>
+              <p class="settings-note">API Key 仅保存在系统安全存储中，不写入日志。</p>
+
+              <div class="settings-grid">
+                <div>
+                  <span class="field-label">默认模式</span>
+                  <div class="segments compact">
+                    {#each modes as item}
+                      <button class:active={settingsDraft.default_mode === item.id} on:click={() => (settingsDraft = { ...settingsDraft, default_mode: item.id })}>
+                        {item.label}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+                <div>
+                  <span class="field-label">默认风格</span>
+                  <div class="segments compact">
+                    {#each styles as item}
+                      <button class:active={settingsDraft.default_style === item.id} on:click={() => (settingsDraft = { ...settingsDraft, default_style: item.id })}>
+                        {item.label}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-block">
+                <span class="field-label">场景识别策略</span>
+                <div class="segments compact">
+                  {#each scenePolicies as item}
+                    <button class:active={settingsDraft.scene_policy === item.id} on:click={() => (settingsDraft = { ...settingsDraft, scene_policy: item.id })}>
+                      {item.label}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+
+              <div class="settings-block">
+                <span class="field-label">剪贴板策略</span>
+                <div class="segments compact">
+                  {#each clipboardPolicies as item}
+                    <button class:active={settingsDraft.clipboard_policy === item.id} on:click={() => (settingsDraft = { ...settingsDraft, clipboard_policy: item.id })}>
+                      {item.label}
+                    </button>
+                  {/each}
+                </div>
+                <p class="warning-note">自动替换属于高影响操作，首次启用需二次确认。</p>
+              </div>
+
+              <div class="privacy-row">
+                <span>✓ 日志不记录完整输入</span>
+                <span>✓ Provider 错误脱敏</span>
+                <span>✓ 历史保存前脱敏</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-footer">
+            <button class="outline" on:click={cancelSettingsView}>取消</button>
+            <button class="primary small" on:click={saveSettings}>保存设置</button>
           </div>
         </section>
       </div>

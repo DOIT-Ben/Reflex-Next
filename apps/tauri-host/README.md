@@ -33,6 +33,7 @@ Tauri Host 是 Reflex Next 的轻量桌面外壳。
 - Copied：复制成功 Toast
 - Clipboard Confirm：首次替换剪贴板确认
 - Error：脱敏错误说明、重试、打开设置和复制诊断 ID
+- Settings：默认 Provider、模型、模式、风格、场景策略、剪贴板策略和安全说明
 
 本切片只消费 Runtime/Core 事件流，不承载 Prompt 构建、Provider 请求或场景路由业务。
 
@@ -48,6 +49,7 @@ Tauri Host 是 Reflex Next 的轻量桌面外壳。
 - `parseNdjsonEvents` 可解析 Python sidecar 输出的 NDJSON 事件。
 - `parseNdjsonEnvelopes` 和 `selectEventsForRequest` 用于按 `request_id` 丢弃迟到事件。
 - `hostState` 负责 Host 状态机、调整草稿、事件映射、错误恢复元数据和迟到事件过滤。
+- `settingsDraft` 只保存可展示默认值；真实 API Key 不进入前端状态。
 - `mockCore` 支持成功链和 provider 不可用错误链，便于无网络验证 Error Recovery。
 - UI reducer 同时兼容 `done.data.final_text` 与 `done.data.text`。
 

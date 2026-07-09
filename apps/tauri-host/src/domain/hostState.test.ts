@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   applyCoreEnvelope,
   applyAdjustDraft,
+  applySettingsDraft,
   cancelGeneration,
   cancelAdjust,
+  cancelSettings,
   createHostState,
   createRequestDraft,
   openAdjust,
+  openSettings,
   resolveHostShortcut,
   retryAfterError,
   startGeneration,
@@ -126,11 +129,13 @@ describe("host state", () => {
     const generating = startGeneration(ready, "req-1");
     const adjusting = openAdjust(ready);
     const withOverlay = { ...ready, overlay: "clipboard_confirm" as const };
+    const settings = openSettings(ready);
 
     expect(resolveHostShortcut(ready, { key: "Enter", ctrlKey: true })).toBe("generate");
     expect(resolveHostShortcut(generating, { key: "Enter", ctrlKey: true })).toBe("none");
     expect(resolveHostShortcut(generating, { key: "Escape" })).toBe("cancel_generation");
     expect(resolveHostShortcut(withOverlay, { key: "Escape" })).toBe("close_overlay");
+    expect(resolveHostShortcut(settings, { key: "Escape" })).toBe("close_overlay");
     expect(resolveHostShortcut(adjusting, { key: "Escape" })).toBe("leave_adjust");
     expect(resolveHostShortcut(ready, { key: "Escape" })).toBe("hide_window");
   });
@@ -165,6 +170,50 @@ describe("host state", () => {
     expect(ready.phase).toBe("ready");
     expect(ready.errorMessage).toBeNull();
     expect(ready.canGenerate).toBe(true);
+  });
+
+  it("opens settings as an overlay and saves defaults without storing secrets", () => {
+    const ready = updateInput(createHostState(), "写一封邮件");
+    const settings = openSettings(ready);
+
+    expect(settings.phase).toBe("ready");
+    expect(settings.overlay).toBe("settings");
+    expect(settings.settingsDraft).toMatchObject({
+      default_provider: "MiniMax",
+      default_model: "abab6.5",
+      default_mode: "content",
+      default_style: "balanced",
+      scene_policy: "auto",
+      clipboard_policy: "manual"
+    });
+    expect(settings).not.toHaveProperty("apiKey");
+
+    const saved = applySettingsDraft(settings, {
+      default_provider: "MiniMax",
+      default_model: "abab6.5-chat",
+      default_mode: "prompt",
+      default_style: "creative",
+      scene_policy: "ask",
+      clipboard_policy: "manual"
+    });
+
+    expect(saved.overlay).toBeNull();
+    expect(saved.requestDraft).toMatchObject({
+      mode: "prompt",
+      style: "creative",
+      scene_policy: "ask",
+      provider: "MiniMax",
+      model: "abab6.5-chat"
+    });
+    expect(createRequestDraft(saved)).toMatchObject({
+      mode: "prompt",
+      style: "creative",
+      scene_policy: "ask",
+      provider: "MiniMax",
+      model: "abab6.5-chat"
+    });
+
+    expect(cancelSettings(settings).overlay).toBeNull();
   });
 
   it("creates an OptimizeRequest draft from host state", () => {
