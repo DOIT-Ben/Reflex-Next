@@ -18,6 +18,20 @@ export type HostPhase =
 
 export type Overlay = null | "clipboard_confirm";
 
+export type HostShortcutAction =
+  | "none"
+  | "generate"
+  | "cancel_generation"
+  | "close_overlay"
+  | "leave_adjust"
+  | "hide_window";
+
+export type HostShortcutInput = {
+  key: string;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+};
+
 export type RequestSettings = {
   mode: OptimizeMode;
   style: OptimizeStyle;
@@ -102,7 +116,19 @@ export function startGeneration(state: HostState, requestId: string): HostState 
   return {
     ...state,
     phase: "analyzing_scene",
+    overlay: null,
     activeRequestId: requestId,
+    output: "",
+    errorMessage: null,
+    copied: false
+  };
+}
+
+export function cancelGeneration(state: HostState): HostState {
+  return {
+    ...state,
+    phase: state.inputText.trim() ? "ready" : "empty",
+    activeRequestId: null,
     output: "",
     errorMessage: null,
     copied: false
@@ -126,6 +152,29 @@ export function createRequestDraft(state: HostState): OptimizeRequestDraft {
       surface: "quick-panel"
     }
   };
+}
+
+export function resolveHostShortcut(
+  state: HostState,
+  input: HostShortcutInput
+): HostShortcutAction {
+  const isPrimaryEnter = input.key === "Enter" && (input.ctrlKey || input.metaKey);
+  if (isPrimaryEnter) {
+    return state.canGenerate && !isActiveGeneration(state.phase) ? "generate" : "none";
+  }
+  if (input.key !== "Escape") {
+    return "none";
+  }
+  if (state.overlay) {
+    return "close_overlay";
+  }
+  if (state.phase === "adjusting") {
+    return "leave_adjust";
+  }
+  if (isActiveGeneration(state.phase)) {
+    return "cancel_generation";
+  }
+  return "hide_window";
 }
 
 function applyCoreEvent(state: HostState, event: CoreEvent): HostState {
@@ -175,6 +224,10 @@ function applyCoreEvent(state: HostState, event: CoreEvent): HostState {
     };
   }
   return state;
+}
+
+function isActiveGeneration(phase: HostPhase): boolean {
+  return phase === "analyzing_scene" || phase === "connecting_provider" || phase === "streaming";
 }
 
 function createDefaultSettings(): RequestSettings {

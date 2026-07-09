@@ -4,16 +4,19 @@
   import {
     applyAdjustDraft,
     applyCoreEnvelope,
+    cancelGeneration,
     cancelAdjust,
     createHostState,
     createRequestDraft,
     openAdjust,
+    resolveHostShortcut,
     startGeneration,
     updateInput,
     type HostState,
     type RequestSettings
   } from "./domain/hostState";
   import { createTauriHostApi } from "./domain/tauriHostApi";
+  import type { TauriHostApi } from "./domain/coreBridge";
   import type { OptimizeMode, OptimizeStyle, ScenePolicy } from "./domain/reflexSession";
 
   const modes: Array<{ id: OptimizeMode; label: string }> = [
@@ -35,6 +38,7 @@
   ];
 
   let coreBridge = createDefaultCoreBridge();
+  let hostApi: TauriHostApi | null = null;
   let state: HostState = updateInput(
     createHostState(),
     "帮我把这段产品说明改得更清晰，并保留专业语气。"
@@ -46,6 +50,7 @@
   onMount(() => {
     void createTauriHostApi().then((host) => {
       if (host) {
+        hostApi = host;
         coreBridge = createDefaultCoreBridge(host);
       }
     });
@@ -104,7 +109,7 @@
   function cancelRun() {
     activeRun?.abort();
     activeRun = null;
-    state = { ...state, phase: "cancelled", activeRequestId: null };
+    state = cancelGeneration(state);
   }
 
   async function copyResult() {
@@ -132,6 +137,34 @@
     state = { ...state, overlay: null };
   }
 
+  function handleKeydown(event: KeyboardEvent) {
+    const action = resolveHostShortcut(state, {
+      key: event.key,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey
+    });
+    if (action === "none") return;
+
+    event.preventDefault();
+    if (action === "generate") {
+      void runOptimization();
+      return;
+    }
+    if (action === "cancel_generation") {
+      cancelRun();
+      return;
+    }
+    if (action === "close_overlay") {
+      closeOverlay();
+      return;
+    }
+    if (action === "leave_adjust") {
+      cancelAdjustView();
+      return;
+    }
+    void hostApi?.invoke("hide_main_window").catch(() => undefined);
+  }
+
   function isGenerating(phase: HostState["phase"]): boolean {
     return phase === "analyzing_scene" || phase === "connecting_provider" || phase === "streaming";
   }
@@ -148,6 +181,8 @@
     return scenes.find((item) => item.id === value)?.label ?? "自动识别";
   }
 </script>
+
+<svelte:window on:keydown={handleKeydown} />
 
 <main class="app-shell" data-phase={state.phase}>
   <section class="window" aria-label="Reflex quick window">

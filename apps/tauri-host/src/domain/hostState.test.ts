@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   applyCoreEnvelope,
   applyAdjustDraft,
+  cancelGeneration,
   cancelAdjust,
   createHostState,
   createRequestDraft,
   openAdjust,
+  resolveHostShortcut,
   startGeneration,
   updateInput
 } from "./hostState";
@@ -104,6 +106,32 @@ describe("host state", () => {
 
     expect(next).toBe(state);
     expect(next.output).toBe("");
+  });
+
+  it("returns to the executable input state after cancelling a generation", () => {
+    const ready = updateInput(createHostState(), "写一封邮件");
+    const generating = startGeneration(ready, "req-1");
+
+    const cancelled = cancelGeneration(generating);
+
+    expect(cancelled.phase).toBe("ready");
+    expect(cancelled.activeRequestId).toBeNull();
+    expect(cancelled.canGenerate).toBe(true);
+    expect(cancelled.output).toBe("");
+  });
+
+  it("resolves window shortcuts without starting duplicate generations", () => {
+    const ready = updateInput(createHostState(), "写一封邮件");
+    const generating = startGeneration(ready, "req-1");
+    const adjusting = openAdjust(ready);
+    const withOverlay = { ...ready, overlay: "clipboard_confirm" as const };
+
+    expect(resolveHostShortcut(ready, { key: "Enter", ctrlKey: true })).toBe("generate");
+    expect(resolveHostShortcut(generating, { key: "Enter", ctrlKey: true })).toBe("none");
+    expect(resolveHostShortcut(generating, { key: "Escape" })).toBe("cancel_generation");
+    expect(resolveHostShortcut(withOverlay, { key: "Escape" })).toBe("close_overlay");
+    expect(resolveHostShortcut(adjusting, { key: "Escape" })).toBe("leave_adjust");
+    expect(resolveHostShortcut(ready, { key: "Escape" })).toBe("hide_window");
   });
 
   it("creates an OptimizeRequest draft from host state", () => {
