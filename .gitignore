@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Node / Tauri
+node_modules/
+src-tauri/target/
+apps/tauri-host/dist/
+
+# Local runtime data
+.env
+.env.*
+data/
+logs/
+cache/
+secrets/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+

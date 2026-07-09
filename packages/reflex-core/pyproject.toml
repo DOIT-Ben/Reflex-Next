@@ -1,0 +1,15 @@
+[project]
+name = "reflex-core"
+version = "0.1.0"
+description = "Headless Reflex prompt optimization core."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

@@ -1,0 +1,12 @@
+[project]
+name = "reflex-provider-minimax"
+version = "0.1.0"
+description = "MiniMax provider plugin for Reflex Next."
+requires-python = ">=3.11"
+dependencies = [
+  "reflex-core",
+]
+
+[project.entry-points."reflex.providers"]
+minimax = "reflex_provider_minimax:plugin"
+
