@@ -11,8 +11,8 @@ Python Core + Tauri 轻量桌面宿主 + Python 插件系统
 ## 当前定位
 
 - 旧版参考实现：`D:\Desktop\AI\11_Products\prod\Reflex`
-- 新版项目位置：`D:\Desktop\AI\11_Products\prod\Reflex-Next`
-- 当前阶段：架构初始化与迁移基线
+- 新版项目位置：`D:\Desktop\AI\11_Products\lab\Reflex-Next`
+- 当前阶段：实验室重做项目，架构初始化与迁移基线
 - 首个产品切片：Tauri 小浮窗调用 Python Core，通过 MiniMax Provider 流式优化提示词
 
 ## 核心原则
@@ -84,4 +84,3 @@ workbench/
 2. 完成 `plugins\provider-minimax` 的 Provider 协议实现。
 3. 完成 `template-packs\builtin` 的模板包迁移。
 4. 再启动 `apps\tauri-host`。
-
