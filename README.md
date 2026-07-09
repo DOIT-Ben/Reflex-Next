@@ -12,8 +12,8 @@ Python Core + Tauri 轻量桌面宿主 + Python 插件系统
 
 - 旧版参考实现：`D:\Desktop\AI\11_Products\prod\Reflex`
 - 新版项目位置：`D:\Desktop\AI\11_Products\lab\Reflex-Next`
-- 当前阶段：实验室重做项目，架构初始化与迁移基线
-- 首个产品切片：Tauri 小浮窗调用 Python Core，通过 MiniMax Provider 流式优化提示词
+- 当前阶段：实验室重做项目，已完成 Core 事件骨架、Runtime Mock Sidecar 和 Tauri Host 前端原型
+- 首个产品切片：Tauri 小浮窗通过 Runtime Sidecar 调用 Python Core，先用 Mock Provider 跑通流式事件
 
 ## 核心原则
 
@@ -30,6 +30,7 @@ apps/
   tauri-host/                 # Tauri 小宿主规划入口
 packages/
   reflex-core/                # 无 UI Python 核心
+  reflex-runtime/             # Python Sidecar 与 Mock Runtime
 plugins/
   provider-minimax/           # MiniMax Provider 插件
   semantic-detector/          # 语义场景识别插件
@@ -76,11 +77,11 @@ workbench/
 
 ## 开发入口
 
-当前只是初始化骨架，尚未进入可运行实现阶段。
+当前已有可验证的 Core、Runtime 和前端原型切片。
 
 后续建议顺序：
 
-1. 完成 `packages\reflex-core` 的事件流与优化用例。
-2. 完成 `plugins\provider-minimax` 的 Provider 协议实现。
+1. 初始化 `apps\tauri-host\src-tauri`，实现 Rust Host 到 Runtime Sidecar 的真实桥接。
+2. 将前端 `DemoCoreBridge` 替换为 Tauri bridge。
 3. 完成 `template-packs\builtin` 的模板包迁移。
-4. 再启动 `apps\tauri-host`。
+4. 在获得明确批准后，再接入 `plugins\provider-minimax` 的真实网络调用。

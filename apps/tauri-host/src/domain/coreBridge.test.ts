@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { parseNdjsonEvents } from "./coreBridge";
+import {
+  createCancelCommand,
+  createOptimizeCommand,
+  parseNdjsonEnvelopes,
+  parseNdjsonEvents,
+  selectEventsForRequest
+} from "./coreBridge";
+import { createDraftRequest } from "./reflexSession";
 
 describe("core bridge", () => {
   it("parses sidecar NDJSON into CoreEvent objects", () => {
@@ -26,5 +33,39 @@ describe("core bridge", () => {
     expect(() => parseNdjsonEvents('{"type":"debug","data":{}}')).toThrow(
       "Unknown Core event type"
     );
+  });
+
+  it("creates Runtime optimize and cancel command envelopes", () => {
+    const request = {
+      ...createDraftRequest("写一封邮件"),
+      style: "concise" as const,
+      provider: "minimax"
+    };
+
+    expect(createOptimizeCommand("req-1", request)).toEqual({
+      version: 1,
+      request_id: "req-1",
+      type: "optimize",
+      payload: request
+    });
+    expect(createCancelCommand("req-1")).toEqual({
+      version: 1,
+      request_id: "req-1",
+      type: "cancel",
+      payload: {}
+    });
+  });
+
+  it("filters stale Runtime events by active request id", () => {
+    const envelopes = parseNdjsonEnvelopes(
+      [
+        '{"version":1,"request_id":"old","event":{"type":"chunk","data":{"text":"旧结果"}}}',
+        '{"version":1,"request_id":"active","event":{"type":"chunk","data":{"text":"新结果"}}}'
+      ].join("\n")
+    );
+
+    expect(selectEventsForRequest(envelopes, "active")).toEqual([
+      { type: "chunk", data: { text: "新结果" } }
+    ]);
   });
 });

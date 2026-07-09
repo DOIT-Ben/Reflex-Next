@@ -5,6 +5,21 @@ export type OptimizeRunOptions = {
   signal?: AbortSignal;
 };
 
+export type RuntimeCommandType = "optimize" | "cancel" | "ping" | "shutdown";
+
+export type RuntimeCommandEnvelope = {
+  version: 1;
+  request_id: string;
+  type: RuntimeCommandType;
+  payload: Record<string, unknown>;
+};
+
+export type CoreEventEnvelope = {
+  version: 1;
+  request_id: string;
+  event: CoreEvent;
+};
+
 export interface CoreBridge {
   optimize(
     request: OptimizeRequestDraft,
@@ -29,27 +44,72 @@ export function createDefaultCoreBridge(): CoreBridge {
 }
 
 export function parseNdjsonEvents(payload: string): CoreEvent[] {
+  return parseNdjsonEnvelopes(payload).map((envelope) => envelope.event);
+}
+
+export function parseNdjsonEnvelopes(payload: string): CoreEventEnvelope[] {
   return payload
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => toCoreEvent(JSON.parse(line)));
+    .map((line) => toCoreEventEnvelope(JSON.parse(line)));
+}
+
+export function selectEventsForRequest(
+  envelopes: CoreEventEnvelope[],
+  activeRequestId: string
+): CoreEvent[] {
+  return envelopes
+    .filter((envelope) => envelope.request_id === activeRequestId)
+    .map((envelope) => envelope.event);
+}
+
+export function createOptimizeCommand(
+  requestId: string,
+  request: OptimizeRequestDraft
+): RuntimeCommandEnvelope {
+  return createCommand("optimize", requestId, request as unknown as Record<string, unknown>);
+}
+
+export function createCancelCommand(requestId: string): RuntimeCommandEnvelope {
+  return createCommand("cancel", requestId, {});
+}
+
+function createCommand(
+  type: RuntimeCommandType,
+  requestId: string,
+  payload: Record<string, unknown>
+): RuntimeCommandEnvelope {
+  return {
+    version: 1,
+    request_id: requestId,
+    type,
+    payload
+  };
+}
+
+function toCoreEventEnvelope(value: unknown): CoreEventEnvelope {
+  if (!isRecord(value)) {
+    throw new Error("Core event must be an object");
+  }
+  const eventCandidate = isRecord(value.event) ? value.event : value;
+  return {
+    version: value.version === 1 ? 1 : 1,
+    request_id: typeof value.request_id === "string" ? value.request_id : "",
+    event: toCoreEvent(eventCandidate)
+  };
 }
 
 function toCoreEvent(value: unknown): CoreEvent {
   if (!isRecord(value)) {
     throw new Error("Core event must be an object");
   }
-  const eventCandidate = isRecord(value.event) ? value.event : value;
-  if (!isRecord(eventCandidate)) {
-    throw new Error("Core event must be an object");
-  }
-  if (!isCoreEventType(eventCandidate.type)) {
+  if (!isCoreEventType(value.type)) {
     throw new Error("Unknown Core event type");
   }
   return {
-    type: eventCandidate.type,
-    data: isRecord(eventCandidate.data) ? eventCandidate.data : {}
+    type: value.type,
+    data: isRecord(value.data) ? value.data : {}
   };
 }
 
