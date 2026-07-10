@@ -6,6 +6,10 @@
   "platforms": ["windows"],
   "permissions": [
     "allow-read-clipboard-text",
+    "allow-write-clipboard-text",
+    "allow-show-main-window",
+    "allow-hide-main-window",
+    "allow-desktop-status",
     "allow-runtime-available",
     "allow-runtime-optimize",
     "allow-runtime-cancel",

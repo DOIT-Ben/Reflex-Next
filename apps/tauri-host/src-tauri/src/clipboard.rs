@@ -2,6 +2,7 @@ use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 pub const CLIPBOARD_READ_ERROR_MESSAGE: &str = "无法读取剪贴板，请确认权限后重试。";
+pub const CLIPBOARD_WRITE_ERROR_MESSAGE: &str = "无法写入剪贴板，请重试。";
 
 pub trait ClipboardTextReader {
     type Error;
@@ -19,6 +20,22 @@ impl ClipboardTextReader for AppHandle {
     }
 }
 
+pub trait ClipboardTextWriter {
+    type Error;
+
+    fn write_text(&self, text: &str) -> Result<(), Self::Error>;
+}
+
+impl ClipboardTextWriter for AppHandle {
+    type Error = String;
+
+    fn write_text(&self, text: &str) -> Result<(), Self::Error> {
+        self.clipboard()
+            .write_text(text)
+            .map_err(|error| error.to_string())
+    }
+}
+
 pub fn sanitize_clipboard_read_error<E>(_error: E) -> &'static str {
     CLIPBOARD_READ_ERROR_MESSAGE
 }
@@ -30,12 +47,26 @@ where
     reader.read_text().map_err(sanitize_clipboard_read_error)
 }
 
+pub fn write_clipboard_text<W>(writer: &W, text: &str) -> Result<(), &'static str>
+where
+    W: ClipboardTextWriter,
+{
+    if text.trim().is_empty() {
+        return Err(CLIPBOARD_WRITE_ERROR_MESSAGE);
+    }
+    writer
+        .write_text(text)
+        .map_err(|_| CLIPBOARD_WRITE_ERROR_MESSAGE)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        read_clipboard_text, sanitize_clipboard_read_error, ClipboardTextReader,
-        CLIPBOARD_READ_ERROR_MESSAGE,
+        read_clipboard_text, sanitize_clipboard_read_error, write_clipboard_text,
+        ClipboardTextReader, ClipboardTextWriter, CLIPBOARD_READ_ERROR_MESSAGE,
+        CLIPBOARD_WRITE_ERROR_MESSAGE,
     };
+    use std::sync::Mutex;
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct FakeError(&'static str);
@@ -53,6 +84,32 @@ mod tests {
                 Self::Text(text) => Ok((*text).to_string()),
                 Self::Error(error) => Err(error.clone()),
             }
+        }
+    }
+
+    struct FakeWriter {
+        written: Mutex<Vec<String>>,
+        fail: bool,
+    }
+
+    impl FakeWriter {
+        fn new(fail: bool) -> Self {
+            Self {
+                written: Mutex::new(Vec::new()),
+                fail,
+            }
+        }
+    }
+
+    impl ClipboardTextWriter for FakeWriter {
+        type Error = FakeError;
+
+        fn write_text(&self, text: &str) -> Result<(), Self::Error> {
+            if self.fail {
+                return Err(FakeError("raw clipboard backend failure"));
+            }
+            self.written.lock().unwrap().push(text.to_string());
+            Ok(())
         }
     }
 
@@ -76,5 +133,40 @@ mod tests {
             sanitize_clipboard_read_error(FakeError("raw backend failure")),
             CLIPBOARD_READ_ERROR_MESSAGE
         );
+    }
+
+    #[test]
+    fn writes_non_empty_clipboard_text_without_transforming_it() {
+        let writer = FakeWriter::new(false);
+
+        let result = write_clipboard_text(&writer, "  保留首尾空格  ");
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(
+            writer.written.lock().unwrap().as_slice(),
+            ["  保留首尾空格  "]
+        );
+    }
+
+    #[test]
+    fn rejects_blank_clipboard_writes_before_calling_the_backend() {
+        let writer = FakeWriter::new(false);
+
+        let result = write_clipboard_text(&writer, "   ");
+
+        assert_eq!(result, Err(CLIPBOARD_WRITE_ERROR_MESSAGE));
+        assert!(writer.written.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn sanitizes_clipboard_write_backend_failures() {
+        let writer = FakeWriter::new(true);
+
+        let result = write_clipboard_text(&writer, "private result");
+
+        assert_eq!(result, Err(CLIPBOARD_WRITE_ERROR_MESSAGE));
+        assert!(!result
+            .unwrap_err()
+            .contains("raw clipboard backend failure"));
     }
 }

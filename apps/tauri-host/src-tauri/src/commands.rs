@@ -4,6 +4,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::config_store::{AppConfig, ConfigStore};
+use crate::desktop::{DesktopState, DesktopStatus};
 use crate::runtime_commands::{
     configure_provider_command, validate_command, CommandKind, ValidatedCommand,
 };
@@ -48,8 +49,28 @@ pub async fn read_clipboard_text(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub async fn write_clipboard_text(app: AppHandle, text: String) -> Result<(), String> {
+    crate::clipboard::write_clipboard_text(&app, &text).map_err(str::to_string)
+}
+
+#[tauri::command]
+pub async fn show_main_window(app: AppHandle) -> Result<(), String> {
+    crate::window::show_main_window(&app).map_err(str::to_string)
+}
+
+#[tauri::command]
+pub async fn hide_main_window(app: AppHandle) -> Result<(), String> {
+    crate::window::hide_main_window(&app).map_err(str::to_string)
+}
+
+#[tauri::command]
 pub async fn runtime_available() -> bool {
     runtime_available_value()
+}
+
+#[tauri::command]
+pub async fn desktop_status(state: State<'_, DesktopState>) -> Result<DesktopStatus, String> {
+    Ok(state.status())
 }
 
 #[tauri::command]
@@ -59,10 +80,19 @@ pub async fn load_app_config(state: State<'_, ConfigStore>) -> Result<AppConfig,
 
 #[tauri::command]
 pub async fn save_app_config(
+    app: AppHandle,
     state: State<'_, ConfigStore>,
+    desktop_state: State<'_, DesktopState>,
     config: AppConfig,
 ) -> Result<AppConfig, String> {
-    state.save(&config).map_err(|error| error.to_string())
+    let normalized = AppConfig::from_value(
+        serde_json::to_value(config).map_err(|_| "配置存储暂不可用。".to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let requested_hotkey = normalized.hotkey.clone();
+    crate::desktop::replace_hotkey_and_persist(&app, &desktop_state, &requested_hotkey, || {
+        state.save(&normalized).map_err(|error| error.to_string())
+    })
 }
 
 #[tauri::command]

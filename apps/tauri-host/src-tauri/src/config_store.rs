@@ -24,6 +24,7 @@ pub struct AppConfig {
     pub style: String,
     pub scene_policy: String,
     pub clipboard_policy: String,
+    pub clipboard_replace_confirmed: bool,
     pub history_enabled: bool,
     pub privacy_mode: bool,
     pub language: String,
@@ -45,6 +46,7 @@ impl Default for AppConfig {
             style: "balanced".to_string(),
             scene_policy: "auto".to_string(),
             clipboard_policy: "manual".to_string(),
+            clipboard_replace_confirmed: false,
             history_enabled: true,
             privacy_mode: false,
             language: "zh-CN".to_string(),
@@ -112,6 +114,10 @@ impl AppConfig {
             style,
             scene_policy,
             clipboard_policy,
+            clipboard_replace_confirmed: object
+                .get("clipboard_replace_confirmed")
+                .and_then(Value::as_bool)
+                .unwrap_or(defaults.clipboard_replace_confirmed),
             history_enabled: object
                 .get("history_enabled")
                 .and_then(Value::as_bool)
@@ -311,6 +317,7 @@ fn known_config_fields() -> HashSet<&'static str> {
         "style",
         "scene_policy",
         "clipboard_policy",
+        "clipboard_replace_confirmed",
         "history_enabled",
         "privacy_mode",
         "language",
@@ -437,6 +444,7 @@ mod tests {
         assert_eq!(config.style, "balanced");
         assert_eq!(config.scene_policy, "auto");
         assert_eq!(config.clipboard_policy, "manual");
+        assert!(!config.clipboard_replace_confirmed);
         assert!(config.history_enabled);
         assert!(!config.privacy_mode);
         assert_eq!(config.language, "zh-CN");
@@ -496,6 +504,17 @@ mod tests {
         assert_eq!(config.mode, "prompt");
         assert_eq!(config.style, "creative");
         assert!(!config.extensions.contains_key("default_provider"));
+    }
+
+    #[test]
+    fn preserves_a_valid_clipboard_replacement_confirmation() {
+        let config = AppConfig::from_value(json!({
+            "version": 1,
+            "clipboard_replace_confirmed": true
+        }))
+        .unwrap();
+
+        assert!(config.clipboard_replace_confirmed);
     }
 
     #[test]

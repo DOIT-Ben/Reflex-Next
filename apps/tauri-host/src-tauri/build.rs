@@ -2,6 +2,10 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "read_clipboard_text",
+            "write_clipboard_text",
+            "show_main_window",
+            "hide_main_window",
+            "desktop_status",
             "runtime_available",
             "runtime_optimize",
             "runtime_cancel",
