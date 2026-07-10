@@ -3,6 +3,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::config_store::{AppConfig, ConfigStore};
 use crate::runtime_commands::{validate_command, CommandKind};
 use crate::sidecar::{EventEmitter, RuntimeController};
 
@@ -46,6 +47,19 @@ pub async fn read_clipboard_text(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub async fn runtime_available() -> bool {
     runtime_available_value()
+}
+
+#[tauri::command]
+pub async fn load_app_config(state: State<'_, ConfigStore>) -> Result<AppConfig, String> {
+    state.load().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn save_app_config(
+    state: State<'_, ConfigStore>,
+    config: AppConfig,
+) -> Result<AppConfig, String> {
+    state.save(&config).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
