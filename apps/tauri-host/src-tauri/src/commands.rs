@@ -5,6 +5,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::config_store::{AppConfig, ConfigStore};
 use crate::runtime_commands::{validate_command, CommandKind};
+use crate::secret_store::{SecretStatus, SecretStore};
 use crate::sidecar::{EventEmitter, RuntimeController};
 
 const CORE_EVENT_NAME: &str = "reflex://core-event";
@@ -60,6 +61,37 @@ pub async fn save_app_config(
     config: AppConfig,
 ) -> Result<AppConfig, String> {
     state.save(&config).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn provider_secret_status(
+    state: State<'_, SecretStore>,
+    provider_id: String,
+) -> Result<SecretStatus, String> {
+    state
+        .status(&provider_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn save_provider_secret(
+    state: State<'_, SecretStore>,
+    provider_id: String,
+    secret: String,
+) -> Result<SecretStatus, String> {
+    state
+        .save(&provider_id, &secret)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_provider_secret(
+    state: State<'_, SecretStore>,
+    provider_id: String,
+) -> Result<SecretStatus, String> {
+    state
+        .delete(&provider_id)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
