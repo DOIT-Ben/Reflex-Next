@@ -3,7 +3,13 @@ import type {
   CoreEventEnvelope,
   OptimizeRequestDraft
 } from "./coreBridge";
-import type { OptimizeMode, OptimizeStyle, ScenePolicy } from "./reflexSession";
+import {
+  listSceneOptions,
+  type OptimizeMode,
+  type OptimizeStyle,
+  type OutputLanguage,
+  type ScenePolicy
+} from "./reflexSession";
 import type { AppConfig } from "./settingsApi";
 
 export type HostPhase =
@@ -155,6 +161,20 @@ export function applyAdjustDraft(state: HostState, draft: RequestSettings): Host
   };
 }
 
+export function applySceneSelection(
+  draft: RequestSettings,
+  sceneId: string
+): RequestSettings {
+  const normalized = sceneId.trim();
+  if (!normalized) {
+    return { ...draft, scene: null, scene_policy: "auto" };
+  }
+  const knownScene = listSceneOptions().some((scene) => scene.id === normalized);
+  return knownScene
+    ? { ...draft, scene: normalized, scene_policy: "manual" }
+    : { ...draft, scene: null, scene_policy: "auto" };
+}
+
 export function openSettings(state: HostState): HostState {
   return {
     ...state,
@@ -271,14 +291,18 @@ export function applyCoreEnvelope(state: HostState, envelope: CoreEventEnvelope)
   return applyCoreEvent(state, envelope.event);
 }
 
-export function createRequestDraft(state: HostState): OptimizeRequestDraft {
+export function createRequestDraft(
+  state: HostState,
+  language: OutputLanguage = "zh-CN"
+): OptimizeRequestDraft {
   return {
     text: state.inputText.trim(),
     ...state.requestDraft,
     stream: true,
     metadata: {
       host: "tauri",
-      surface: "quick-panel"
+      surface: "quick-panel",
+      language: language === "en-US" ? "en-US" : "zh-CN"
     }
   };
 }
@@ -371,7 +395,7 @@ function createDefaultSettings(): RequestSettings {
   return {
     mode: "content",
     style: "balanced",
-    scene: "report_writing",
+    scene: null,
     scene_policy: "auto",
     provider: "minimax",
     model: "MiniMax-M2.7-highspeed"

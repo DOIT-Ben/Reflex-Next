@@ -3,7 +3,7 @@ import {
   applyCoreEvent,
   createDraftRequest,
   createInitialSession,
-  listPrototypeScenes,
+  listSceneOptions,
   redactVisibleError
 } from "./reflexSession";
 
@@ -22,7 +22,8 @@ describe("reflex host session", () => {
       stream: true,
       metadata: {
         host: "tauri",
-        surface: "quick-panel"
+        surface: "quick-panel",
+        language: "zh-CN"
       }
     });
   });
@@ -83,16 +84,58 @@ describe("reflex host session", () => {
     );
   });
 
-  it("keeps the prototype scene list aligned with the first migration slice", () => {
-    expect(listPrototypeScenes().map((scene) => scene.id)).toEqual([
+  it("lists all 42 builtin scenes with unique stable ids", () => {
+    const scenes = listSceneOptions();
+
+    expect(scenes.map((scene) => scene.id)).toEqual([
       "general",
       "article_writing",
+      "social_media",
       "email",
+      "ad_creative",
+      "product_desc",
+      "paper_writing",
       "code_generation",
       "code_review",
-      "doc_translation",
+      "bug_fix",
+      "code_refactor",
+      "tech_doc",
+      "data_analysis",
+      "market_research",
+      "competitor_analysis",
+      "literature_review",
+      "trend_prediction",
+      "knowledge_explain",
+      "study_plan",
+      "exam_prep",
+      "course_design",
+      "homework_help",
       "report_writing",
-      "problem_diagnosis"
+      "decision_analysis",
+      "project_planning",
+      "process_optimization",
+      "meeting_summary",
+      "story_writing",
+      "script_writing",
+      "poetry_creation",
+      "game_plot",
+      "world_building",
+      "doc_translation",
+      "localization",
+      "literary_translation",
+      "term_unification",
+      "interpreting_notes",
+      "problem_diagnosis",
+      "solution_generation",
+      "root_cause",
+      "risk_assessment",
+      "emergency_plan"
     ]);
+    expect(new Set(scenes.map((scene) => scene.id)).size).toBe(42);
+    expect(scenes.every((scene) => scene.label && scene.hint)).toBe(true);
+  });
+
+  it("adds a whitelisted output language to request metadata", () => {
+    expect(createDraftRequest("Translate this", "en-US").metadata.language).toBe("en-US");
   });
 });

@@ -7,6 +7,7 @@
     applyClipboardText,
     applyCoreEnvelope,
     applyPersistedConfig,
+    applySceneSelection,
     applySettingsDraft,
     cancelGeneration,
     cancelAdjust,
@@ -37,7 +38,12 @@
     type SettingsApi
   } from "./domain/settingsApi";
   import type { CoreBridge, TauriHostApi } from "./domain/coreBridge";
-  import type { OptimizeMode, OptimizeStyle, ScenePolicy } from "./domain/reflexSession";
+  import {
+    listSceneOptions,
+    type OptimizeMode,
+    type OptimizeStyle,
+    type ScenePolicy
+  } from "./domain/reflexSession";
 
   const modes: Array<{ id: OptimizeMode; label: string }> = [
     { id: "content", label: "内容优化" },
@@ -49,13 +55,7 @@
     { id: "detailed", label: "详细" },
     { id: "creative", label: "创意" }
   ];
-  const scenes = [
-    { id: "general", label: "通用" },
-    { id: "email", label: "邮件" },
-    { id: "report_writing", label: "报告写作" },
-    { id: "code_review", label: "代码审查" },
-    { id: "doc_translation", label: "文档翻译" }
-  ];
+  const scenes = listSceneOptions();
   const clipboardPolicies: Array<{ id: HostSettingsDraft["clipboard_policy"]; label: string }> = [
     { id: "startup", label: "启动时读取" },
     { id: "manual", label: "仅手动读取" },
@@ -319,7 +319,7 @@
     activeRun = controller;
     state = startGeneration(state, requestId);
 
-    for await (const event of coreBridge.optimize(createRequestDraft(state), {
+    for await (const event of coreBridge.optimize(createRequestDraft(state, persistedConfig?.language ?? "zh-CN"), {
       signal: controller.signal
     })) {
       if (controller.signal.aborted) break;
@@ -433,6 +433,10 @@
   function sceneLabel(value: string | null): string {
     return scenes.find((item) => item.id === value)?.label ?? "自动识别";
   }
+
+  function chooseDraftScene(value: string) {
+    draft = applySceneSelection(draft, value);
+  }
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -478,7 +482,11 @@
 
           <label class="setting-row">
             <span>场景</span>
-            <select bind:value={draft.scene}>
+            <select
+              value={draft.scene ?? ""}
+              on:change={(event) => chooseDraftScene(event.currentTarget.value)}
+            >
+              <option value="">自动识别</option>
               {#each scenes as scene}
                 <option value={scene.id}>{scene.label}</option>
               {/each}

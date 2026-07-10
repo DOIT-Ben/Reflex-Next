@@ -6,6 +6,7 @@ import {
   applyClipboardText,
   applyPersistedConfig,
   applySettingsDraft,
+  applySceneSelection,
   cancelGeneration,
   cancelAdjust,
   cancelSettings,
@@ -284,7 +285,7 @@ describe("host state", () => {
       model: "abab6.5"
     });
 
-    expect(createRequestDraft(state)).toEqual({
+    expect(createRequestDraft(state, "en-US")).toEqual({
       text: "写一封邮件",
       mode: "content",
       style: "concise",
@@ -295,8 +296,22 @@ describe("host state", () => {
       stream: true,
       metadata: {
         host: "tauri",
-        surface: "quick-panel"
+        surface: "quick-panel",
+        language: "en-US"
       }
+    });
+  });
+
+  it("makes automatic and concrete scene selection explicit", () => {
+    const initial = createHostState().requestDraft;
+
+    expect(applySceneSelection(initial, "")).toMatchObject({
+      scene: null,
+      scene_policy: "auto"
+    });
+    expect(applySceneSelection(initial, "code_review")).toMatchObject({
+      scene: "code_review",
+      scene_policy: "manual"
     });
   });
 });
