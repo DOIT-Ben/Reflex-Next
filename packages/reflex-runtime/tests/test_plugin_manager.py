@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from reflex_runtime.plugin_contracts import PluginDescriptor
 from reflex_runtime.plugin_manager import PluginManager
 
 
@@ -30,6 +31,49 @@ class FakeEntryPoint:
         if self._error is not None:
             raise self._error
         return self._loaded
+
+
+class FakeCapability:
+    def __init__(self, descriptor: PluginDescriptor) -> None:
+        self.descriptor = descriptor
+
+    def invoke(self, operation, payload, services, cancellation):
+        return None
+
+
+def capability_descriptor(
+    plugin_id: str,
+    kind: str,
+    operations: tuple[str, ...],
+    public_operations: tuple[str, ...] | None = None,
+    permissions: tuple[str, ...] = (),
+):
+    return PluginDescriptor(
+        plugin_id=plugin_id,
+        display_name=plugin_id,
+        version="fixture-1",
+        kind=kind,
+        permissions=permissions,
+        operations=operations,
+        public_operations=operations if public_operations is None else public_operations,
+    )
+
+
+HISTORY_OPERATIONS = (
+    "save",
+    "list",
+    "detail",
+    "rate",
+    "delete",
+    "clear",
+    "export",
+    "scan",
+    "repair",
+    "backups",
+    "restore",
+    "rotate",
+)
+HISTORY_PUBLIC_OPERATIONS = ("list", "detail", "rate", "backups", "scan")
 
 
 def test_entry_point_failure_does_not_block_an_allowed_provider_factory():
@@ -79,8 +123,8 @@ def test_duplicate_provider_ids_keep_the_first_factory_and_report_a_safe_failure
     second = FakeFactory(display_name="Second")
     manager = PluginManager(
         entry_points_loader=lambda: [
-            FakeEntryPoint("first", loaded=lambda: first),
-            FakeEntryPoint("second", loaded=lambda: second),
+            FakeEntryPoint("minimax", loaded=lambda: first),
+            FakeEntryPoint("minimax", loaded=lambda: second),
         ]
     )
 
@@ -90,7 +134,7 @@ def test_duplicate_provider_ids_keep_the_first_factory_and_report_a_safe_failure
     assert result.failures == (
         result.failures[0],
     )
-    assert result.failures[0].plugin_id == "second"
+    assert result.failures[0].plugin_id == "minimax"
     assert result.failures[0].safe_message == "Provider plugin unavailable."
 
 
@@ -105,3 +149,303 @@ def test_unapproved_provider_metadata_is_not_registered():
 
     assert result.factories == {}
     assert result.failures[0].plugin_id == "unexpected"
+
+
+def test_unapproved_provider_entry_point_is_rejected_before_load():
+    loads = []
+
+    class TrackingEntryPoint(FakeEntryPoint):
+        def load(self):
+            loads.append(self.name)
+            return super().load()
+
+    entry_point = TrackingEntryPoint("unexpected", loaded=lambda: FakeFactory())
+    manager = PluginManager(entry_points_loader=lambda: [entry_point])
+
+    result = manager.discover_provider_factories()
+
+    assert result.factories == {}
+    assert result.failures[0].plugin_id == "unexpected"
+    assert loads == []
+
+
+def test_provider_factory_id_must_match_normalized_entry_point_name():
+    manager = PluginManager(
+        entry_points_loader=lambda: [
+            FakeEntryPoint("minimax", loaded=lambda: FakeFactory(id="other"))
+        ],
+        allowed_provider_ids=frozenset({"minimax", "other"}),
+    )
+
+    result = manager.discover_provider_factories()
+
+    assert result.factories == {}
+    assert result.failures[0].plugin_id == "minimax"
+
+
+def test_provider_failure_preserves_an_existing_safe_dotted_entry_point_id():
+    manager = PluginManager(
+        entry_points_loader=lambda: [
+            FakeEntryPoint("vendor.provider", error=RuntimeError("fixture failure"))
+        ]
+    )
+
+    result = manager.discover_provider_factories()
+
+    assert result.failures[0].plugin_id == "vendor.provider"
+
+
+def test_capability_discovery_checks_builtin_name_before_loading_entry_point():
+    loaded: list[str] = []
+
+    class TrackingEntryPoint(FakeEntryPoint):
+        def load(self):
+            loaded.append(self.name)
+            return super().load()
+
+    manager = PluginManager(
+        capability_entry_points_loader=lambda group: [
+            TrackingEntryPoint(
+                "unknown-command",
+                loaded=FakeCapability(
+                    capability_descriptor("unknown-command", "command", ("run",))
+                ),
+            )
+        ]
+        if group == "reflex.commands"
+        else [],
+        enabled_plugins={"unknown-command"},
+    )
+
+    result = manager.discover_capabilities()
+
+    assert loaded == []
+    assert "unknown-command" not in result.plugins
+    assert any(failure.code == "plugin_not_allowed" for failure in result.failures)
+
+
+def test_disabled_capability_is_described_without_import_or_resource_creation():
+    entry_point = FakeEntryPoint(
+        "translator",
+        error=AssertionError("disabled plugin must not be imported"),
+    )
+    manager = PluginManager(
+        capability_entry_points_loader=lambda group: [entry_point]
+        if group == "reflex.transformers"
+        else [],
+        enabled_plugins=set(),
+    )
+
+    result = manager.discover_capabilities()
+    translator = next(
+        item for item in result.descriptors if item.plugin_id == "translator"
+    )
+
+    assert "translator" not in result.plugins
+    assert translator.enabled is False
+    assert translator.state == "disabled"
+
+
+def test_enabling_a_disabled_capability_lazily_loads_it_once():
+    loads = []
+    translator = FakeCapability(
+        capability_descriptor("translator", "transformer", ("translate",))
+    )
+
+    class TrackingEntryPoint(FakeEntryPoint):
+        def load(self):
+            loads.append(self.name)
+            return super().load()
+
+    entry_point = TrackingEntryPoint("translator", translator)
+    manager = PluginManager(
+        capability_entry_points_loader=lambda group: [entry_point]
+        if group == "reflex.transformers"
+        else [],
+        enabled_plugins=set(),
+    )
+
+    manager.discover_capabilities()
+    manager.configure_enabled_plugin("translator", True)
+    first_enabled = manager.discover_capabilities()
+    second_enabled = manager.discover_capabilities()
+
+    assert loads == ["translator"]
+    assert first_enabled.plugins == {"translator": translator}
+    assert second_enabled.plugins == {"translator": translator}
+
+
+def test_capability_failure_is_isolated_and_exposes_only_safe_unavailable_code():
+    private_detail = "C:\\private\\plugin.py raw traceback"
+    manager = PluginManager(
+        capability_entry_points_loader=lambda group: [
+            FakeEntryPoint("translator", error=RuntimeError(private_detail))
+        ]
+        if group == "reflex.transformers"
+        else [],
+        enabled_plugins={"translator"},
+    )
+
+    result = manager.discover_capabilities()
+    translator = next(
+        item for item in result.descriptors if item.plugin_id == "translator"
+    )
+
+    assert translator.state == "unavailable"
+    assert translator.error_code == "plugin_unavailable"
+    assert result.failures[0].code == "plugin_unavailable"
+    assert private_detail not in repr(result)
+
+
+def test_duplicate_allowed_capability_candidates_are_never_loaded():
+    loads: list[str] = []
+    translator = FakeCapability(
+        capability_descriptor("translator", "transformer", ("translate",))
+    )
+
+    class TrackingEntryPoint(FakeEntryPoint):
+        def load(self):
+            loads.append(self.name)
+            return super().load()
+
+    manager = PluginManager(
+        capability_entry_points_loader=lambda group: [
+            TrackingEntryPoint("translator", translator),
+            TrackingEntryPoint("translator", translator),
+        ]
+        if group == "reflex.transformers"
+        else [],
+        enabled_plugins={"translator"},
+    )
+
+    result = manager.discover_capabilities()
+    descriptor = next(
+        item for item in result.descriptors if item.plugin_id == "translator"
+    )
+
+    assert loads == []
+    assert "translator" not in result.plugins
+    assert descriptor.state == "unavailable"
+    assert descriptor.error_code == "plugin_unavailable"
+    assert [failure.plugin_id for failure in result.failures].count("translator") == 1
+
+
+def test_capability_groups_load_valid_builtins_and_represent_absent_history():
+    translator = FakeCapability(
+        capability_descriptor("translator", "transformer", ("translate",))
+    )
+    markdown = FakeCapability(
+        capability_descriptor(
+            "markdown-preview",
+            "command",
+            ("preview", "export"),
+            ("preview",),
+        )
+    )
+    by_group = {
+        "reflex.storage": [],
+        "reflex.transformers": [FakeEntryPoint("translator", translator)],
+        "reflex.commands": [FakeEntryPoint("markdown-preview", markdown)],
+    }
+    manager = PluginManager(
+        capability_entry_points_loader=lambda group: by_group[group],
+        enabled_plugins={"translator", "markdown-preview"},
+    )
+
+    result = manager.discover_capabilities()
+
+    assert result.plugins == {
+        "translator": translator,
+        "markdown-preview": markdown,
+    }
+    states = {item.plugin_id: item.state for item in result.descriptors}
+    assert states == {
+        "history-sqlite": "absent",
+        "translator": "available",
+        "markdown-preview": "available",
+    }
+
+
+def test_conforming_history_plugin_loads_with_the_canonical_operation_contract():
+    history = FakeCapability(
+        capability_descriptor(
+            "history-sqlite",
+            "storage",
+            HISTORY_OPERATIONS,
+            HISTORY_PUBLIC_OPERATIONS,
+            ("storage_read", "storage_write"),
+        )
+    )
+    manager = PluginManager(
+        capability_entry_points_loader=lambda group: [
+            FakeEntryPoint("history-sqlite", history)
+        ]
+        if group == "reflex.storage"
+        else [],
+    )
+
+    result = manager.discover_capabilities()
+
+    assert result.plugins["history-sqlite"] is history
+    descriptor = next(
+        item for item in result.descriptors if item.plugin_id == "history-sqlite"
+    )
+    assert descriptor.operations == HISTORY_OPERATIONS
+    assert descriptor.public_operations == HISTORY_PUBLIC_OPERATIONS
+
+
+def test_history_plugin_with_legacy_operation_alias_is_rejected():
+    legacy_operations = tuple(
+        "get" if operation == "detail" else operation
+        for operation in HISTORY_OPERATIONS
+    )
+    history = FakeCapability(
+        capability_descriptor(
+            "history-sqlite",
+            "storage",
+            legacy_operations,
+            tuple(
+                "get" if operation == "detail" else operation
+                for operation in HISTORY_PUBLIC_OPERATIONS
+            ),
+            ("storage_read", "storage_write"),
+        )
+    )
+    manager = PluginManager(
+        capability_entry_points_loader=lambda group: [
+            FakeEntryPoint("history-sqlite", history)
+        ]
+        if group == "reflex.storage"
+        else [],
+    )
+
+    result = manager.discover_capabilities()
+
+    assert "history-sqlite" not in result.plugins
+    descriptor = next(
+        item for item in result.descriptors if item.plugin_id == "history-sqlite"
+    )
+    assert descriptor.state == "unavailable"
+    assert result.failures[0].code == "plugin_unavailable"
+
+
+def test_capability_development_loading_imports_only_explicit_fixed_modules():
+    imported: list[str] = []
+    translator = FakeCapability(
+        capability_descriptor("translator", "transformer", ("translate",))
+    )
+
+    class Module:
+        plugin = translator
+
+    manager = PluginManager(
+        capability_entry_points_loader=lambda group: [],
+        development_capability_modules=(("translator", "fixture_translator"),),
+        module_loader=lambda name: imported.append(name) or Module,
+        enabled_plugins={"translator"},
+    )
+
+    result = manager.discover_capabilities()
+
+    assert imported == ["fixture_translator"]
+    assert result.plugins == {"translator": translator}

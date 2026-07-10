@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import os
+import sys
 import time
 
 from reflex_runtime.provider_errors import ProviderRuntimeError
+
+
+if os.environ.get("REFLEX_NOISY_FIXTURE") == "1":
+    print("fixture-print-noise", flush=True)
+    sys.__stdout__.write("fixture-dunder-noise\n")
+    sys.__stdout__.flush()
+    os.write(1, b"fixture-fd-noise\n")
 
 
 class FixtureProvider:
