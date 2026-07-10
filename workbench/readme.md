@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-项目已完成架构契约冻结、`reflex-core` Stage 1、Runtime Mock Sidecar、Figma Current 主浮窗重构，以及 Tauri/Rust Host 真实 Sidecar 桥接，当前进入桌面宿主能力补齐阶段。
+项目已完成架构契约冻结、`reflex-core` Stage 1、Figma Current 主浮窗重构、Tauri/Rust Host 真实 Sidecar 桥接，以及安全配置与 MiniMax Provider 离线主链，当前进入真实网络冒烟和桌面发布能力补齐阶段。
 
 当前主线基线：
 
@@ -10,8 +10,9 @@
 - `docs/UI-IMPLEMENTATION-SPEC.md` 已冻结 Figma、Tauri、Sidecar 和 Core 的实现契约；
 - `docs/CODEX-DELIVERY-PLAN.md` 已冻结分阶段交付路线；
 - `packages/reflex-core` 已具备稳定事件协议、请求规范化、取消语义、L0 场景规则、安全纯函数和无网络优化用例；
-- `packages/reflex-runtime` 已具备 NDJSON 命令循环、Mock Provider、取消和多请求隔离；
-- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗、`CoreBridge` 抽象、Tauri API 适配层、Figma Current 主状态机、Rust 剪贴板命令、常驻 Python Runtime 管理、窗口内快捷键契约、错误恢复态和设置覆盖层；
+- `packages/reflex-runtime` 已具备 NDJSON 命令循环、Provider 插件发现与注册、私有配置、显式开发 Mock、取消和多请求隔离；
+- `plugins/provider-minimax` 已具备 SSE/JSON 解析、取消、有限重试和稳定安全错误映射；
+- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗、`CoreBridge` 抽象、Tauri API 适配层、Figma Current 主状态机、Rust 剪贴板命令、常驻 Python Runtime 管理、设置持久化、Windows 安全凭据和设置交互；
 - Core 自动测试已覆盖导入边界、事件协议、优化用例、安全、场景和 sidecar；
 - Core 导入不引入 PyQt、PySide、sqlite3、pyperclip、torch、sentence-transformers 或 huggingface-hub。
 
@@ -28,6 +29,7 @@
 - `docs/dev-records/2026-07-10-runtime-sidecar.md`
 - `docs/dev-records/2026-07-10-tauri-api-bridge.md`
 - `docs/dev-records/2026-07-10-figma-current-host-state.md`
+- `docs/verification/stage-a-verification.md`
 - `workbench/known-pitfalls.md`
 
 ## 最近变更摘要
@@ -54,18 +56,23 @@
 - 完成 Runtime 异常退出重启、未完成请求安全错误、取消和应用退出清理；
 - 完成 Runtime 启动失败到前端可恢复错误态的转换，不透传底层诊断；
 - 完成 760×540 与 680×480 布局溢出修复和可见状态复验；
+- 完成版本化配置迁移、原子替换、有效备份恢复和非法值回退；
+- 完成 Windows Credential Manager 安全存储，前端只读取配置状态；
+- 完成 Provider 插件白名单发现、失败隔离、注册与显式 Mock；
+- 完成 MiniMax SSE/JSON、取消、有限重试和安全错误分类；
+- 完成设置页持久配置、密钥保存/删除和 Tauri capability 权限闭环；
 - 当前机器 Rust 工具链可用，Rust 测试和 Tauri debug 构建已执行；
 - Stage 1 已通过独立 QA 并合入 `main`。
 
 ## 下一阶段
 
-进入 Stage 4：桌面宿主能力。
+进入真实链路与桌面发布能力补齐。
 
 必须完成：
 
-1. 实现单实例、托盘和全局快捷键；
-2. 实现窗口显示、隐藏、聚焦和位置越界恢复；
-3. 实现设置持久化与平台安全 SecretStore；
-4. 保留 Mock Provider，不接真实 MiniMax；
-5. 完成 Python Runtime 发布态自包含打包；
-6. 补 125% / 150% DPI、多显示器和安装/卸载生命周期证据。
+1. 由用户在设置页手动配置密钥，完成一次真实 MiniMax 流式请求和取消；
+2. 实现单实例、托盘和全局快捷键；
+3. 实现窗口显示、隐藏、聚焦和位置越界恢复；
+4. 完成 Python Runtime 发布态自包含打包；
+5. 补多显示器和安装/卸载生命周期证据；
+6. 按插件边界继续迁移模板包和后续 Provider。

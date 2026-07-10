@@ -12,8 +12,9 @@ Python Core + Tauri 轻量桌面宿主 + Python 插件系统
 
 - 旧版参考实现：`D:\Desktop\AI\11_Products\prod\Reflex`
 - 新版项目位置：`D:\Desktop\AI\11_Products\lab\Reflex-Next`
-- 当前阶段：实验室重做项目，已完成 Core 事件骨架、Runtime Mock Sidecar 和 Tauri Host 前端原型
-- 首个产品切片：Tauri 小浮窗通过 Runtime Sidecar 调用 Python Core，先用 Mock Provider 跑通流式事件
+- 当前阶段：Core、Runtime Sidecar、MiniMax Provider 和 Tauri 小宿主已打通
+- 当前产品切片：用户在设置页配置密钥后，可由 Tauri 小浮窗通过 Runtime 调用 MiniMax；Mock 仅用于显式开发模式
+- 当前边界：离线主链、设置持久化和安全存储已验证，真实 MiniMax 网络请求仍需在本机手动配置密钥后执行
 
 ## 核心原则
 
@@ -77,11 +78,33 @@ workbench/
 
 ## 开发入口
 
-当前已有可验证的 Core、Runtime 和前端原型切片。
+当前已有可验证的 Core、Runtime、MiniMax Provider、前端和 Rust Host。
 
-后续建议顺序：
+```powershell
+cd packages\reflex-core
+uv run --python 3.12 --with pytest pytest -q
 
-1. 初始化 `apps\tauri-host\src-tauri`，实现 Rust Host 到 Runtime Sidecar 的真实桥接。
-2. 将前端 `DemoCoreBridge` 替换为 Tauri bridge。
-3. 完成 `template-packs\builtin` 的模板包迁移。
-4. 在获得明确批准后，再接入 `plugins\provider-minimax` 的真实网络调用。
+cd ..\reflex-runtime
+uv run --python 3.12 --with pytest --with httpx pytest -q
+
+cd ..\..\plugins\provider-minimax
+uv run --python 3.12 --with pytest --with httpx pytest -q
+
+cd ..\..\apps\tauri-host
+$env:VITEST_MAX_WORKERS='2'
+npm test -- --maxWorkers=2
+npm run build
+
+cd src-tauri
+cargo test -- --test-threads=2
+cargo build
+```
+
+桌面开发入口：
+
+```powershell
+cd apps\tauri-host
+npm run tauri:dev
+```
+
+密钥只通过应用设置页写入系统安全存储，不放入环境变量、配置文件、终端命令、日志或仓库。
