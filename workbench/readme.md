@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-项目已完成架构契约冻结、`reflex-core` 基础主链、Figma Current 主浮窗重构、Tauri/Rust Host 真实 Sidecar 桥接、安全配置与 MiniMax Provider 离线主链，以及内置模板包和 42 场景接入。当前进入桌面宿主能力补齐阶段。
+项目已完成架构契约冻结、`reflex-core` 基础主链、Figma Current 主浮窗重构、Tauri/Rust Host 真实 Sidecar 桥接、安全配置与 MiniMax Provider 离线主链、内置模板包和 42 场景接入，以及桌面宿主能力补齐。当前进入插件能力接入阶段。
 
 当前主线基线：
 
@@ -13,7 +13,7 @@
 - `packages/reflex-runtime` 已具备 NDJSON 命令循环、Provider 插件发现与注册、私有配置、显式开发 Mock、取消和多请求隔离；
 - `plugins/provider-minimax` 已具备 SSE/JSON 解析、取消、有限重试和稳定安全错误映射；
 - `template-packs/builtin` 已具备 42 个场景、5 个风格、系统模板、版本化 manifest 和加载失败回退；
-- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗、`CoreBridge` 抽象、Tauri API 适配层、Figma Current 主状态机、42 场景手动选择、Rust 剪贴板命令、常驻 Python Runtime 管理、设置持久化、Windows 安全凭据和设置交互；
+- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗、`CoreBridge` 抽象、Tauri API 适配层、Figma Current 主状态机、42 场景手动选择、常驻 Python Runtime 管理、设置持久化、Windows 安全凭据、单实例、托盘、全局快捷键、窗口恢复和完整剪贴板策略；
 - Core 自动测试已覆盖导入边界、事件协议、优化用例、安全、场景和 sidecar；
 - Core 导入不引入 PyQt、PySide、sqlite3、pyperclip、torch、sentence-transformers 或 huggingface-hub。
 
@@ -32,6 +32,7 @@
 - `docs/dev-records/2026-07-10-figma-current-host-state.md`
 - `docs/verification/stage-a-verification.md`
 - `docs/verification/stage-b-verification.md`
+- `docs/verification/stage-c-verification.md`
 - `workbench/known-pitfalls.md`
 
 ## 最近变更摘要
@@ -68,18 +69,20 @@
 - 完成 L0 规则识别扩展到 42 个场景，并保持低置信 `general` 回退；
 - 完成 Runtime 固定内置模板包接线和端到端渲染契约测试；
 - 完成 Tauri 调整页 42 场景选择、自动/手动策略联动和语言元数据传递；
+- 完成 Windows 单实例、托盘入口、关闭到托盘、全局快捷键和窗口越界恢复；
+- 完成热键两阶段事务、并发串行化、冲突提示和配置保存失败回滚；
+- 完成启动读取、显式读取、复制、首次替换确认和确认后自动替换剪贴板策略；
+- 完成最近结果内存恢复、插件内置能力视图和桌面动作事件接线；
+- 完成开发端口冲突快速失败，避免 Tauri 静默加载错误本地页面；
 - 当前机器 Rust 工具链可用，Rust 测试和桌面开发构建已执行；
 - 基础主链已通过独立 QA 并合入 `main`。
 
 ## 下一阶段
 
-进入桌面宿主能力补齐；真实 MiniMax 冒烟仍作为需要用户在设置页手动录入密钥的独立门禁保留。
+进入插件能力接入；真实 MiniMax 冒烟仍作为需要用户在设置页手动录入密钥的独立门禁保留。
 
 必须完成：
 
-1. 实现单实例、托盘和全局快捷键；
-2. 实现窗口显示、隐藏、聚焦和位置越界恢复；
-3. 补齐剪贴板读取、复制、首次替换确认和持久策略；
-4. 由用户在设置页手动配置密钥，完成一次真实 MiniMax 流式请求和取消；
-5. 按插件边界继续接入历史、结果增强、批处理、语义识别和后续 Provider；
-6. 完成 Python Runtime 发布态自包含打包及安装生命周期验证。
+1. 由用户在设置页手动配置密钥，完成一次真实 MiniMax 流式请求和取消；
+2. 按插件边界接入历史、结果增强、批处理、语义识别和后续 Provider；
+3. 完成 Python Runtime 发布态自包含打包及安装生命周期验证。

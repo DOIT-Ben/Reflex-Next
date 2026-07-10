@@ -12,7 +12,7 @@ Python Core + Tauri 轻量桌面宿主 + Python 插件系统
 
 - 旧版参考实现：`D:\Desktop\AI\11_Products\prod\Reflex`
 - 新版项目位置：`D:\Desktop\AI\11_Products\lab\Reflex-Next`
-- 当前能力：Core、Runtime Sidecar、MiniMax Provider、内置模板包和 Tauri 小宿主已打通
+- 当前能力：Core、Runtime Sidecar、MiniMax Provider、内置模板包和 Tauri 小宿主已打通；桌面端支持单实例、托盘、全局快捷键、窗口恢复和剪贴板策略
 - 当前产品切片：支持内容优化与提示词生成、四种主风格、42 个场景的自动或手动选择，以及中英文模板输出
 - 当前边界：离线主链、设置持久化和安全存储已验证；真实 MiniMax 网络请求仍需在应用中手动配置密钥后执行
 
@@ -28,7 +28,7 @@ Python Core + Tauri 轻量桌面宿主 + Python 插件系统
 
 ```text
 apps/
-  tauri-host/                 # Tauri 小宿主规划入口
+  tauri-host/                 # Tauri 轻量桌面宿主
 packages/
   reflex-core/                # 无 UI Python 核心
   reflex-runtime/             # Python Sidecar 与 Mock Runtime
