@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 from dataclasses import fields
+from pathlib import Path
 from typing import Any, TextIO
 
 from reflex_core import (
@@ -17,7 +18,7 @@ from reflex_core import (
 )
 from reflex_core.events import error_event, status_event
 from reflex_core.scene.detectors import RuleSceneDetector
-from reflex_core.template.resolver import PassthroughTemplateResolver
+from reflex_core.template import TemplatePackResolver
 from reflex_core.usecases import OptimizeUseCase
 from reflex_core.safety import redact_sensitive
 
@@ -35,6 +36,7 @@ class RuntimeContext:
         stderr: TextIO | None = None,
         *,
         development: bool | None = None,
+        template_resolver: Any | None = None,
     ) -> None:
         self._stdout = stdout or sys.stdout
         self._stderr = stderr or sys.stderr
@@ -53,7 +55,7 @@ class RuntimeContext:
         self._registry = ProviderRegistry(discovery.factories)
         self._mock_provider = MockProvider() if self._development else None
         self._scene_detector = RuleSceneDetector()
-        self._template_resolver = PassthroughTemplateResolver()
+        self._template_resolver = template_resolver or _builtin_template_resolver()
 
     def handle(self, command: CommandEnvelope) -> bool:
         if command.type == "ping":
@@ -201,3 +203,10 @@ class RuntimeContext:
         allowed = {field.name for field in fields(OptimizeRequest)}
         data = {key: value for key, value in payload.items() if key in allowed}
         return OptimizeRequest(**data)
+
+
+def _builtin_template_resolver() -> TemplatePackResolver:
+    repository_root = Path(__file__).resolve().parents[4]
+    return TemplatePackResolver.from_directory(
+        repository_root / "template-packs" / "builtin"
+    )

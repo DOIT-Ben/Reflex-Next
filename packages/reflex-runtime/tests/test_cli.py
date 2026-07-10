@@ -251,6 +251,59 @@ def test_configure_provider_then_optimize_uses_the_selected_fixture_without_secr
         runtime.close()
 
 
+def test_builtin_template_pack_reaches_provider_with_manual_scene_and_language():
+    runtime = RuntimeProcess(provider_fixture=True)
+    try:
+        runtime.send(
+            configure_provider_command(
+                "config-template",
+                "fixture-template-private-credential",
+            )
+        )
+        assert runtime.read_event()["event"]["type"] == "status"
+
+        runtime.send(
+            {
+                "version": 1,
+                "request_id": "template-lifecycle",
+                "type": "optimize",
+                "payload": {
+                    "text": "Review this implementation.",
+                    "mode": "prompt",
+                    "style": "precise",
+                    "scene": "code_review",
+                    "scene_policy": "manual",
+                    "provider": "minimax",
+                    "model": "fixture-model-a",
+                    "stream": True,
+                    "metadata": {
+                        "language": "en-US",
+                        "fixture_template_contract": True,
+                    },
+                },
+            }
+        )
+        envelopes = runtime.read_until("template-lifecycle", "done")
+        done = next(
+            item["event"]
+            for item in envelopes
+            if item["request_id"] == "template-lifecycle"
+            and item["event"]["type"] == "done"
+        )
+
+        assert done["data"]["text"] == "template-contract-ok"
+        scene = next(
+            item["event"]
+            for item in envelopes
+            if item["request_id"] == "template-lifecycle"
+            and item["event"]["type"] == "scene"
+        )
+        assert scene["data"]["scene"] == "code_review"
+        assert scene["data"]["method"] == "manual"
+    finally:
+        runtime.close()
+
+
 def test_provider_lifecycle_keeps_private_fixture_values_out_of_stdout_and_stderr():
     runtime = RuntimeProcess(provider_fixture=True)
     secret = "fixture-lifecycle-private-credential"

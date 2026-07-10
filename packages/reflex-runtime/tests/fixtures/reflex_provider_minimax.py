@@ -21,6 +21,12 @@ class FixtureProvider:
             )
         if cancellation.is_cancelled:
             return
+        if request.metadata.get("fixture_template_contract") is True:
+            messages = rendered_request.get("messages") if isinstance(rendered_request, dict) else None
+            if not _valid_template_messages(messages, request):
+                raise RuntimeError("template contract missing")
+            yield "template-contract-ok"
+            return
         chunks = request.metadata.get("chunks")
         if not isinstance(chunks, list) or not all(isinstance(chunk, str) for chunk in chunks):
             chunks = [f"{self.model}:{request.text}"]
@@ -51,3 +57,24 @@ class FixtureFactory:
 
 def plugin():
     return FixtureFactory()
+
+
+def _valid_template_messages(messages, request) -> bool:
+    if not isinstance(messages, list) or len(messages) != 2:
+        return False
+    system, user = messages
+    if not isinstance(system, dict) or not isinstance(user, dict):
+        return False
+    system_content = system.get("content")
+    return (
+        system.get("role") == "system"
+        and isinstance(system_content, str)
+        and "结构化提示词" in system_content
+        and "代码审查场景" in system_content
+        and "精准风格" in system_content
+        and "English (US)" in system_content
+        and user == {"role": "user", "content": request.text}
+        and request.mode == "prompt"
+        and request.style == "precise"
+        and request.scene == "code_review"
+    )
