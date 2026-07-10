@@ -10,6 +10,7 @@ export type AppConfig = {
   style: OptimizeStyle;
   scene_policy: ScenePolicy;
   clipboard_policy: ClipboardPolicy;
+  clipboard_replace_confirmed: boolean;
   history_enabled: boolean;
   privacy_mode: boolean;
   language: "zh-CN" | "en-US";
@@ -75,6 +76,7 @@ const defaults: AppConfig = {
   style: "balanced",
   scene_policy: "auto",
   clipboard_policy: "manual",
+  clipboard_replace_confirmed: false,
   history_enabled: true,
   privacy_mode: false,
   language: "zh-CN",
@@ -109,6 +111,10 @@ function normalizeConfig(value: unknown): AppConfig {
       raw.clipboard_policy,
       ["startup", "manual", "auto_replace"],
       defaults.clipboard_policy
+    ),
+    clipboard_replace_confirmed: booleanValue(
+      raw.clipboard_replace_confirmed,
+      defaults.clipboard_replace_confirmed
     ),
     history_enabled: booleanValue(raw.history_enabled, defaults.history_enabled),
     privacy_mode: booleanValue(raw.privacy_mode, defaults.privacy_mode),

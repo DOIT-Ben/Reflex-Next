@@ -1,0 +1,62 @@
+import type { TauriHostApi } from "./coreBridge";
+
+const HOST_ACTION_EVENT = "reflex://host-action";
+const HOTKEY_UNAVAILABLE_MESSAGE = "快捷键不可用，请更换组合后重试。";
+
+export type HostAction = "open" | "recent" | "plugins" | "settings" | "quit";
+
+export type DesktopStatus = {
+  hotkey: string;
+  hotkeyActive: boolean;
+  message: string | null;
+};
+
+export type DesktopBridge = {
+  status(): Promise<DesktopStatus>;
+  listen(handler: (action: HostAction) => void): Promise<() => void>;
+};
+
+export function createDesktopBridge(host: TauriHostApi): DesktopBridge {
+  return {
+    async status() {
+      return normalizeDesktopStatus(await host.invoke("desktop_status"));
+    },
+    async listen(handler) {
+      return host.listen<unknown>(HOST_ACTION_EVENT, ({ payload }) => {
+        const action = hostActionFrom(payload);
+        if (action) handler(action);
+      });
+    }
+  };
+}
+
+export function safeDesktopSettingsError(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return message === HOTKEY_UNAVAILABLE_MESSAGE
+    ? HOTKEY_UNAVAILABLE_MESSAGE
+    : "设置保存失败，请重试。";
+}
+
+function normalizeDesktopStatus(value: unknown): DesktopStatus {
+  const raw = isRecord(value) ? value : {};
+  return {
+    hotkey: typeof raw.hotkey === "string" && raw.hotkey.trim() ? raw.hotkey.trim() : "Ctrl+Alt+R",
+    hotkeyActive: raw.hotkey_active === true,
+    message: typeof raw.message === "string" && raw.message.trim() ? raw.message.trim() : null
+  };
+}
+
+function hostActionFrom(value: unknown): HostAction | null {
+  if (!isRecord(value)) return null;
+  return value.action === "open" ||
+    value.action === "recent" ||
+    value.action === "plugins" ||
+    value.action === "settings" ||
+    value.action === "quit"
+    ? value.action
+    : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

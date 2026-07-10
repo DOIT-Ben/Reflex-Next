@@ -9,6 +9,7 @@ const config: AppConfig = {
   style: "balanced",
   scene_policy: "auto",
   clipboard_policy: "manual",
+  clipboard_replace_confirmed: false,
   history_enabled: true,
   privacy_mode: false,
   language: "zh-CN",

@@ -11,6 +11,7 @@ import {
   type ScenePolicy
 } from "./reflexSession";
 import type { AppConfig } from "./settingsApi";
+import type { HostAction } from "./desktopBridge";
 
 export type HostPhase =
   | "empty"
@@ -23,7 +24,7 @@ export type HostPhase =
   | "cancelled"
   | "error";
 
-export type Overlay = null | "clipboard_confirm" | "settings";
+export type Overlay = null | "clipboard_confirm" | "settings" | "plugin_manager";
 
 export type HostShortcutAction =
   | "none"
@@ -57,6 +58,7 @@ export type HostSettingsDraft = {
   default_style: OptimizeStyle;
   scene_policy: ScenePolicy;
   clipboard_policy: ClipboardPolicy;
+  hotkey: string;
 };
 
 export type HostState = {
@@ -70,6 +72,7 @@ export type HostState = {
   detectedScene: string | null;
   providerSummary: string;
   output: string;
+  recentOutput: string;
   inputNotice: string | null;
   errorMessage: string | null;
   errorCode: string | null;
@@ -93,6 +96,7 @@ export function createHostState(): HostState {
     detectedScene: null,
     providerSummary: providerLabel(requestDraft),
     output: "",
+    recentOutput: "",
     inputNotice: null,
     errorMessage: null,
     errorCode: null,
@@ -183,6 +187,39 @@ export function openSettings(state: HostState): HostState {
   };
 }
 
+export function applyHostAction(state: HostState, action: HostAction): HostState {
+  if (action === "plugins") {
+    return {
+      ...state,
+      overlay: "plugin_manager",
+      inputNotice: null
+    };
+  }
+  if (action === "settings") {
+    return openSettings(state);
+  }
+  if (action === "recent") {
+    if (isActiveGeneration(state.phase)) {
+      return state;
+    }
+    if (!state.recentOutput.trim()) {
+      return {
+        ...state,
+        overlay: null,
+        inputNotice: "暂无最近结果。"
+      };
+    }
+    return {
+      ...state,
+      phase: "completed",
+      overlay: null,
+      output: state.recentOutput,
+      inputNotice: null
+    };
+  }
+  return state;
+}
+
 export function cancelSettings(state: HostState): HostState {
   return {
     ...state,
@@ -228,7 +265,8 @@ export function applyPersistedConfig(state: HostState, config: AppConfig): HostS
         default_mode: config.mode,
         default_style: config.style,
         scene_policy: config.scene_policy,
-        clipboard_policy: config.clipboard_policy
+        clipboard_policy: config.clipboard_policy,
+        hotkey: config.hotkey
       }
     : null;
   return {
@@ -311,15 +349,15 @@ export function resolveHostShortcut(
   state: HostState,
   input: HostShortcutInput
 ): HostShortcutAction {
+  if (state.overlay) {
+    return input.key === "Escape" ? "close_overlay" : "none";
+  }
   const isPrimaryEnter = input.key === "Enter" && (input.ctrlKey || input.metaKey);
   if (isPrimaryEnter) {
     return state.canGenerate && !isActiveGeneration(state.phase) ? "generate" : "none";
   }
   if (input.key !== "Escape") {
     return "none";
-  }
-  if (state.overlay) {
-    return "close_overlay";
   }
   if (state.phase === "adjusting") {
     return "leave_adjust";
@@ -365,11 +403,13 @@ function applyCoreEvent(state: HostState, event: CoreEvent): HostState {
     };
   }
   if (event.type === "done") {
+    const output = stringFrom(event.data.text, stringFrom(event.data.final_text, state.output));
     return {
       ...state,
       phase: "completed",
       activeRequestId: null,
-      output: stringFrom(event.data.text, stringFrom(event.data.final_text, state.output))
+      output,
+      recentOutput: output
     };
   }
   if (event.type === "error") {
@@ -409,7 +449,8 @@ function createSettingsDraft(state: HostState): HostSettingsDraft {
     default_mode: state.requestDraft.mode,
     default_style: state.requestDraft.style,
     scene_policy: state.requestDraft.scene_policy,
-    clipboard_policy: "manual"
+    clipboard_policy: "manual",
+    hotkey: "Ctrl+Alt+R"
   };
 }
 

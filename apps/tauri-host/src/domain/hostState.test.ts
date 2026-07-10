@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyCoreEnvelope,
+  applyHostAction,
   applyAdjustDraft,
   applyClipboardError,
   applyClipboardText,
@@ -29,6 +30,7 @@ const persistedConfig: AppConfig = {
   style: "creative",
   scene_policy: "ask",
   clipboard_policy: "manual",
+  clipboard_replace_confirmed: false,
   history_enabled: true,
   privacy_mode: false,
   language: "zh-CN",
@@ -174,12 +176,16 @@ describe("host state", () => {
     const adjusting = openAdjust(ready);
     const withOverlay = { ...ready, overlay: "clipboard_confirm" as const };
     const settings = openSettings(ready);
+    const plugins = { ...ready, overlay: "plugin_manager" as const };
 
     expect(resolveHostShortcut(ready, { key: "Enter", ctrlKey: true })).toBe("generate");
     expect(resolveHostShortcut(generating, { key: "Enter", ctrlKey: true })).toBe("none");
     expect(resolveHostShortcut(generating, { key: "Escape" })).toBe("cancel_generation");
     expect(resolveHostShortcut(withOverlay, { key: "Escape" })).toBe("close_overlay");
     expect(resolveHostShortcut(settings, { key: "Escape" })).toBe("close_overlay");
+    expect(resolveHostShortcut(withOverlay, { key: "Enter", ctrlKey: true })).toBe("none");
+    expect(resolveHostShortcut(settings, { key: "Enter", ctrlKey: true })).toBe("none");
+    expect(resolveHostShortcut(plugins, { key: "Enter", ctrlKey: true })).toBe("none");
     expect(resolveHostShortcut(adjusting, { key: "Escape" })).toBe("leave_adjust");
     expect(resolveHostShortcut(ready, { key: "Escape" })).toBe("hide_window");
   });
@@ -228,7 +234,8 @@ describe("host state", () => {
       default_mode: "content",
       default_style: "balanced",
       scene_policy: "auto",
-      clipboard_policy: "manual"
+      clipboard_policy: "manual",
+      hotkey: "Ctrl+Alt+R"
     });
     expect(settings).not.toHaveProperty("apiKey");
 
@@ -238,7 +245,8 @@ describe("host state", () => {
       default_mode: "prompt",
       default_style: "creative",
       scene_policy: "ask",
-      clipboard_policy: "manual"
+      clipboard_policy: "manual",
+      hotkey: "Ctrl+Shift+K"
     });
 
     expect(saved.overlay).toBeNull();
@@ -313,5 +321,33 @@ describe("host state", () => {
       scene: "code_review",
       scene_policy: "manual"
     });
+  });
+
+  it("maps tray actions to recent result, settings, and plugin views", () => {
+    const ready = updateInput(createHostState(), "待优化内容");
+
+    expect(applyHostAction(ready, "plugins").overlay).toBe("plugin_manager");
+    expect(applyHostAction(ready, "settings").overlay).toBe("settings");
+    expect(applyHostAction(ready, "recent").inputNotice).toBe("暂无最近结果。");
+
+    const completed = applyCoreEnvelope(startGeneration(ready, "recent-1"), {
+      version: 1,
+      request_id: "recent-1",
+      event: { type: "done", data: { text: "最近生成的结果" } }
+    });
+    const reopened = applyHostAction({ ...completed, phase: "ready" }, "recent");
+
+    expect(reopened.phase).toBe("completed");
+    expect(reopened.output).toBe("最近生成的结果");
+
+    const cancelledNextRun = cancelGeneration(startGeneration(completed, "recent-2"));
+    const reopenedAfterCancel = applyHostAction(cancelledNextRun, "recent");
+
+    expect(cancelledNextRun.output).toBe("");
+    expect(reopenedAfterCancel.phase).toBe("completed");
+    expect(reopenedAfterCancel.output).toBe("最近生成的结果");
+
+    const activeNextRun = startGeneration(completed, "recent-3");
+    expect(applyHostAction(activeNextRun, "recent")).toBe(activeNextRun);
   });
 });

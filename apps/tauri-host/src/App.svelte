@@ -6,6 +6,7 @@
     applyClipboardError,
     applyClipboardText,
     applyCoreEnvelope,
+    applyHostAction,
     applyPersistedConfig,
     applySceneSelection,
     applySettingsDraft,
@@ -26,10 +27,24 @@
     type RequestSettings
   } from "./domain/hostState";
   import {
+    clipboardActionAfterCompletion,
+    clipboardActionForManualReplace,
     createClipboardReader,
+    createClipboardWriter,
     readClipboardText,
-    type ClipboardReader
+    shouldReadClipboardOnStartup,
+    writeClipboardText,
+    type ClipboardAction,
+    type ClipboardReader,
+    type ClipboardWriter
   } from "./domain/clipboardBridge";
+  import {
+    createDesktopBridge,
+    safeDesktopSettingsError,
+    type DesktopBridge,
+    type DesktopStatus,
+    type HostAction
+  } from "./domain/desktopBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
   import {
     createSettingsApi,
@@ -77,11 +92,10 @@
   let coreBridge: CoreBridge = new DemoCoreBridge();
   let hostApi: TauriHostApi | null = null;
   let settingsApi: SettingsApi | null = null;
+  let desktopBridge: DesktopBridge | null = null;
   let clipboardReader: ClipboardReader = createClipboardReader();
-  let state: HostState = updateInput(
-    createHostState(),
-    "帮我把这段产品说明改得更清晰，并保留专业语气。"
-  );
+  let clipboardWriter: ClipboardWriter = createClipboardWriter();
+  let state: HostState = createHostState();
   let draft: RequestSettings = { ...state.requestDraft };
   let settingsDraft: HostSettingsDraft = {
     default_provider: state.requestDraft.provider,
@@ -89,7 +103,8 @@
     default_mode: state.requestDraft.mode,
     default_style: state.requestDraft.style,
     scene_policy: state.requestDraft.scene_policy,
-    clipboard_policy: "manual"
+    clipboard_policy: "manual",
+    hotkey: "Ctrl+Alt+R"
   };
   let activeRun: AbortController | null = null;
   let persistedConfig: AppConfig | null = null;
@@ -105,21 +120,61 @@
   let settingsNotice: string | null = null;
   let secretNotice: string | null = null;
   let clipboardReading = false;
+  let startupClipboardRead = false;
+  let clipboardNotice: string | null = null;
+  let desktopStatus: DesktopStatus = {
+    hotkey: "Ctrl+Alt+R",
+    hotkeyActive: false,
+    message: null
+  };
   let toastVisible = false;
   let toastText = "✓ 已复制到剪贴板";
 
   onMount(() => {
-    void createTauriHostApi().then((host) => {
-      if (host) {
-        hostApi = host;
-        settingsApi = createSettingsApi(host);
-        clipboardReader = createClipboardReader(host);
-        void hydrateSettings();
-        void createDefaultCoreBridge(host).then((bridge) => {
-          coreBridge = bridge;
+    let disposed = false;
+    let stopListening: (() => void) | null = null;
+
+    void createTauriHostApi().then(async (host) => {
+      if (!host || disposed) return;
+
+      hostApi = host;
+      settingsApi = createSettingsApi(host);
+      clipboardReader = createClipboardReader(host);
+      clipboardWriter = createClipboardWriter(host);
+      const desktop = createDesktopBridge(host);
+      desktopBridge = desktop;
+
+      void desktop
+        .listen(handleHostAction)
+        .then((unlisten) => {
+          if (disposed) {
+            unlisten();
+          } else {
+            stopListening = unlisten;
+          }
+        })
+        .catch(() => {
+          if (disposed) return;
+          desktopStatus = {
+            ...desktopStatus,
+            message: "桌面入口暂不可用。"
+          };
         });
-      }
+
+      void createDefaultCoreBridge(host).then((bridge) => {
+        if (!disposed) coreBridge = bridge;
+      });
+
+      await Promise.all([hydrateSettings(), refreshDesktopStatus()]);
+      if (disposed) return;
+      await readStartupClipboard();
     });
+
+    return () => {
+      disposed = true;
+      stopListening?.();
+      activeRun?.abort();
+    };
   });
 
   $: summary = [
@@ -145,6 +200,21 @@
       return;
     }
     state = applyClipboardError(state, result.message);
+  }
+
+  async function readStartupClipboard() {
+    const policy = persistedConfig?.clipboard_policy;
+    if (!policy || !shouldReadClipboardOnStartup(policy, startupClipboardRead)) return;
+    startupClipboardRead = true;
+    await readClipboard();
+  }
+
+  function handleHostAction(action: HostAction) {
+    if (action === "settings") {
+      beginSettings();
+      return;
+    }
+    state = applyHostAction(state, action);
   }
 
   function beginAdjust() {
@@ -187,15 +257,17 @@
         mode: settingsDraft.default_mode,
         style: settingsDraft.default_style,
         scene_policy: settingsDraft.scene_policy,
-        clipboard_policy: settingsDraft.clipboard_policy
+        clipboard_policy: settingsDraft.clipboard_policy,
+        hotkey: settingsDraft.hotkey
       });
       persistedConfig = saved;
       settingsDraft = settingsDraftFromConfig(saved);
       state = applySettingsDraft(applyPersistedConfig(state, saved), settingsDraft);
       draft = { ...state.requestDraft };
+      await refreshDesktopStatus();
       showToast("✓ 设置已保存");
-    } catch {
-      settingsNotice = "设置保存失败，请重试。";
+    } catch (error) {
+      settingsNotice = safeDesktopSettingsError(error);
     } finally {
       settingsBusy = false;
     }
@@ -203,14 +275,17 @@
 
   function cancelSettingsView() {
     state = cancelSettings(state);
-    settingsDraft = {
-      default_provider: state.requestDraft.provider,
-      default_model: state.requestDraft.model,
-      default_mode: state.requestDraft.mode,
-      default_style: state.requestDraft.style,
-      scene_policy: state.requestDraft.scene_policy,
-      clipboard_policy: settingsDraft.clipboard_policy
-    };
+    settingsDraft = persistedConfig
+      ? settingsDraftFromConfig(persistedConfig)
+      : {
+          default_provider: state.requestDraft.provider,
+          default_model: state.requestDraft.model,
+          default_mode: state.requestDraft.mode,
+          default_style: state.requestDraft.style,
+          scene_policy: state.requestDraft.scene_policy,
+          clipboard_policy: "manual",
+          hotkey: "Ctrl+Alt+R"
+        };
     secretInput = "";
     settingsNotice = null;
     secretNotice = null;
@@ -238,6 +313,18 @@
       secretNotice = "密钥状态读取失败，请重试。";
     } finally {
       settingsBusy = false;
+    }
+  }
+
+  async function refreshDesktopStatus() {
+    if (!desktopBridge) return;
+    try {
+      desktopStatus = await desktopBridge.status();
+    } catch {
+      desktopStatus = {
+        ...desktopStatus,
+        message: "快捷键状态暂不可用。"
+      };
     }
   }
 
@@ -300,7 +387,8 @@
       default_mode: config.mode,
       default_style: config.style,
       scene_policy: config.scene_policy,
-      clipboard_policy: config.clipboard_policy
+      clipboard_policy: config.clipboard_policy,
+      hotkey: config.hotkey
     };
   }
 
@@ -328,6 +416,9 @@
         request_id: requestId,
         event
       });
+      if (event.type === "done" && state.phase === "completed") {
+        await handleCompletionClipboard();
+      }
     }
 
     if (activeRun === controller) {
@@ -343,34 +434,80 @@
 
   async function copyResult() {
     if (!state.output) return;
-    await navigator.clipboard?.writeText(state.output);
+    const copied = await writeClipboardValue(state.output, "✓ 已复制到剪贴板");
+    if (!copied) return;
     state = { ...state, copied: true };
-    toastText = "✓ 已复制到剪贴板";
-    toastVisible = true;
     window.setTimeout(() => {
-      toastVisible = false;
       state = { ...state, copied: false };
     }, 1400);
   }
 
   function askReplaceClipboard() {
     if (!state.output) return;
-    state = { ...state, overlay: "clipboard_confirm" };
+    void executeClipboardAction(
+      clipboardActionForManualReplace(persistedConfig?.clipboard_replace_confirmed === true)
+    );
   }
 
   async function confirmReplaceClipboard() {
-    await copyResult();
+    const replaced = await writeClipboardValue(state.output, "✓ 已替换剪贴板");
+    if (!replaced) return;
+    await rememberClipboardConfirmation();
     state = { ...state, overlay: null };
+    clipboardNotice = null;
   }
 
   async function copyDiagnosticId() {
     if (!state.diagnosticId) return;
-    await navigator.clipboard?.writeText(state.diagnosticId);
-    toastText = "✓ 诊断 ID 已复制";
-    toastVisible = true;
-    window.setTimeout(() => {
-      toastVisible = false;
-    }, 1400);
+    await writeClipboardValue(state.diagnosticId, "✓ 诊断 ID 已复制");
+  }
+
+  async function handleCompletionClipboard() {
+    const policy = persistedConfig?.clipboard_policy ?? "manual";
+    await executeClipboardAction(
+      clipboardActionAfterCompletion(
+        policy,
+        persistedConfig?.clipboard_replace_confirmed === true
+      )
+    );
+  }
+
+  async function executeClipboardAction(action: ClipboardAction) {
+    if (action === "none") return;
+    if (action === "confirm") {
+      clipboardNotice = null;
+      state = { ...state, overlay: "clipboard_confirm" };
+      return;
+    }
+    await writeClipboardValue(state.output, "✓ 已替换剪贴板");
+  }
+
+  async function writeClipboardValue(text: string, successMessage: string): Promise<boolean> {
+    const result = await writeClipboardText(clipboardWriter, text);
+    if (!result.ok) {
+      clipboardNotice = result.message;
+      showToast(result.message);
+      return false;
+    }
+    clipboardNotice = null;
+    showToast(successMessage);
+    return true;
+  }
+
+  async function rememberClipboardConfirmation() {
+    if (!persistedConfig) return;
+    const confirmedConfig = {
+      ...persistedConfig,
+      clipboard_replace_confirmed: true
+    };
+    persistedConfig = confirmedConfig;
+    if (!settingsApi) return;
+    try {
+      persistedConfig = await settingsApi.saveConfig(confirmedConfig);
+      settingsDraft = settingsDraftFromConfig(persistedConfig);
+    } catch {
+      clipboardNotice = "本次已替换，下次使用时仍会再次确认。";
+    }
   }
 
   function retryRun() {
@@ -382,11 +519,16 @@
     beginSettings();
   }
 
+  function managePluginSettings() {
+    beginSettings();
+  }
+
   function closeOverlay() {
     if (state.overlay === "settings") {
       cancelSettingsView();
       return;
     }
+    clipboardNotice = null;
     state = { ...state, overlay: null };
   }
 
@@ -602,10 +744,6 @@
           优化文本 <span>→</span>
         </button>
 
-        <div class="shortcut-row">
-          <span>Esc 关闭</span>
-          <span>Ctrl + Enter</span>
-        </div>
       </section>
     {/if}
 
@@ -614,9 +752,53 @@
         <section class="clipboard-modal" aria-label="替换剪贴板确认">
           <h2>替换当前剪贴板内容？</h2>
           <p>原剪贴板内容会被本次结果覆盖。首次使用需要确认，之后可在设置中修改。</p>
+          {#if clipboardNotice}
+            <p class="clipboard-feedback" aria-live="polite">{clipboardNotice}</p>
+          {/if}
           <div>
             <button class="outline" on:click={closeOverlay}>取消</button>
             <button class="primary small" on:click={confirmReplaceClipboard}>确认替换</button>
+          </div>
+        </section>
+      </div>
+    {/if}
+
+    {#if state.overlay === "plugin_manager"}
+      <div class="settings-layer" role="presentation">
+        <section class="plugin-dialog" aria-label="插件">
+          <div class="settings-head">
+            <div>
+              <h2>插件</h2>
+              <p>查看当前可用能力及其访问范围。</p>
+            </div>
+            <button class="icon-button" aria-label="关闭插件" on:click={closeOverlay}>×</button>
+          </div>
+          <div class="plugin-list">
+            <article class="plugin-row">
+              <div>
+                <strong>MiniMax 模型服务</strong>
+                <span>生成与优化文本</span>
+              </div>
+              <span class="permission-badge">网络访问</span>
+            </article>
+            <article class="plugin-row">
+              <div>
+                <strong>内置模板</strong>
+                <span>提供场景、风格与语言模板</span>
+              </div>
+              <span class="permission-badge">本地内容</span>
+            </article>
+            <article class="plugin-row">
+              <div>
+                <strong>场景识别</strong>
+                <span>根据当前文本选择适合的处理方式</span>
+              </div>
+              <span class="permission-badge">本地文本</span>
+            </article>
+          </div>
+          <div class="plugin-footer">
+            <span>3 项内置能力</span>
+            <button class="primary small" type="button" on:click={managePluginSettings}>管理设置</button>
           </div>
         </section>
       </div>
@@ -738,6 +920,18 @@
                     {/each}
                   </div>
                 </div>
+                <label class="desktop-hotkey">
+                  <span>全局快捷键</span>
+                  <input
+                    bind:value={settingsDraft.hotkey}
+                    disabled={settingsBusy}
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <small class:available={desktopStatus.hotkeyActive}>
+                    {desktopStatus.message ?? (desktopStatus.hotkeyActive ? "当前快捷键已启用" : "保存后启用快捷键")}
+                  </small>
+                </label>
               {:else if settingsSection === "clipboard"}
                 <h3>剪贴板</h3>
                 <div class="settings-block">
