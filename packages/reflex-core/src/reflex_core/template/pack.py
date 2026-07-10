@@ -175,7 +175,10 @@ def _parse_asset(value: object) -> TemplateAsset:
 
 
 def _read_asset(root: Path, relative_path: str) -> str:
-    candidate = root.joinpath(*PurePosixPath(relative_path).parts).resolve(strict=True)
+    unresolved_candidate = root.joinpath(*PurePosixPath(relative_path).parts)
+    if unresolved_candidate.is_symlink():
+        raise ValueError
+    candidate = unresolved_candidate.resolve(strict=True)
     if root not in candidate.parents or not candidate.is_file() or candidate.is_symlink():
         raise ValueError
     return _read_bounded_utf8(candidate)

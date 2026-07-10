@@ -160,6 +160,29 @@ def test_template_pack_rejects_invalid_or_oversized_utf8_assets(tmp_path, conten
         FileTemplatePack.load(root)
 
 
+def test_template_pack_rejects_symlinked_assets_before_resolving_them(tmp_path, monkeypatch):
+    root = _write_minimal_pack(tmp_path)
+    scene_path = root / "content" / "general.md"
+    target_path = root / "content" / "general-target.md"
+    scene_path.rename(target_path)
+    real_resolve = Path.resolve
+    real_is_symlink = Path.is_symlink
+
+    def resolve(path, strict=False):
+        if path == scene_path:
+            return target_path
+        return real_resolve(path, strict=strict)
+
+    def is_symlink(path):
+        return path == scene_path or real_is_symlink(path)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    monkeypatch.setattr(Path, "is_symlink", is_symlink)
+
+    with pytest.raises(TemplatePackError, match="^Template pack is invalid\\.$"):
+        FileTemplatePack.load(root)
+
+
 def _write_minimal_pack(tmp_path: Path) -> Path:
     root = tmp_path / "pack"
     (root / "system").mkdir(parents=True)
