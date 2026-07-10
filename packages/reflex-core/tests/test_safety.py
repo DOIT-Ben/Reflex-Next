@@ -21,6 +21,30 @@ def test_safe_provider_error_never_returns_raw_exception_text():
     assert action == "retry"
 
 
+def test_safe_provider_error_maps_only_approved_provider_codes():
+    class PluginFailure(RuntimeError):
+        code = "provider_rate_limited"
+
+    assert safe_provider_error(PluginFailure("raw provider response")) == (
+        "provider_rate_limited",
+        "Provider rate limit reached.",
+        True,
+        "retry",
+    )
+
+    PluginFailure.code = "unapproved_error"
+    code, message, recoverable, action = safe_provider_error(
+        PluginFailure("Bearer fixture-private-value")
+    )
+    assert (code, message, recoverable, action) == (
+        "provider_error",
+        "Provider request failed.",
+        True,
+        "retry",
+    )
+    assert "fixture-private-value" not in message
+
+
 def test_sanitize_text_removes_null_and_control_characters():
     assert sanitize_text("a\x00b\x01\r\nc") == "ab\nc"
 

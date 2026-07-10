@@ -1,0 +1,7 @@
+: keepalive
+
+data: {"choices":[{"delta":{"content":"第一段"}}]}
+
+data: {"choices":[{"delta":{"content":"第二段"}}]}
+
+data: [DONE]
