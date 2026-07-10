@@ -2,17 +2,18 @@
 
 ## 当前状态
 
-项目已完成架构契约冻结、`reflex-core` Stage 1、Figma Current 主浮窗重构、Tauri/Rust Host 真实 Sidecar 桥接，以及安全配置与 MiniMax Provider 离线主链，当前进入真实网络冒烟和桌面发布能力补齐阶段。
+项目已完成架构契约冻结、`reflex-core` 基础主链、Figma Current 主浮窗重构、Tauri/Rust Host 真实 Sidecar 桥接、安全配置与 MiniMax Provider 离线主链，以及内置模板包和 42 场景接入。当前进入桌面宿主能力补齐阶段。
 
 当前主线基线：
 
 - Figma `Current` 区域是唯一 UI 真值；
 - `docs/UI-IMPLEMENTATION-SPEC.md` 已冻结 Figma、Tauri、Sidecar 和 Core 的实现契约；
 - `docs/CODEX-DELIVERY-PLAN.md` 已冻结分阶段交付路线；
-- `packages/reflex-core` 已具备稳定事件协议、请求规范化、取消语义、L0 场景规则、安全纯函数和无网络优化用例；
+- `packages/reflex-core` 已具备稳定事件协议、请求规范化、取消语义、覆盖 42 场景的 L0 规则、安全纯函数、模板包校验和无网络优化用例；
 - `packages/reflex-runtime` 已具备 NDJSON 命令循环、Provider 插件发现与注册、私有配置、显式开发 Mock、取消和多请求隔离；
 - `plugins/provider-minimax` 已具备 SSE/JSON 解析、取消、有限重试和稳定安全错误映射；
-- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗、`CoreBridge` 抽象、Tauri API 适配层、Figma Current 主状态机、Rust 剪贴板命令、常驻 Python Runtime 管理、设置持久化、Windows 安全凭据和设置交互；
+- `template-packs/builtin` 已具备 42 个场景、5 个风格、系统模板、版本化 manifest 和加载失败回退；
+- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗、`CoreBridge` 抽象、Tauri API 适配层、Figma Current 主状态机、42 场景手动选择、Rust 剪贴板命令、常驻 Python Runtime 管理、设置持久化、Windows 安全凭据和设置交互；
 - Core 自动测试已覆盖导入边界、事件协议、优化用例、安全、场景和 sidecar；
 - Core 导入不引入 PyQt、PySide、sqlite3、pyperclip、torch、sentence-transformers 或 huggingface-hub。
 
@@ -30,6 +31,7 @@
 - `docs/dev-records/2026-07-10-tauri-api-bridge.md`
 - `docs/dev-records/2026-07-10-figma-current-host-state.md`
 - `docs/verification/stage-a-verification.md`
+- `docs/verification/stage-b-verification.md`
 - `workbench/known-pitfalls.md`
 
 ## 最近变更摘要
@@ -61,18 +63,23 @@
 - 完成 Provider 插件白名单发现、失败隔离、注册与显式 Mock；
 - 完成 MiniMax SSE/JSON、取消、有限重试和安全错误分类；
 - 完成设置页持久配置、密钥保存/删除和 Tauri capability 权限闭环；
-- 当前机器 Rust 工具链可用，Rust 测试和 Tauri debug 构建已执行；
-- Stage 1 已通过独立 QA 并合入 `main`。
+- 完成内置模板包 manifest、安全加载、双模式、风格、场景和语言渲染；
+- 完成 48 份模板资产迁移与逐文件哈希核对，未使用或修改当前仓库的未跟踪 `resources\`；
+- 完成 L0 规则识别扩展到 42 个场景，并保持低置信 `general` 回退；
+- 完成 Runtime 固定内置模板包接线和端到端渲染契约测试；
+- 完成 Tauri 调整页 42 场景选择、自动/手动策略联动和语言元数据传递；
+- 当前机器 Rust 工具链可用，Rust 测试和桌面开发构建已执行；
+- 基础主链已通过独立 QA 并合入 `main`。
 
 ## 下一阶段
 
-进入真实链路与桌面发布能力补齐。
+进入桌面宿主能力补齐；真实 MiniMax 冒烟仍作为需要用户在设置页手动录入密钥的独立门禁保留。
 
 必须完成：
 
-1. 由用户在设置页手动配置密钥，完成一次真实 MiniMax 流式请求和取消；
-2. 实现单实例、托盘和全局快捷键；
-3. 实现窗口显示、隐藏、聚焦和位置越界恢复；
-4. 完成 Python Runtime 发布态自包含打包；
-5. 补多显示器和安装/卸载生命周期证据；
-6. 按插件边界继续迁移模板包和后续 Provider。
+1. 实现单实例、托盘和全局快捷键；
+2. 实现窗口显示、隐藏、聚焦和位置越界恢复；
+3. 补齐剪贴板读取、复制、首次替换确认和持久策略；
+4. 由用户在设置页手动配置密钥，完成一次真实 MiniMax 流式请求和取消；
+5. 按插件边界继续接入历史、结果增强、批处理、语义识别和后续 Provider；
+6. 完成 Python Runtime 发布态自包含打包及安装生命周期验证。

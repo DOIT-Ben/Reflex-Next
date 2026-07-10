@@ -1,21 +1,26 @@
-# Builtin Template Pack
+# Reflex 内置模板包
 
-内置模板包规划目录。
+该目录提供 Reflex Next 默认使用的版本化模板资产。Runtime 只从固定内置位置加载此包，Core 负责校验和渲染，Provider 只消费渲染后的消息。
 
-迁移来源：
+## 内容
 
-- `D:\Desktop\AI\11_Products\prod\Reflex\resources\templates`
-- `D:\Desktop\AI\11_Products\prod\Reflex\api\prompt_builder.py`
-- `D:\Desktop\AI\11_Products\prod\Reflex\core\scene_registry.py`
+- `manifest.json`：模板包版本、42 个场景、5 个风格和系统模板清单。
+- `content\`：42 个内容场景模板，包含通用回退场景。
+- `style\`：`concise`、`balanced`、`detailed`、`creative` 四种主风格和 `precise` 兼容风格。
+- `system\base.md`：内容优化与提示词生成共用的系统基础模板。
 
-首批迁移场景：
+模板渲染支持：
 
-- general
-- article_writing
-- email
-- code_generation
-- code_review
-- doc_translation
-- report_writing
-- problem_diagnosis
+- `content` 与 `prompt` 两种模式；
+- 自动识别或手动指定场景；
+- 场景与风格组合；
+- `zh-CN` 与 `en-US` 输出语言。
 
+## 安全与回退
+
+- 清单中的路径必须为包内相对路径，且文件必须是有效、非空、大小受限的 UTF-8 文本。
+- 重复 ID、路径穿越、缺失文件、无效编码和超限资产会使文件包校验失败。
+- 模板包缺失或损坏时，Core 使用内置通用模板继续处理，不阻塞用户请求。
+- 此目录不保存 Provider 配置、密钥、用户输入或生成结果。
+
+迁移来源为旧 Reflex 的模板、Prompt 构建和场景注册行为；新实现只承接资产与行为，不复用旧桌面 UI 架构。
