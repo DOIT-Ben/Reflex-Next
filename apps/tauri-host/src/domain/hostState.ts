@@ -4,6 +4,7 @@ import type {
   OptimizeRequestDraft
 } from "./coreBridge";
 import type { OptimizeMode, OptimizeStyle, ScenePolicy } from "./reflexSession";
+import type { AppConfig } from "./settingsApi";
 
 export type HostPhase =
   | "empty"
@@ -191,6 +192,33 @@ export function applySettingsDraft(
   };
 }
 
+export function applyPersistedConfig(state: HostState, config: AppConfig): HostState {
+  const requestDraft: RequestSettings = {
+    ...state.requestDraft,
+    provider: config.provider,
+    model: config.model,
+    mode: config.mode,
+    style: config.style,
+    scene_policy: config.scene_policy
+  };
+  const settingsDraft: HostSettingsDraft | null = state.settingsDraft
+    ? {
+        default_provider: config.provider,
+        default_model: config.model,
+        default_mode: config.mode,
+        default_style: config.style,
+        scene_policy: config.scene_policy,
+        clipboard_policy: config.clipboard_policy
+      }
+    : null;
+  return {
+    ...state,
+    requestDraft,
+    settingsDraft,
+    providerSummary: providerLabel(requestDraft)
+  };
+}
+
 export function startGeneration(state: HostState, requestId: string): HostState {
   return {
     ...state,
@@ -345,8 +373,8 @@ function createDefaultSettings(): RequestSettings {
     style: "balanced",
     scene: "report_writing",
     scene_policy: "auto",
-    provider: "MiniMax",
-    model: "abab6.5"
+    provider: "minimax",
+    model: "MiniMax-M2.7-highspeed"
   };
 }
 
@@ -362,7 +390,12 @@ function createSettingsDraft(state: HostState): HostSettingsDraft {
 }
 
 function providerLabel(settings: RequestSettings): string {
-  return settings.provider ?? "未配置";
+  return providerDisplayName(settings.provider);
+}
+
+export function providerDisplayName(provider: string | null): string {
+  if (!provider) return "未配置";
+  return provider.toLowerCase() === "minimax" ? "MiniMax" : provider;
 }
 
 function phaseFromStatus(value: unknown, fallback: HostPhase): HostPhase {

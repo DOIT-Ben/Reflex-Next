@@ -4,6 +4,7 @@ import {
   applyAdjustDraft,
   applyClipboardError,
   applyClipboardText,
+  applyPersistedConfig,
   applySettingsDraft,
   cancelGeneration,
   cancelAdjust,
@@ -17,6 +18,24 @@ import {
   startGeneration,
   updateInput
 } from "./hostState";
+import type { AppConfig } from "./settingsApi";
+
+const persistedConfig: AppConfig = {
+  version: 1,
+  provider: "minimax",
+  model: "MiniMax-M2.7-highspeed",
+  mode: "prompt",
+  style: "creative",
+  scene_policy: "ask",
+  clipboard_policy: "manual",
+  history_enabled: true,
+  privacy_mode: false,
+  language: "zh-CN",
+  theme: "system",
+  hotkey: "Ctrl+Alt+R",
+  tls_verify: true,
+  ca_bundle_path: null
+};
 
 describe("host state", () => {
   it("moves between empty and ready from input text", () => {
@@ -203,8 +222,8 @@ describe("host state", () => {
     expect(settings.phase).toBe("ready");
     expect(settings.overlay).toBe("settings");
     expect(settings.settingsDraft).toMatchObject({
-      default_provider: "MiniMax",
-      default_model: "abab6.5",
+      default_provider: "minimax",
+      default_model: "MiniMax-M2.7-highspeed",
       default_mode: "content",
       default_style: "balanced",
       scene_policy: "auto",
@@ -238,6 +257,21 @@ describe("host state", () => {
     });
 
     expect(cancelSettings(settings).overlay).toBeNull();
+  });
+
+  it("applies persisted config to requests without adding secret state", () => {
+    const state = applyPersistedConfig(createHostState(), persistedConfig);
+
+    expect(state.requestDraft).toMatchObject({
+      provider: "minimax",
+      model: "MiniMax-M2.7-highspeed",
+      mode: "prompt",
+      style: "creative",
+      scene_policy: "ask"
+    });
+    expect(state).not.toHaveProperty("apiKey");
+    expect(JSON.stringify(state)).not.toContain("secret");
+    expect(state.providerSummary).toBe("MiniMax");
   });
 
   it("creates an OptimizeRequest draft from host state", () => {

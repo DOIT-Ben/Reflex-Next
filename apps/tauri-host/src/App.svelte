@@ -6,6 +6,7 @@
     applyClipboardError,
     applyClipboardText,
     applyCoreEnvelope,
+    applyPersistedConfig,
     applySettingsDraft,
     cancelGeneration,
     cancelAdjust,
@@ -14,6 +15,7 @@
     createRequestDraft,
     openAdjust,
     openSettings,
+    providerDisplayName,
     resolveHostShortcut,
     retryAfterError,
     startGeneration,
@@ -28,6 +30,12 @@
     type ClipboardReader
   } from "./domain/clipboardBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
+  import {
+    createSettingsApi,
+    type AppConfig,
+    type SecretStatus,
+    type SettingsApi
+  } from "./domain/settingsApi";
   import type { CoreBridge, TauriHostApi } from "./domain/coreBridge";
   import type { OptimizeMode, OptimizeStyle, ScenePolicy } from "./domain/reflexSession";
 
@@ -58,9 +66,17 @@
     { id: "ask", label: "每次询问" },
     { id: "manual", label: "手动固定" }
   ];
+  const settingsSections = [
+    { id: "provider", label: "模型与 Provider" },
+    { id: "defaults", label: "默认行为" },
+    { id: "clipboard", label: "剪贴板" },
+    { id: "privacy", label: "安全与隐私" }
+  ] as const;
+  type SettingsSection = (typeof settingsSections)[number]["id"];
 
   let coreBridge: CoreBridge = new DemoCoreBridge();
   let hostApi: TauriHostApi | null = null;
+  let settingsApi: SettingsApi | null = null;
   let clipboardReader: ClipboardReader = createClipboardReader();
   let state: HostState = updateInput(
     createHostState(),
@@ -76,6 +92,18 @@
     clipboard_policy: "manual"
   };
   let activeRun: AbortController | null = null;
+  let persistedConfig: AppConfig | null = null;
+  let secretInput = "";
+  let secretStatus: SecretStatus = {
+    providerId: "minimax",
+    configured: false,
+    maskedTail: null
+  };
+  let settingsSection: SettingsSection = "provider";
+  let settingsBusy = false;
+  let secretBusy = false;
+  let settingsNotice: string | null = null;
+  let secretNotice: string | null = null;
   let clipboardReading = false;
   let toastVisible = false;
   let toastText = "✓ 已复制到剪贴板";
@@ -84,7 +112,9 @@
     void createTauriHostApi().then((host) => {
       if (host) {
         hostApi = host;
+        settingsApi = createSettingsApi(host);
         clipboardReader = createClipboardReader(host);
+        void hydrateSettings();
         void createDefaultCoreBridge(host).then((bridge) => {
           coreBridge = bridge;
         });
@@ -96,7 +126,7 @@
     modeLabel(state.requestDraft.mode),
     styleLabel(state.requestDraft.style),
     sceneLabel(state.requestDraft.scene),
-    state.requestDraft.provider ?? "未配置"
+    providerDisplayName(state.requestDraft.provider)
   ].join(" · ");
   $: inputCount = `${state.inputText.trim().length} 字`;
   $: canGenerate = state.canGenerate && !isGenerating(state.phase);
@@ -134,16 +164,41 @@
   function beginSettings() {
     state = openSettings(state);
     settingsDraft = { ...(state.settingsDraft ?? settingsDraft) };
+    settingsSection = "provider";
+    secretInput = "";
+    settingsNotice = null;
+    secretNotice = null;
+    void hydrateSettings();
   }
 
-  function saveSettings() {
-    state = applySettingsDraft(state, settingsDraft);
-    draft = { ...state.requestDraft };
-    toastText = "✓ 设置已保存";
-    toastVisible = true;
-    window.setTimeout(() => {
-      toastVisible = false;
-    }, 1400);
+  async function saveSettings() {
+    if (settingsBusy) return;
+    if (!settingsApi || !persistedConfig) {
+      settingsNotice = "当前环境无法保存设置。";
+      return;
+    }
+    settingsBusy = true;
+    settingsNotice = null;
+    try {
+      const saved = await settingsApi.saveConfig({
+        ...persistedConfig,
+        provider: settingsDraft.default_provider ?? "minimax",
+        model: settingsDraft.default_model ?? "MiniMax-M2.7-highspeed",
+        mode: settingsDraft.default_mode,
+        style: settingsDraft.default_style,
+        scene_policy: settingsDraft.scene_policy,
+        clipboard_policy: settingsDraft.clipboard_policy
+      });
+      persistedConfig = saved;
+      settingsDraft = settingsDraftFromConfig(saved);
+      state = applySettingsDraft(applyPersistedConfig(state, saved), settingsDraft);
+      draft = { ...state.requestDraft };
+      showToast("✓ 设置已保存");
+    } catch {
+      settingsNotice = "设置保存失败，请重试。";
+    } finally {
+      settingsBusy = false;
+    }
   }
 
   function cancelSettingsView() {
@@ -156,6 +211,97 @@
       scene_policy: state.requestDraft.scene_policy,
       clipboard_policy: settingsDraft.clipboard_policy
     };
+    secretInput = "";
+    settingsNotice = null;
+    secretNotice = null;
+  }
+
+  async function hydrateSettings() {
+    if (!settingsApi) return;
+    settingsBusy = true;
+    settingsNotice = null;
+    try {
+      const config = await settingsApi.loadConfig();
+      persistedConfig = config;
+      state = applyPersistedConfig(state, config);
+      settingsDraft = settingsDraftFromConfig(config);
+      secretStatus = await settingsApi.getProviderSecretStatus(config.provider);
+    } catch {
+      settingsNotice = "设置加载失败，请重试。";
+    } finally {
+      settingsBusy = false;
+    }
+  }
+
+  async function saveSecret() {
+    if (secretBusy) return;
+    const api = settingsApi;
+    const value = secretInput.trim();
+    if (!api) {
+      secretNotice = "当前环境无法保存密钥。";
+      secretInput = "";
+      return;
+    }
+    if (!value) {
+      secretNotice = "请输入 API Key。";
+      return;
+    }
+    secretBusy = true;
+    secretNotice = null;
+    try {
+      secretStatus = await api.saveProviderSecret(
+        settingsDraft.default_provider ?? "minimax",
+        value
+      );
+      secretNotice = "密钥已安全保存。";
+    } catch {
+      secretNotice = "密钥保存失败，请重试。";
+    } finally {
+      secretInput = "";
+      secretBusy = false;
+    }
+  }
+
+  async function deleteSecret() {
+    if (secretBusy || !secretStatus.configured) return;
+    if (!window.confirm("删除已保存的 API Key？")) return;
+    const api = settingsApi;
+    if (!api) {
+      secretNotice = "当前环境无法删除密钥。";
+      return;
+    }
+    secretBusy = true;
+    secretNotice = null;
+    try {
+      secretStatus = await api.deleteProviderSecret(
+        settingsDraft.default_provider ?? "minimax"
+      );
+      secretNotice = "密钥已删除。";
+    } catch {
+      secretNotice = "密钥删除失败，请重试。";
+    } finally {
+      secretInput = "";
+      secretBusy = false;
+    }
+  }
+
+  function settingsDraftFromConfig(config: AppConfig): HostSettingsDraft {
+    return {
+      default_provider: config.provider,
+      default_model: config.model,
+      default_mode: config.mode,
+      default_style: config.style,
+      scene_policy: config.scene_policy,
+      clipboard_policy: config.clipboard_policy
+    };
+  }
+
+  function showToast(message: string) {
+    toastText = message;
+    toastVisible = true;
+    window.setTimeout(() => {
+      toastVisible = false;
+    }, 1400);
   }
 
   async function runOptimization() {
@@ -290,7 +436,7 @@
         <span class="brand-mark">R</span>
         <strong>Reflex</strong>
       </div>
-      <div class="provider-pill"><span></span>{state.requestDraft.provider ?? "未配置"}</div>
+      <div class="provider-pill"><span></span>{providerDisplayName(state.requestDraft.provider)}</div>
       <button class="icon-button" aria-label="设置" on:click={beginSettings}>⚙</button>
     </header>
 
@@ -334,8 +480,7 @@
           <label class="setting-row">
             <span>模型</span>
             <select bind:value={draft.model}>
-              <option value="abab6.5">MiniMax / abab6.5</option>
-              <option value="local-preview">本地预览 / 预览流</option>
+              <option value="MiniMax-M2.7-highspeed">MiniMax / M2.7 高速版</option>
             </select>
           </label>
 
@@ -467,107 +612,146 @@
           <div class="settings-head">
             <div>
               <h2>设置</h2>
-              <p>最小但完整：模型、默认行为、剪贴板与安全。</p>
+              <p>管理模型、默认行为和本地隐私。</p>
             </div>
             <button class="icon-button" aria-label="关闭设置" on:click={cancelSettingsView}>×</button>
           </div>
 
           <div class="settings-layout">
             <nav class="settings-nav" aria-label="设置分类">
-              <button class="active">模型与 Provider</button>
-              <button>默认行为</button>
-              <button>剪贴板</button>
-              <button>安全与隐私</button>
-              <button>插件</button>
+              {#each settingsSections as section}
+                <button
+                  type="button"
+                  class:active={settingsSection === section.id}
+                  aria-pressed={settingsSection === section.id}
+                  on:click={() => (settingsSection = section.id)}
+                >
+                  {section.label}
+                </button>
+              {/each}
             </nav>
 
             <div class="settings-content">
-              <h3>模型与 Provider</h3>
-              <div class="settings-grid">
-                <label>
-                  <span>默认 Provider</span>
-                  <select bind:value={settingsDraft.default_provider}>
-                    <option value="MiniMax">MiniMax</option>
-                    <option value="">未配置</option>
-                  </select>
-                </label>
-                <label>
-                  <span>默认模型</span>
-                  <select bind:value={settingsDraft.default_model}>
-                    <option value="abab6.5">abab6.5</option>
-                    <option value="abab6.5-chat">abab6.5-chat</option>
-                    <option value="local-preview">本地预览 / 预览流</option>
-                  </select>
-                </label>
-              </div>
+              {#if settingsSection === "provider"}
+                <h3>模型与 Provider</h3>
+                <div class="settings-grid">
+                  <label>
+                    <span>默认 Provider</span>
+                    <select bind:value={settingsDraft.default_provider} disabled={settingsBusy}>
+                      <option value="minimax">MiniMax</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>默认模型</span>
+                    <select bind:value={settingsDraft.default_model} disabled={settingsBusy}>
+                      <option value="MiniMax-M2.7-highspeed">M2.7 高速版</option>
+                    </select>
+                  </label>
+                </div>
 
-              <div class="api-key-row">
-                <label>
-                  <span>API Key</span>
-                  <input value="••••••••••••••••••••" readonly aria-label="API Key 掩码" />
-                </label>
-                <button class="outline" type="button">显示</button>
-                <button class="outline" type="button">测试连接</button>
-              </div>
-              <p class="settings-note">API Key 仅保存在系统安全存储中，不写入日志。</p>
-
-              <div class="settings-grid">
-                <div>
-                  <span class="field-label">默认模式</span>
+                <div class="api-key-row">
+                  <label>
+                    <span>API Key</span>
+                    <input
+                      type="password"
+                      bind:value={secretInput}
+                      autocomplete="off"
+                      spellcheck="false"
+                      disabled={secretBusy}
+                      placeholder="输入新的 API Key"
+                      aria-describedby="secret-feedback"
+                    />
+                  </label>
+                  <button class="outline" type="button" disabled={secretBusy} on:click={saveSecret}>
+                    {secretBusy ? "正在保存" : "保存密钥"}
+                  </button>
+                  <button
+                    class="outline danger"
+                    type="button"
+                    disabled={secretBusy || !secretStatus.configured}
+                    on:click={deleteSecret}
+                  >
+                    删除密钥
+                  </button>
+                </div>
+                <p id="secret-feedback" class="settings-feedback" aria-live="polite">
+                  {secretNotice ?? "密钥只保存在系统安全存储中，输入不会保留。"}
+                </p>
+                <div class="credential-status" class:configured={secretStatus.configured}>
+                  <span class="status-dot" aria-hidden="true"></span>
+                  <div>
+                    <strong>{secretStatus.configured ? "密钥已保存" : "尚未配置密钥"}</strong>
+                    <span>
+                      {secretStatus.configured && secretStatus.maskedTail
+                        ? `尾号 ${secretStatus.maskedTail}`
+                        : "保存后即可使用当前 Provider"}
+                    </span>
+                  </div>
+                </div>
+              {:else if settingsSection === "defaults"}
+                <h3>默认行为</h3>
+                <div class="settings-grid">
+                  <div>
+                    <span class="field-label">默认模式</span>
+                    <div class="segments compact">
+                      {#each modes as item}
+                        <button type="button" class:active={settingsDraft.default_mode === item.id} on:click={() => (settingsDraft = { ...settingsDraft, default_mode: item.id })}>
+                          {item.label}
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+                  <div>
+                    <span class="field-label">默认风格</span>
+                    <div class="segments compact">
+                      {#each styles as item}
+                        <button type="button" class:active={settingsDraft.default_style === item.id} on:click={() => (settingsDraft = { ...settingsDraft, default_style: item.id })}>
+                          {item.label}
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-block">
+                  <span class="field-label">场景识别策略</span>
                   <div class="segments compact">
-                    {#each modes as item}
-                      <button class:active={settingsDraft.default_mode === item.id} on:click={() => (settingsDraft = { ...settingsDraft, default_mode: item.id })}>
+                    {#each scenePolicies as item}
+                      <button type="button" class:active={settingsDraft.scene_policy === item.id} on:click={() => (settingsDraft = { ...settingsDraft, scene_policy: item.id })}>
                         {item.label}
                       </button>
                     {/each}
                   </div>
                 </div>
-                <div>
-                  <span class="field-label">默认风格</span>
+              {:else if settingsSection === "clipboard"}
+                <h3>剪贴板</h3>
+                <div class="settings-block">
+                  <span class="field-label">读取与替换策略</span>
                   <div class="segments compact">
-                    {#each styles as item}
-                      <button class:active={settingsDraft.default_style === item.id} on:click={() => (settingsDraft = { ...settingsDraft, default_style: item.id })}>
+                    {#each clipboardPolicies as item}
+                      <button type="button" class:active={settingsDraft.clipboard_policy === item.id} on:click={() => (settingsDraft = { ...settingsDraft, clipboard_policy: item.id })}>
                         {item.label}
                       </button>
                     {/each}
                   </div>
+                  <p class="warning-note">自动替换会覆盖当前剪贴板内容，首次使用仍需确认。</p>
                 </div>
-              </div>
-
-              <div class="settings-block">
-                <span class="field-label">场景识别策略</span>
-                <div class="segments compact">
-                  {#each scenePolicies as item}
-                    <button class:active={settingsDraft.scene_policy === item.id} on:click={() => (settingsDraft = { ...settingsDraft, scene_policy: item.id })}>
-                      {item.label}
-                    </button>
-                  {/each}
+              {:else}
+                <h3>安全与隐私</h3>
+                <div class="privacy-row">
+                  <span>密钥保存在系统安全存储</span>
+                  <span>日志不记录完整输入</span>
+                  <span>服务错误会隐藏敏感内容</span>
                 </div>
-              </div>
-
-              <div class="settings-block">
-                <span class="field-label">剪贴板策略</span>
-                <div class="segments compact">
-                  {#each clipboardPolicies as item}
-                    <button class:active={settingsDraft.clipboard_policy === item.id} on:click={() => (settingsDraft = { ...settingsDraft, clipboard_policy: item.id })}>
-                      {item.label}
-                    </button>
-                  {/each}
-                </div>
-                <p class="warning-note">自动替换属于高影响操作，首次启用需二次确认。</p>
-              </div>
-
-              <div class="privacy-row">
-                <span>✓ 日志不记录完整输入</span>
-                <span>✓ Provider 错误脱敏</span>
-                <span>✓ 历史保存前脱敏</span>
-              </div>
+              {/if}
             </div>
           </div>
 
           <div class="settings-footer">
-            <button class="outline" on:click={cancelSettingsView}>取消</button>
-            <button class="primary small" on:click={saveSettings}>保存设置</button>
+            <p class="settings-save-notice" aria-live="polite">{settingsNotice ?? ""}</p>
+            <button class="outline" type="button" disabled={settingsBusy} on:click={cancelSettingsView}>取消</button>
+            <button class="primary small" type="button" disabled={settingsBusy} on:click={saveSettings}>
+              {settingsBusy ? "正在保存" : "保存设置"}
+            </button>
           </div>
         </section>
       </div>
