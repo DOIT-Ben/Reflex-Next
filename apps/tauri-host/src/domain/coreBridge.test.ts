@@ -3,6 +3,7 @@ import {
   createCancelCommand,
   createDefaultCoreBridge,
   createOptimizeCommand,
+  DemoCoreBridge,
   parseNdjsonEnvelopes,
   parseNdjsonEvents,
   selectEventsForRequest,
@@ -60,13 +61,44 @@ describe("core bridge", () => {
     });
   });
 
-  it("creates a Tauri runtime bridge when a host api is available", () => {
+  it("keeps the demo bridge until runtime_available returns exactly true", async () => {
+    const calls: string[] = [];
     const host = {
-      invoke: async () => undefined,
+      invoke: async (command: string) => {
+        calls.push(command);
+        return false;
+      },
       listen: async () => () => undefined
     };
 
-    expect(createDefaultCoreBridge(host)).toBeInstanceOf(TauriRuntimeBridge);
+    const bridge = await createDefaultCoreBridge(host);
+
+    expect(bridge).toBeInstanceOf(DemoCoreBridge);
+    expect(calls).toEqual(["runtime_available"]);
+  });
+
+  it("creates a Tauri runtime bridge only when runtime_available returns true", async () => {
+    const host = {
+      invoke: async () => true,
+      listen: async () => () => undefined
+    };
+
+    const bridge = await createDefaultCoreBridge(host);
+
+    expect(bridge).toBeInstanceOf(TauriRuntimeBridge);
+  });
+
+  it("falls back to the demo bridge when runtime_available probe rejects", async () => {
+    const host = {
+      invoke: async () => {
+        throw new Error("probe failed");
+      },
+      listen: async () => () => undefined
+    };
+
+    const bridge = await createDefaultCoreBridge(host);
+
+    expect(bridge).toBeInstanceOf(DemoCoreBridge);
   });
 
   it("filters stale Runtime events by active request id", () => {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { createDefaultCoreBridge } from "./domain/coreBridge";
+  import { createDefaultCoreBridge, DemoCoreBridge } from "./domain/coreBridge";
   import {
     applyAdjustDraft,
     applyClipboardError,
@@ -28,7 +28,7 @@
     type ClipboardReader
   } from "./domain/clipboardBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
-  import type { TauriHostApi } from "./domain/coreBridge";
+  import type { CoreBridge, TauriHostApi } from "./domain/coreBridge";
   import type { OptimizeMode, OptimizeStyle, ScenePolicy } from "./domain/reflexSession";
 
   const modes: Array<{ id: OptimizeMode; label: string }> = [
@@ -59,7 +59,7 @@
     { id: "manual", label: "手动固定" }
   ];
 
-  let coreBridge = createDefaultCoreBridge();
+  let coreBridge: CoreBridge = new DemoCoreBridge();
   let hostApi: TauriHostApi | null = null;
   let clipboardReader: ClipboardReader = createClipboardReader();
   let state: HostState = updateInput(
@@ -85,7 +85,9 @@
       if (host) {
         hostApi = host;
         clipboardReader = createClipboardReader(host);
-        coreBridge = createDefaultCoreBridge(host);
+        void createDefaultCoreBridge(host).then((bridge) => {
+          coreBridge = bridge;
+        });
       }
     });
   });

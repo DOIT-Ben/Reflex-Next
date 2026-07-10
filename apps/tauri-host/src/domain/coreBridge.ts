@@ -105,8 +105,18 @@ export class TauriRuntimeBridge implements CoreBridge {
   }
 }
 
-export function createDefaultCoreBridge(host?: TauriHostApi | null): CoreBridge {
-  return host ? new TauriRuntimeBridge(host) : new DemoCoreBridge();
+export async function createDefaultCoreBridge(host?: TauriHostApi | null): Promise<CoreBridge> {
+  if (!host) {
+    return new DemoCoreBridge();
+  }
+
+  try {
+    const runtimeAvailable = await host.invoke("runtime_available");
+
+    return runtimeAvailable === true ? new TauriRuntimeBridge(host) : new DemoCoreBridge();
+  } catch {
+    return new DemoCoreBridge();
+  }
 }
 
 export function parseNdjsonEvents(payload: string): CoreEvent[] {
