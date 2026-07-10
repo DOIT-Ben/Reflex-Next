@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 _ALLOWED_MODES = frozenset({"content", "prompt"})
-_ALLOWED_STYLES = frozenset({"concise", "balanced", "detailed", "creative"})
+_ALLOWED_STYLES = frozenset({"concise", "balanced", "detailed", "creative", "precise"})
 _ALLOWED_SCENE_POLICIES = frozenset({"auto", "manual", "ask"})
 
 

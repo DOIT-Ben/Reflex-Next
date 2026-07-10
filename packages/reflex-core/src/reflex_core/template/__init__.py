@@ -1,5 +1,13 @@
-"""Template resolver primitives."""
+"""Template pack and resolver primitives."""
 
-from .resolver import PassthroughTemplateResolver
+from .pack import FileTemplatePack, TemplateAsset, TemplatePackError, TemplatePackManifest
+from .resolver import PassthroughTemplateResolver, TemplatePackResolver
 
-__all__ = ["PassthroughTemplateResolver"]
+__all__ = [
+    "FileTemplatePack",
+    "PassthroughTemplateResolver",
+    "TemplateAsset",
+    "TemplatePackError",
+    "TemplatePackManifest",
+    "TemplatePackResolver",
+]

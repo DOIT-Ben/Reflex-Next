@@ -18,6 +18,27 @@ class TemplateResolver(Protocol):
         ...
 
 
+class TemplatePack(Protocol):
+    manifest: Any
+
+    @property
+    def scene_ids(self) -> tuple[str, ...]:
+        ...
+
+    @property
+    def style_ids(self) -> tuple[str, ...]:
+        ...
+
+    def read_system(self) -> str:
+        ...
+
+    def read_scene(self, scene_id: str) -> str:
+        ...
+
+    def read_style(self, style_id: str) -> str:
+        ...
+
+
 class Provider(Protocol):
     id: str
     model: str | None

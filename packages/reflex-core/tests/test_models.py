@@ -42,3 +42,9 @@ def test_optimize_request_rejects_invalid_enum_values(field, value):
 def test_scene_detection_result_validates_confidence():
     with pytest.raises(ValueError):
         SceneDetectionResult("general", 1.5, "rule")
+
+
+def test_precise_style_is_preserved_as_a_compatibility_alias():
+    request = OptimizeRequest("hello", style=" PRECISE ")
+
+    assert request.style == "precise"
