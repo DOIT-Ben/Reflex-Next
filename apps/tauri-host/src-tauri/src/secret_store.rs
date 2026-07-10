@@ -277,4 +277,25 @@ mod tests {
         assert_eq!(error.to_string(), SECRET_STORE_ERROR_MESSAGE);
         assert!(!format!("{error:?}").contains("minimax"));
     }
+
+    #[test]
+    #[ignore = "requires the Windows Credential Manager"]
+    fn windows_backend_treats_a_missing_probe_entry_as_unconfigured() {
+        let store = SecretStore::windows();
+
+        let status = store.status("reflex-stage-a-readonly-probe").unwrap();
+
+        assert!(!status.configured);
+        assert!(status.masked_tail.is_none());
+    }
+
+    #[test]
+    #[ignore = "requires the Windows Credential Manager"]
+    fn windows_backend_reads_minimax_status_without_exposing_the_secret() {
+        let store = SecretStore::windows();
+
+        let status = store.status("minimax").unwrap();
+
+        assert_eq!(status.provider_id, "minimax");
+    }
 }

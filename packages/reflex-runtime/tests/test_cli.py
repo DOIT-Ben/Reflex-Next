@@ -206,7 +206,10 @@ def test_parallel_requests_keep_request_ids_isolated():
         seen: dict[str, list[str]] = {"req-a": [], "req-b": []}
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline and not all("done" in values for values in seen.values()):
-            envelope = runtime.read_event(timeout=0.5)
+            try:
+                envelope = runtime.read_event(timeout=0.5)
+            except queue.Empty:
+                continue
             request_id = envelope["request_id"]
             if request_id in seen:
                 seen[request_id].append(envelope["event"]["type"])
@@ -244,6 +247,100 @@ def test_configure_provider_then_optimize_uses_the_selected_fixture_without_secr
         diagnostics = "\n".join(list(runtime.stderr.queue))
         assert secret not in visible
         assert secret not in diagnostics
+    finally:
+        runtime.close()
+
+
+def test_provider_lifecycle_keeps_private_fixture_values_out_of_stdout_and_stderr():
+    runtime = RuntimeProcess(provider_fixture=True)
+    secret = "fixture-lifecycle-private-credential"
+    auth_request = "fixture-private-auth-request"
+    cancelled_response = "fixture-private-late-response"
+    captured: list[dict] = []
+    try:
+        runtime.send(configure_provider_command("config-lifecycle", secret))
+        configured = runtime.read_event()
+        captured.append(configured)
+        assert configured["event"]["type"] == "status"
+
+        runtime.send(
+            optimize_command(
+                "stream-lifecycle",
+                "normal fixture request",
+                provider="minimax",
+                model="fixture-model-a",
+            )
+        )
+        streamed = runtime.read_until("stream-lifecycle", "done")
+        captured.extend(streamed)
+
+        runtime.send(
+            optimize_command(
+                "cancel-lifecycle",
+                "cancel fixture request",
+                provider="minimax",
+                model="fixture-model-a",
+                delay_ms=80,
+                chunks=["fixture-visible-first-chunk", cancelled_response],
+            )
+        )
+        first_chunk = runtime.read_until("cancel-lifecycle", "chunk")
+        captured.extend(first_chunk)
+        runtime.send(
+            {
+                "version": 1,
+                "request_id": "cancel-lifecycle",
+                "type": "cancel",
+                "payload": {},
+            }
+        )
+        cancelled = runtime.read_until("cancel-lifecycle", "status")
+        captured.extend(cancelled)
+        assert any(
+            item["event"]["data"].get("phase") == "cancelled"
+            for item in cancelled
+            if item["request_id"] == "cancel-lifecycle"
+        )
+
+        runtime.send(
+            optimize_command(
+                "auth-lifecycle",
+                auth_request,
+                provider="minimax",
+                model="fixture-model-a",
+            )
+        )
+        auth_failed = runtime.read_until("auth-lifecycle", "error")
+        captured.extend(auth_failed)
+        assert any(
+            item["event"]["data"].get("code") == "provider_auth_failed"
+            for item in auth_failed
+            if item["request_id"] == "auth-lifecycle"
+        )
+
+        runtime.send(
+            {
+                "version": 1,
+                "request_id": "shutdown-lifecycle",
+                "type": "shutdown",
+                "payload": {},
+            }
+        )
+        shutdown = runtime.read_event()
+        captured.append(shutdown)
+        assert shutdown["request_id"] == "shutdown-lifecycle"
+        assert runtime.process.wait(timeout=2) == 0
+
+        visible = json.dumps(captured, ensure_ascii=False)
+        diagnostics = "\n".join(list(runtime.stderr.queue))
+        combined = f"{visible}\n{diagnostics}"
+        for private_value in [
+            secret,
+            auth_request,
+            cancelled_response,
+            f"Authorization: Bearer {secret}",
+        ]:
+            assert private_value not in combined
     finally:
         runtime.close()
 

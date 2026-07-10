@@ -220,14 +220,22 @@
     if (!settingsApi) return;
     settingsBusy = true;
     settingsNotice = null;
+    secretNotice = null;
+    let config: AppConfig;
     try {
-      const config = await settingsApi.loadConfig();
+      config = await settingsApi.loadConfig();
       persistedConfig = config;
       state = applyPersistedConfig(state, config);
       settingsDraft = settingsDraftFromConfig(config);
-      secretStatus = await settingsApi.getProviderSecretStatus(config.provider);
     } catch {
       settingsNotice = "设置加载失败，请重试。";
+      settingsBusy = false;
+      return;
+    }
+    try {
+      secretStatus = await settingsApi.getProviderSecretStatus(config.provider);
+    } catch {
+      secretNotice = "密钥状态读取失败，请重试。";
     } finally {
       settingsBusy = false;
     }

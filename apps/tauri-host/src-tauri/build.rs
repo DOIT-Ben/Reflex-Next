@@ -5,6 +5,11 @@ fn main() {
             "runtime_available",
             "runtime_optimize",
             "runtime_cancel",
+            "load_app_config",
+            "save_app_config",
+            "provider_secret_status",
+            "save_provider_secret",
+            "delete_provider_secret",
         ]),
     ))
     .expect("failed to build Tauri application");
