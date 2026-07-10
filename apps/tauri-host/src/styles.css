@@ -30,6 +30,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 button,
@@ -51,16 +52,20 @@ button:disabled {
 
 .app-shell {
   display: grid;
+  width: 100%;
+  height: 100vh;
   min-height: 100vh;
   place-items: center;
-  padding: 20px;
+  padding: 0;
+  overflow: hidden;
   background: var(--page);
 }
 
 .window {
   position: relative;
-  width: min(760px, calc(100vw - 24px));
-  min-height: 540px;
+  width: min(760px, 100%);
+  height: min(540px, 100vh);
+  min-height: 0;
   overflow: hidden;
   background: var(--window);
   border-radius: 20px;
@@ -133,8 +138,10 @@ button:disabled {
 .complete-view,
 .error-view {
   position: relative;
-  min-height: 480px;
+  height: calc(100% - 60px);
+  min-height: 0;
   padding: 22px 28px 24px;
+  overflow: auto;
 }
 
 .badge {
@@ -168,7 +175,7 @@ h1 {
 }
 
 .input-card {
-  height: 238px;
+  height: clamp(178px, calc(100vh - 302px), 238px);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -176,7 +183,7 @@ h1 {
 
 textarea {
   width: 100%;
-  height: 194px;
+  height: calc(100% - 44px);
   padding: 18px;
   resize: none;
   color: var(--text);
@@ -390,7 +397,7 @@ select {
 }
 
 .result-card {
-  min-height: 276px;
+  min-height: clamp(216px, calc(100vh - 264px), 276px);
   margin-top: 20px;
   padding: 18px;
   background: var(--surface);
@@ -399,7 +406,7 @@ select {
 }
 
 .generation-view .result-card {
-  min-height: 286px;
+  min-height: clamp(226px, calc(100vh - 254px), 286px);
 }
 
 pre {
@@ -705,15 +712,6 @@ pre {
 }
 
 @media (max-width: 700px) {
-  .app-shell {
-    align-items: start;
-    padding: 12px;
-  }
-
-  .window {
-    min-height: 620px;
-  }
-
   .top-bar {
     padding: 0 18px;
   }

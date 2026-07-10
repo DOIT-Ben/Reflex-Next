@@ -54,8 +54,33 @@ Tauri Host 是 Reflex Next 的轻量桌面外壳。
 - `mockCore` 支持成功链和 provider 不可用错误链，便于无网络验证 Error Recovery。
 - UI reducer 同时兼容 `done.data.final_text` 与 `done.data.text`。
 - `clipboardBridge` 优先调用 Tauri `read_clipboard_text`，浏览器预览时回退 `navigator.clipboard.readText`，并统一转换空内容和权限失败提示。
+- Runtime 启动或写入失败时，`TauriRuntimeBridge` 会转换为固定中文错误事件，不向 UI 透传底层命令、路径或诊断文本。
 
-下一步需要补齐 Tauri/Rust 宿主命令：启动 Python sidecar、转发 `runtime_optimize/runtime_cancel`、读取 stdout 事件流并向前端发送 `reflex://core-event`。
+## Rust Host 与 Runtime
+
+`src-tauri` 已接入开发态 Python Runtime：
+
+- `runtime_available` 检查仓库内 Runtime/Core 开发布局；
+- `runtime_optimize` 与 `runtime_cancel` 校验协议版本、请求标识、命令类型和对象 payload；
+- 首次请求启动一个常驻 Runtime 进程，后续请求复用同一进程；
+- stdin/stdout 使用 UTF-8 NDJSON，stdout 事件通过 `reflex://core-event` 转发给前端；
+- stderr 独立排空，用户可见错误统一转换为安全中文；
+- Runtime 异常退出后在下一次请求时重启，并为未完成请求发送可恢复错误；
+- 应用退出时先发送 `shutdown`，超时后只终止宿主自己创建的子进程；
+- 剪贴板读取由 Rust Host 响应明确的用户操作，不在打开窗口时静默读取。
+
+默认开发态启动命令为：
+
+```text
+uv run --python 3.12 --no-python-downloads --offline python -m reflex_runtime.cli
+```
+
+可通过以下环境变量覆盖：
+
+- `REFLEX_RUNTIME_ROOT`：仓库根目录；
+- `REFLEX_RUNTIME_PYTHON`：单一 Python 可执行文件路径。
+
+当前仍使用无网络 Mock Provider，不读取 API Key，也不进行真实模型请求。发布态 Python 自包含打包尚未完成，因此当前可执行文件只用于仓库开发环境。
 
 ## 本地运行
 
@@ -65,4 +90,12 @@ npm install
 npm test
 npm run build
 npm run dev -- --port 5173
+npm run tauri:build -- --debug --no-bundle
+```
+
+Rust 测试：
+
+```powershell
+cd src-tauri
+cargo test -- --test-threads=2
 ```

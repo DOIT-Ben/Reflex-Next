@@ -61,7 +61,7 @@ describe("core bridge", () => {
     });
   });
 
-  it("keeps the demo bridge until runtime_available returns exactly true", async () => {
+  it("never falls back to demo output when a Tauri Runtime probe returns false", async () => {
     const calls: string[] = [];
     const host = {
       invoke: async (command: string) => {
@@ -73,7 +73,7 @@ describe("core bridge", () => {
 
     const bridge = await createDefaultCoreBridge(host);
 
-    expect(bridge).toBeInstanceOf(DemoCoreBridge);
+    expect(bridge).toBeInstanceOf(TauriRuntimeBridge);
     expect(calls).toEqual(["runtime_available"]);
   });
 
@@ -88,7 +88,7 @@ describe("core bridge", () => {
     expect(bridge).toBeInstanceOf(TauriRuntimeBridge);
   });
 
-  it("falls back to the demo bridge when runtime_available probe rejects", async () => {
+  it("never falls back to demo output when a Tauri Runtime probe rejects", async () => {
     const host = {
       invoke: async () => {
         throw new Error("probe failed");
@@ -98,7 +98,7 @@ describe("core bridge", () => {
 
     const bridge = await createDefaultCoreBridge(host);
 
-    expect(bridge).toBeInstanceOf(DemoCoreBridge);
+    expect(bridge).toBeInstanceOf(TauriRuntimeBridge);
   });
 
   it("filters stale Runtime events by active request id", () => {
@@ -207,5 +207,67 @@ describe("core bridge", () => {
         args: { command: createCancelCommand("req-cancel") }
       }
     ]);
+  });
+
+  it("turns Runtime launch failures into one safe recoverable error event", async () => {
+    let unlistenCalled = false;
+    const host = {
+      invoke: async (command: string) => {
+        if (command === "runtime_optimize") {
+          throw new Error("uv failed with api_key=secret-value");
+        }
+      },
+      listen: async () => () => {
+        unlistenCalled = true;
+      }
+    };
+    const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-error" });
+
+    const events = [];
+    for await (const event of bridge.optimize(createDraftRequest("写一封邮件"))) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        data: {
+          code: "runtime_unavailable",
+          message: "运行服务暂不可用，请稍后重试。",
+          recoverable: true,
+          action: "retry"
+        }
+      }
+    ]);
+    expect(JSON.stringify(events)).not.toContain("secret-value");
+    expect(unlistenCalled).toBe(true);
+  });
+
+  it("turns Runtime listener failures into one safe recoverable error event", async () => {
+    const host = {
+      invoke: async () => undefined,
+      listen: async () => {
+        throw new Error("listener failed with token=secret-value");
+      }
+    };
+    const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-listener" });
+
+    const events = [];
+    for await (const event of bridge.optimize(createDraftRequest("写一封邮件"))) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        data: {
+          code: "runtime_unavailable",
+          message: "运行服务暂不可用，请稍后重试。",
+          recoverable: true,
+          action: "retry"
+        }
+      }
+    ]);
+    expect(JSON.stringify(events)).not.toContain("secret-value");
   });
 });

@@ -13,7 +13,9 @@ impl ClipboardTextReader for AppHandle {
     type Error = String;
 
     fn read_text(&self) -> Result<String, Self::Error> {
-        self.clipboard().read_text().map_err(|error| error.to_string())
+        self.clipboard()
+            .read_text()
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -25,9 +27,7 @@ pub fn read_clipboard_text<R>(reader: &R) -> Result<String, &'static str>
 where
     R: ClipboardTextReader,
 {
-    reader
-        .read_text()
-        .map_err(sanitize_clipboard_read_error)
+    reader.read_text().map_err(sanitize_clipboard_read_error)
 }
 
 #[cfg(test)]
@@ -62,10 +62,7 @@ mod tests {
 
         let result = read_clipboard_text(&clipboard);
 
-        assert_eq!(
-            result,
-            Ok("  来自系统剪贴板的原始文本  ".to_string())
-        );
+        assert_eq!(result, Ok("  来自系统剪贴板的原始文本  ".to_string()));
     }
 
     #[test]

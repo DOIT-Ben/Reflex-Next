@@ -67,16 +67,7 @@ export class TauriRuntimeBridge implements CoreBridge {
   ): AsyncGenerator<CoreEvent> {
     const requestId = this.requestIdFactory();
     const queue = createAsyncEventQueue();
-    const unlisten = await this.host.listen<CoreEventEnvelope>(
-      "reflex://core-event",
-      ({ payload }) => {
-        if (payload.request_id !== requestId) return;
-        queue.push(payload.event);
-        if (payload.event.type === "done" || payload.event.type === "error") {
-          queue.close();
-        }
-      }
-    );
+    let unlisten = () => undefined;
     const abort = () => {
       void this.host
         .invoke("runtime_cancel", { command: createCancelCommand(requestId) })
@@ -84,6 +75,16 @@ export class TauriRuntimeBridge implements CoreBridge {
     };
 
     try {
+      unlisten = await this.host.listen<CoreEventEnvelope>(
+        "reflex://core-event",
+        ({ payload }) => {
+          if (payload.request_id !== requestId) return;
+          queue.push(payload.event);
+          if (payload.event.type === "done" || payload.event.type === "error") {
+            queue.close();
+          }
+        }
+      );
       if (options.signal?.aborted) {
         abort();
         return;
@@ -98,6 +99,16 @@ export class TauriRuntimeBridge implements CoreBridge {
         if (item.done) return;
         yield item.value;
       }
+    } catch {
+      yield {
+        type: "error",
+        data: {
+          code: "runtime_unavailable",
+          message: "运行服务暂不可用，请稍后重试。",
+          recoverable: true,
+          action: "retry"
+        }
+      };
     } finally {
       options.signal?.removeEventListener("abort", abort);
       unlisten();
@@ -111,12 +122,10 @@ export async function createDefaultCoreBridge(host?: TauriHostApi | null): Promi
   }
 
   try {
-    const runtimeAvailable = await host.invoke("runtime_available");
+    await host.invoke("runtime_available");
+  } catch {}
 
-    return runtimeAvailable === true ? new TauriRuntimeBridge(host) : new DemoCoreBridge();
-  } catch {
-    return new DemoCoreBridge();
-  }
+  return new TauriRuntimeBridge(host);
 }
 
 export function parseNdjsonEvents(payload: string): CoreEvent[] {

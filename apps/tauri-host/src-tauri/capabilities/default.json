@@ -7,6 +7,8 @@
   "permissions": [
     "allow-read-clipboard-text",
     "allow-runtime-available",
+    "allow-runtime-optimize",
+    "allow-runtime-cancel",
     "core:app:allow-register-listener",
     "core:app:allow-remove-listener",
     "core:event:allow-listen",

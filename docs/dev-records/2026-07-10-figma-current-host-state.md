@@ -50,6 +50,20 @@
 - 移除旧左侧导航和双面板结构。
 - 避免在用户可见 UI 中展示内部 `Mock` 命名。
 
+## Rust Host 补充
+
+- 初始化 `apps\tauri-host\src-tauri`，接入 Tauri 2 Rust 宿主和剪贴板插件。
+- 新增 `runtime_optimize`、`runtime_cancel` 与 `runtime_available` 命令及 capability 声明。
+- Rust Host 首次请求启动并复用一个 Python Runtime，使用 UTF-8 NDJSON 转发命令和事件。
+- Runtime stdout 事件统一发送为 `reflex://core-event`，stderr 独立排空且不进入用户界面。
+- 命令校验和 Runtime 启动/写入失败只返回固定中文错误，不透传底层异常。
+- 取消请求不伪造完成事件；Runtime 异常退出后可在下一次请求重启。
+- 应用退出时发送 `shutdown`，超时后只终止宿主创建的子进程。
+- 默认开发态通过离线 `uv` 命令使用 Python 3.12；可用 `REFLEX_RUNTIME_PYTHON` 覆盖单一 Python 可执行文件。
+- 保留无网络 Mock Provider，未接真实 MiniMax、API Key 或付费调用。
+- 修复 Runtime 启动失败时前端停留在生成态的问题，失败现在进入可重试 Error Recovery。
+- 修复 760×540 宿主窗口双向滚动条；680×480 时默认页无横向或纵向溢出，长调整面板只在自身内容区滚动。
+
 ## 验证
 
 ```powershell
@@ -59,7 +73,15 @@ npm run build
 npm audit --audit-level=moderate
 ```
 
-结果：前端测试 31 passed，构建通过，审计 0 vulnerabilities。
+结果：前端 35 passed，构建通过，审计 0 vulnerabilities。
+
+```powershell
+cd apps\tauri-host\src-tauri
+cargo test -- --test-threads=2
+cargo clippy --all-targets -- -D warnings
+```
+
+结果：Rust 15 passed，Clippy 零警告。
 
 ```powershell
 cd packages\reflex-core
@@ -87,6 +109,16 @@ uv run --python 3.12 --with pytest pytest
 - Clipboard Read 专门截图：点击读取剪贴板后，输入框内容和字数同步更新。
 - 键盘路径：`Ctrl + Enter` 可触发生成；`Esc` 可关闭确认弹窗和退出调整面板。
 
+Windows Tauri 实机验证：
+
+- 760×540 Default 无页面滚动条，底部快捷键完整可见。
+- 明确点击后可读取系统剪贴板文本。
+- 冷启动可进入 Generating，完成后显示 Runtime/Core 结果。
+- 生成中按 `Esc` 返回可执行输入态，未出现迟到完成画面。
+- Runtime 暂不可用时进入脱敏 Error Recovery，恢复后“重试”可完成请求。
+- 关闭应用后无残留 `reflex_runtime.cli`、`uv` 或 Python 子进程。
+- 680×480 浏览器视口下页面 `scrollWidth/scrollHeight` 与视口一致，默认页无溢出；Adjust 仅内部纵向滚动。
+
 截图：
 
 - `D:\Desktop\reflex-next-current-default.png`
@@ -108,6 +140,7 @@ uv run --python 3.12 --with pytest pytest
 
 ## 下一步
 
-1. 初始化 Rust Host 后接入真实 `runtime_optimize/runtime_cancel`。
-2. 继续实现托盘、Rust 剪贴板命令和 Rust 宿主窗口隐藏命令。
-3. 做 125% / 150% DPI 与录屏证据。
+1. 实现托盘、全局快捷键、单实例和 Rust 宿主窗口显示/隐藏命令。
+2. 实现设置持久化与平台安全 SecretStore，仍不把密钥放入前端状态或命令行。
+3. 完成发布态 Python Runtime 自包含打包和安装/卸载生命周期验证。
+4. 补 125% / 150% DPI、多显示器和完整流式录屏证据。
