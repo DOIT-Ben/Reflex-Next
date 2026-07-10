@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -31,13 +32,15 @@ class ProviderRegistry:
             if isinstance(provider_id, str)
         }
         self._providers: dict[str, Any] = {}
+        self._lock = RLock()
 
     def __repr__(self) -> str:
-        return (
-            "ProviderRegistry("
-            f"factories={sorted(self._factories)!r}, "
-            f"configured={sorted(self._providers)!r})"
-        )
+        with self._lock:
+            return (
+                "ProviderRegistry("
+                f"factories={sorted(self._factories)!r}, "
+                f"configured={sorted(self._providers)!r})"
+            )
 
     def configure(
         self,
@@ -63,12 +66,14 @@ class ProviderRegistry:
             raise provider_configuration_invalid() from None
         if getattr(provider, "id", None) != normalized_id:
             raise provider_configuration_invalid()
-        self._providers[normalized_id] = provider
+        with self._lock:
+            self._providers[normalized_id] = provider
 
     def resolve(self, provider_id: str, model: str | None) -> Any:
         normalized_id = _normalize_provider_id(provider_id)
         factory = self._factories.get(normalized_id)
-        provider = self._providers.get(normalized_id)
+        with self._lock:
+            provider = self._providers.get(normalized_id)
         if factory is None or provider is None:
             raise provider_unconfigured()
         if model is not None and model not in factory.models:

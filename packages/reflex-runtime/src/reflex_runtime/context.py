@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 from dataclasses import fields
@@ -21,21 +22,38 @@ from reflex_core.usecases import OptimizeUseCase
 from reflex_core.safety import redact_sensitive
 
 from .mock_provider import MockProvider
+from .plugin_manager import PluginManager
 from .protocol import CommandEnvelope, ProtocolError
+from .provider_errors import ProviderRuntimeError, provider_unconfigured
+from .provider_registry import ProviderRegistry
 
 
 class RuntimeContext:
-    def __init__(self, stdout: TextIO | None = None, stderr: TextIO | None = None) -> None:
+    def __init__(
+        self,
+        stdout: TextIO | None = None,
+        stderr: TextIO | None = None,
+        *,
+        development: bool | None = None,
+    ) -> None:
         self._stdout = stdout or sys.stdout
         self._stderr = stderr or sys.stderr
         self._lock = threading.Lock()
         self._tokens: dict[str, CancellationToken] = {}
         self._threads: dict[str, threading.Thread] = {}
-        self._use_case = OptimizeUseCase(
-            scene_detector=RuleSceneDetector(),
-            template_resolver=PassthroughTemplateResolver(),
-            provider=MockProvider(),
+        self._development = (
+            os.environ.get("REFLEX_RUNTIME_DEVELOPMENT") == "1"
+            if development is None
+            else development
         )
+        development_modules = ("reflex_provider_minimax",) if self._development else ()
+        discovery = PluginManager(
+            development_modules=development_modules
+        ).discover_provider_factories()
+        self._registry = ProviderRegistry(discovery.factories)
+        self._mock_provider = MockProvider() if self._development else None
+        self._scene_detector = RuleSceneDetector()
+        self._template_resolver = PassthroughTemplateResolver()
 
     def handle(self, command: CommandEnvelope) -> bool:
         if command.type == "ping":
@@ -48,10 +66,25 @@ class RuntimeContext:
         if command.type == "cancel":
             self.cancel(command.request_id)
             return True
+        if command.type == "configure_provider":
+            self.configure_provider(command)
+            return True
         if command.type == "optimize":
             self.start_optimize(command)
             return True
         raise ProtocolError("unsupported command type")
+
+    def configure_provider(self, command: CommandEnvelope) -> None:
+        try:
+            self._registry.configure(
+                command.payload["provider_id"],
+                command.payload["secret"],
+                command.payload["config"],
+            )
+        except ProviderRuntimeError as error:
+            self.emit_provider_error(command.request_id, error)
+            return
+        self.emit_status(command.request_id, StatusPhase.COMPLETED, "provider_configured")
 
     def start_optimize(self, command: CommandEnvelope) -> None:
         token = CancellationToken()
@@ -82,12 +115,34 @@ class RuntimeContext:
         for token in tokens:
             token.cancel()
 
-    def emit_error(self, request_id: str, code: str, message: str, action: str | None = None) -> None:
+    def emit_error(
+        self,
+        request_id: str,
+        code: str,
+        message: str,
+        action: str | None = None,
+        *,
+        recoverable: bool = True,
+    ) -> None:
         self.emit(
             EventEnvelope(
                 request_id,
-                error_event(code, redact_sensitive(message), recoverable=True, action=action),
+                error_event(
+                    code,
+                    redact_sensitive(message),
+                    recoverable=recoverable,
+                    action=action,
+                ),
             )
+        )
+
+    def emit_provider_error(self, request_id: str, error: ProviderRuntimeError) -> None:
+        self.emit_error(
+            request_id,
+            error.code,
+            error.safe_message,
+            action=error.action,
+            recoverable=error.recoverable,
         )
 
     def emit_status(self, request_id: str, phase: StatusPhase, message: str) -> None:
@@ -103,15 +158,25 @@ class RuntimeContext:
     def _run_optimize(self, command: CommandEnvelope, token: CancellationToken) -> None:
         try:
             request = self._request_from_payload(command.payload)
-            for envelope in self._use_case.optimize(
+            provider = self._resolve_provider(request)
+            use_case = OptimizeUseCase(
+                scene_detector=self._scene_detector,
+                template_resolver=self._template_resolver,
+                provider=provider,
+            )
+            for envelope in use_case.optimize(
                 request,
                 request_id=command.request_id,
                 cancellation=token,
             ):
                 self.emit(envelope)
+        except ProviderRuntimeError as error:
+            self.emit_provider_error(command.request_id, error)
         except Exception as exc:
             self.emit_error(command.request_id, "runtime_error", "Runtime request failed.", action="retry")
-            self.diagnostic(f"runtime_error request_id={command.request_id}: {exc}")
+            self.diagnostic(
+                f"runtime_error request_id={command.request_id} category={type(exc).__name__}"
+            )
         finally:
             with self._lock:
                 current = self._tokens.get(command.request_id)
@@ -120,6 +185,16 @@ class RuntimeContext:
                 thread = self._threads.get(command.request_id)
                 if thread is threading.current_thread():
                     self._threads.pop(command.request_id, None)
+
+    def _resolve_provider(self, request: OptimizeRequest):
+        provider_id = request.provider
+        if provider_id == "mock" and self._mock_provider is not None:
+            if request.model not in {None, self._mock_provider.model}:
+                raise provider_unconfigured()
+            return self._mock_provider
+        if provider_id is None:
+            raise provider_unconfigured()
+        return self._registry.resolve(provider_id, request.model)
 
     @staticmethod
     def _request_from_payload(payload: dict[str, Any]) -> OptimizeRequest:

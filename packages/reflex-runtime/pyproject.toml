@@ -7,7 +7,9 @@ name = "reflex-runtime"
 version = "0.1.0"
 description = "Runtime sidecar for Reflex Next host integration."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "httpx>=0.28,<0.29",
+]
 
 [project.optional-dependencies]
 dev = [

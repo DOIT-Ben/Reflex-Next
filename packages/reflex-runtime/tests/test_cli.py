@@ -13,14 +13,16 @@ REPO_ROOT = PACKAGE_ROOT.parents[1]
 
 
 class RuntimeProcess:
-    def __init__(self) -> None:
+    def __init__(self, *, provider_fixture: bool = False) -> None:
         env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join(
-            [
-                str(PACKAGE_ROOT / "src"),
-                str(REPO_ROOT / "packages" / "reflex-core" / "src"),
-            ]
-        )
+        python_path = [
+            str(PACKAGE_ROOT / "src"),
+            str(REPO_ROOT / "packages" / "reflex-core" / "src"),
+        ]
+        if provider_fixture:
+            python_path.insert(0, str(PACKAGE_ROOT / "tests" / "fixtures"))
+        env["PYTHONPATH"] = os.pathsep.join(python_path)
+        env["REFLEX_RUNTIME_DEVELOPMENT"] = "1"
         self.process = subprocess.Popen(
             [sys.executable, "-m", "reflex_runtime.cli"],
             cwd=PACKAGE_ROOT,
@@ -81,7 +83,14 @@ class RuntimeProcess:
                 self.stderr.put(line.strip())
 
 
-def optimize_command(request_id: str, text: str, **metadata):
+def optimize_command(
+    request_id: str,
+    text: str,
+    *,
+    provider: str = "mock",
+    model: str = "mock-stream",
+    **metadata,
+):
     return {
         "version": 1,
         "request_id": request_id,
@@ -89,7 +98,32 @@ def optimize_command(request_id: str, text: str, **metadata):
         "payload": {
             "text": text,
             "style": "concise",
+            "provider": provider,
+            "model": model,
             "metadata": metadata,
+        },
+    }
+
+
+def configure_provider_command(
+    request_id: str,
+    secret: str,
+    *,
+    model: str = "fixture-model-a",
+):
+    return {
+        "version": 1,
+        "request_id": request_id,
+        "type": "configure_provider",
+        "payload": {
+            "provider_id": "minimax",
+            "secret": secret,
+            "config": {
+                "model": model,
+                "base_url": "https://fixture.invalid/v1/chat/completions",
+                "tls_verify": True,
+                "ca_bundle_path": None,
+            },
         },
     }
 
@@ -179,5 +213,99 @@ def test_parallel_requests_keep_request_ids_isolated():
 
         assert "done" in seen["req-a"]
         assert "done" in seen["req-b"]
+    finally:
+        runtime.close()
+
+
+def test_configure_provider_then_optimize_uses_the_selected_fixture_without_secret_leakage():
+    runtime = RuntimeProcess(provider_fixture=True)
+    secret = "fixture-runtime-private-credential"
+    try:
+        runtime.send(configure_provider_command("config-1", secret))
+        configured = runtime.read_event()
+
+        assert configured["request_id"] == "config-1"
+        assert configured["event"]["type"] == "status"
+        assert configured["event"]["data"]["phase"] == "completed"
+
+        runtime.send(
+            optimize_command(
+                "provider-1",
+                "待优化内容",
+                provider="minimax",
+                model="fixture-model-a",
+            )
+        )
+        envelopes = runtime.read_until("provider-1", "done")
+        events = [item["event"] for item in envelopes if item["request_id"] == "provider-1"]
+
+        assert events[-1]["data"]["text"] == "fixture-model-a:待优化内容"
+        visible = json.dumps([configured, *envelopes], ensure_ascii=False)
+        diagnostics = "\n".join(list(runtime.stderr.queue))
+        assert secret not in visible
+        assert secret not in diagnostics
+    finally:
+        runtime.close()
+
+
+def test_reconfiguring_provider_replaces_the_model_for_later_requests():
+    runtime = RuntimeProcess(provider_fixture=True)
+    try:
+        runtime.send(
+            configure_provider_command(
+                "config-a",
+                "fixture-first-private-credential",
+                model="fixture-model-a",
+            )
+        )
+        assert runtime.read_event()["event"]["type"] == "status"
+        runtime.send(
+            configure_provider_command(
+                "config-b",
+                "fixture-second-private-credential",
+                model="fixture-model-b",
+            )
+        )
+        assert runtime.read_event()["event"]["type"] == "status"
+
+        runtime.send(
+            optimize_command(
+                "provider-b",
+                "新请求",
+                provider="minimax",
+                model="fixture-model-b",
+            )
+        )
+        events = runtime.read_until("provider-b", "done")
+
+        assert any(
+            item["event"].get("data", {}).get("text") == "fixture-model-b:新请求"
+            for item in events
+        )
+    finally:
+        runtime.close()
+
+
+def test_unconfigured_provider_returns_a_recoverable_settings_error_without_mock_fallback():
+    runtime = RuntimeProcess()
+    try:
+        runtime.send(
+            optimize_command(
+                "provider-missing",
+                "不能进入 Mock",
+                provider="minimax",
+                model="MiniMax-M2.7-highspeed",
+            )
+        )
+        envelopes = runtime.read_until("provider-missing", "error")
+        error = next(
+            item["event"]
+            for item in envelopes
+            if item["request_id"] == "provider-missing" and item["event"]["type"] == "error"
+        )
+
+        assert error["data"]["code"] == "provider_unconfigured"
+        assert error["data"]["action"] == "settings"
+        assert all(item["event"]["type"] != "done" for item in envelopes)
     finally:
         runtime.close()

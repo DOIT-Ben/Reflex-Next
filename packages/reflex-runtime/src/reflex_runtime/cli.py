@@ -35,7 +35,9 @@ def main() -> int:
         except Exception as exc:
             request_id = _safe_request_id(line)
             runtime.emit_error(request_id, "runtime_error", "Runtime command failed.", action="retry")
-            runtime.diagnostic(f"runtime_error request_id={request_id}: {exc}")
+            runtime.diagnostic(
+                f"runtime_error request_id={request_id} category={type(exc).__name__}"
+            )
     return 0
 
 

@@ -19,6 +19,7 @@ pub struct RuntimePaths {
     pub runtime_dir: PathBuf,
     pub runtime_src: PathBuf,
     pub core_src: PathBuf,
+    pub provider_plugin_src: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +86,7 @@ impl ProcessFactory for OsProcessFactory {
             .current_dir(&self.launch.current_dir)
             .env("PYTHONPATH", python_path)
             .env("PYTHONUTF8", "1")
+            .env("REFLEX_RUNTIME_DEVELOPMENT", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -188,7 +190,17 @@ where
     }
 
     pub fn send(&self, command: ValidatedCommand) -> Result<(), &'static str> {
-        let bytes = serialize_command(&command)?;
+        self.send_sequence(vec![command])
+    }
+
+    pub fn send_sequence(&self, commands: Vec<ValidatedCommand>) -> Result<(), &'static str> {
+        if commands.is_empty() {
+            return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+        }
+        let serialized = commands
+            .iter()
+            .map(serialize_command)
+            .collect::<Result<Vec<_>, _>>()?;
         let mut running = self
             .running
             .lock()
@@ -206,22 +218,25 @@ where
         }
 
         let child = running.as_mut().ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?;
-        if command.kind == crate::runtime_commands::CommandKind::Optimize {
-            child
-                .active_request_ids
-                .lock()
-                .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?
-                .insert(command.request_id.clone());
+        for (command, bytes) in commands.iter().zip(serialized) {
+            if command.kind == crate::runtime_commands::CommandKind::Optimize {
+                child
+                    .active_request_ids
+                    .lock()
+                    .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?
+                    .insert(command.request_id.clone());
+            }
+            let write_result = child
+                .process
+                .write_stdin(bytes.as_bytes())
+                .and_then(|_| child.process.flush_stdin())
+                .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE);
+            if write_result.is_err() {
+                emit_safe_error(&self.emitter, &command.request_id);
+                return write_result;
+            }
         }
-        let write_result = child
-            .process
-            .write_stdin(bytes.as_bytes())
-            .and_then(|_| child.process.flush_stdin())
-            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE);
-        if write_result.is_err() {
-            emit_safe_error(&self.emitter, &command.request_id);
-        }
-        write_result
+        Ok(())
     }
 
     pub fn shutdown(&self) {
@@ -312,6 +327,41 @@ impl RuntimeController {
             .as_ref()
             .ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?
             .send(command)
+    }
+
+    pub fn send_sequence(&self, commands: Vec<ValidatedCommand>) -> Result<(), &'static str> {
+        let mut sidecar = self
+            .sidecar
+            .lock()
+            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+        if sidecar.is_none() {
+            let paths = resolve_runtime_paths()?;
+            let launch = build_launch_spec(resolve_python_launcher()?, &paths)?;
+            *sidecar = Some(RuntimeSidecar::new(
+                OsProcessFactory::new(launch),
+                self.emitter.clone(),
+            ));
+        }
+        sidecar
+            .as_ref()
+            .ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?
+            .send_sequence(commands)
+    }
+
+    pub fn emit_provider_unconfigured(&self, request_id: &str) {
+        self.emitter.emit(serde_json::json!({
+            "version": 1,
+            "request_id": request_id,
+            "event": {
+                "type": "error",
+                "data": {
+                    "code": "provider_unconfigured",
+                    "message": "请先在设置中保存 Provider 密钥。",
+                    "recoverable": true,
+                    "action": "settings"
+                }
+            }
+        }));
     }
 
     pub fn shutdown(&self) {
@@ -454,16 +504,19 @@ pub fn resolve_runtime_paths_from(
     let runtime_dir = root.join("packages").join("reflex-runtime");
     let runtime_src = runtime_dir.join("src");
     let core_src = root.join("packages").join("reflex-core").join("src");
+    let provider_plugin_src = root.join("plugins").join("provider-minimax").join("src");
 
     if runtime_dir.is_dir()
         && runtime_src.join("reflex_runtime").join("cli.py").is_file()
         && core_src.join("reflex_core").is_dir()
+        && provider_plugin_src.join("reflex_provider_minimax").is_dir()
     {
         Ok(RuntimePaths {
             root,
             runtime_dir,
             runtime_src,
             core_src,
+            provider_plugin_src,
         })
     } else {
         Err(RUNTIME_UNAVAILABLE_MESSAGE)
@@ -514,7 +567,11 @@ pub fn build_launch_spec(
         program,
         arguments,
         current_dir: paths.runtime_dir.clone(),
-        python_path: vec![paths.runtime_src.clone(), paths.core_src.clone()],
+        python_path: vec![
+            paths.runtime_src.clone(),
+            paths.core_src.clone(),
+            paths.provider_plugin_src.clone(),
+        ],
     })
 }
 
@@ -571,11 +628,11 @@ mod tests {
     use std::collections::{HashSet, VecDeque};
     use std::io::{self, Cursor, Read};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Barrier, Mutex};
 
     use serde_json::json;
 
-    use crate::runtime_commands::{CommandKind, ValidatedCommand};
+    use crate::runtime_commands::{configure_provider_command, CommandKind, ValidatedCommand};
 
     use super::{
         build_launch_spec, parse_event_envelope, resolve_runtime_paths_from, serialize_command,
@@ -684,7 +741,10 @@ mod tests {
             ]
         );
         assert_eq!(launch.current_dir, paths.runtime_dir);
-        assert_eq!(launch.python_path, vec![paths.runtime_src, paths.core_src]);
+        assert_eq!(
+            launch.python_path,
+            vec![paths.runtime_src, paths.core_src, paths.provider_plugin_src]
+        );
     }
 
     #[test]
@@ -758,6 +818,51 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_configuration_and_optimize_sequences_never_interleave() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let factory = FakeProcessFactory::new(vec![FakeProcess::running(writes.clone())]);
+        let sidecar = Arc::new(RuntimeSidecar::new(factory, Arc::new(FakeEmitter)));
+        let barrier = Arc::new(Barrier::new(3));
+        let mut threads = Vec::new();
+
+        for (request_id, model) in [("req-a", "model-a"), ("req-b", "model-b")] {
+            let sidecar = sidecar.clone();
+            let barrier = barrier.clone();
+            threads.push(std::thread::spawn(move || {
+                let configure = configure_provider_command(
+                    "minimax",
+                    "fixture-private-credential",
+                    json!({ "model": model, "tls_verify": true }),
+                )
+                .unwrap();
+                let optimize = ValidatedCommand {
+                    request_id: request_id.to_string(),
+                    kind: CommandKind::Optimize,
+                    payload: json!({ "text": request_id, "provider": "minimax", "model": model }),
+                };
+                barrier.wait();
+                sidecar.send_sequence(vec![configure, optimize]).unwrap();
+            }));
+        }
+        barrier.wait();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        let lines = writes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|bytes| String::from_utf8(bytes.clone()).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 4);
+        for pair in lines.chunks_exact(2) {
+            assert!(pair[0].contains(r#""type":"configure_provider""#));
+            assert!(pair[1].contains(r#""type":"optimize""#));
+        }
+    }
+
+    #[test]
     fn mock_runtime_streams_then_cancels_without_done_and_shuts_down_cleanly() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let paths = resolve_runtime_paths_from(None, manifest_dir).unwrap();
@@ -778,6 +883,8 @@ mod tests {
                 payload: json!({
                     "text": "写一封邮件",
                     "style": "concise",
+                    "provider": "mock",
+                    "model": "mock-stream",
                     "metadata": { "delay_ms": 80, "chunks": ["first", "late"] }
                 }),
             })

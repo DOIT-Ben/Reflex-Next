@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde_json::Value;
 
 pub const COMMAND_INVALID_MESSAGE: &str = "运行请求无效。";
@@ -6,6 +8,7 @@ pub const COMMAND_INVALID_MESSAGE: &str = "运行请求无效。";
 pub enum CommandKind {
     Optimize,
     Cancel,
+    ConfigureProvider,
 }
 
 impl CommandKind {
@@ -13,15 +16,55 @@ impl CommandKind {
         match self {
             Self::Optimize => "optimize",
             Self::Cancel => "cancel",
+            Self::ConfigureProvider => "configure_provider",
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ValidatedCommand {
     pub request_id: String,
     pub kind: CommandKind,
     pub payload: Value,
+}
+
+impl fmt::Debug for ValidatedCommand {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ValidatedCommand")
+            .field("request_id", &self.request_id)
+            .field("kind", &self.kind)
+            .field("payload", &"[REDACTED]")
+            .finish()
+    }
+}
+
+pub fn configure_provider_command(
+    provider_id: &str,
+    secret: &str,
+    config: Value,
+) -> Result<ValidatedCommand, &'static str> {
+    let provider_id = provider_id.trim().to_ascii_lowercase();
+    if provider_id.is_empty()
+        || provider_id.len() > 64
+        || !provider_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        || secret.trim().is_empty()
+        || secret.len() > 16_384
+        || !config.is_object()
+    {
+        return Err(COMMAND_INVALID_MESSAGE);
+    }
+    Ok(ValidatedCommand {
+        request_id: format!("host-config-{provider_id}"),
+        kind: CommandKind::ConfigureProvider,
+        payload: serde_json::json!({
+            "provider_id": provider_id,
+            "secret": secret,
+            "config": config,
+        }),
+    })
 }
 
 pub fn validate_command(
@@ -63,7 +106,9 @@ pub fn validate_command(
 mod tests {
     use serde_json::json;
 
-    use super::{validate_command, CommandKind, COMMAND_INVALID_MESSAGE};
+    use super::{
+        configure_provider_command, validate_command, CommandKind, COMMAND_INVALID_MESSAGE,
+    };
 
     #[test]
     fn accepts_only_the_expected_complete_command_envelope() {
@@ -96,5 +141,23 @@ mod tests {
                 Err(COMMAND_INVALID_MESSAGE)
             );
         }
+    }
+
+    #[test]
+    fn builds_a_private_provider_configuration_command_without_debug_secret_leakage() {
+        let secret = "fixture-rust-private-credential";
+
+        let command = configure_provider_command(
+            "minimax",
+            secret,
+            json!({ "model": "MiniMax-M2.7-highspeed", "tls_verify": true }),
+        )
+        .unwrap();
+
+        assert_eq!(command.request_id, "host-config-minimax");
+        assert_eq!(command.kind, CommandKind::ConfigureProvider);
+        assert_eq!(command.payload["provider_id"], "minimax");
+        assert_eq!(command.payload["secret"], secret);
+        assert!(!format!("{command:?}").contains(secret));
     }
 }
