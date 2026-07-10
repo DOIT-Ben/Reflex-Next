@@ -211,6 +211,13 @@ textarea {
   font-size: 12px;
 }
 
+.input-notice {
+  margin: 10px 0 0;
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .summary-row {
   display: flex;
   align-items: center;

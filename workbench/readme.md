@@ -48,6 +48,7 @@
 - 完成窗口内 `Ctrl + Enter` / `Esc` 快捷键解析、取消回到可执行态、Empty/Copied 专门截图验证；
 - 完成 Error Recovery UI、provider 不可用 Mock 错误链、诊断 ID 复制和错误态截图验证；
 - 完成 Settings 覆盖层、默认值保存、API Key 掩码呈现和移动端截图验证；
+- 完成显式读取剪贴板前端桥接、空内容/权限失败提示和桌面/移动端截图验证；
 - 当前机器未安装 Rust 工具链，尚未运行 Rust Host 编译和测试；
 - Stage 1 已通过独立 QA 并合入 `main`。
 

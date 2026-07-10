@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyCoreEnvelope,
   applyAdjustDraft,
+  applyClipboardError,
+  applyClipboardText,
   applySettingsDraft,
   cancelGeneration,
   cancelAdjust,
@@ -29,6 +31,28 @@ describe("host state", () => {
     state = updateInput(state, "   ");
     expect(state.phase).toBe("empty");
     expect(state.canGenerate).toBe(false);
+  });
+
+  it("applies explicit clipboard text without keeping stale errors", () => {
+    const failed = applyClipboardError(createHostState(), "无法读取剪贴板，请确认权限后重试。");
+
+    const next = applyClipboardText(failed, "从剪贴板读取的一段产品说明。");
+
+    expect(next.inputText).toBe("从剪贴板读取的一段产品说明。");
+    expect(next.phase).toBe("ready");
+    expect(next.canGenerate).toBe(true);
+    expect(next.inputNotice).toBeNull();
+  });
+
+  it("stores a safe clipboard error without changing the current input", () => {
+    const ready = updateInput(createHostState(), "原有内容");
+
+    const next = applyClipboardError(ready, "无法读取剪贴板，请确认权限后重试。");
+
+    expect(next.inputText).toBe("原有内容");
+    expect(next.phase).toBe("ready");
+    expect(next.canGenerate).toBe(true);
+    expect(next.inputNotice).toBe("无法读取剪贴板，请确认权限后重试。");
   });
 
   it("opens adjust with a draft and applies changes back to the request draft", () => {

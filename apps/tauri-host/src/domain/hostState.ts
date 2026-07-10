@@ -63,6 +63,7 @@ export type HostState = {
   detectedScene: string | null;
   providerSummary: string;
   output: string;
+  inputNotice: string | null;
   errorMessage: string | null;
   errorCode: string | null;
   errorRecoverable: boolean;
@@ -85,6 +86,7 @@ export function createHostState(): HostState {
     detectedScene: null,
     providerSummary: providerLabel(requestDraft),
     output: "",
+    inputNotice: null,
     errorMessage: null,
     errorCode: null,
     errorRecoverable: false,
@@ -103,11 +105,26 @@ export function updateInput(state: HostState, inputText: string): HostState {
     phase: trimmed ? "ready" : "empty",
     canGenerate: Boolean(trimmed),
     output: trimmed ? state.output : "",
+    inputNotice: null,
     errorMessage: null,
     errorCode: null,
     errorRecoverable: false,
     errorAction: null,
     diagnosticId: null
+  };
+}
+
+export function applyClipboardText(state: HostState, text: string): HostState {
+  return {
+    ...updateInput(state, text),
+    inputNotice: null
+  };
+}
+
+export function applyClipboardError(state: HostState, message: string): HostState {
+  return {
+    ...state,
+    inputNotice: message
   };
 }
 
@@ -181,6 +198,7 @@ export function startGeneration(state: HostState, requestId: string): HostState 
     overlay: null,
     activeRequestId: requestId,
     output: "",
+    inputNotice: null,
     errorMessage: null,
     errorCode: null,
     errorRecoverable: false,
@@ -196,6 +214,7 @@ export function cancelGeneration(state: HostState): HostState {
     phase: state.inputText.trim() ? "ready" : "empty",
     activeRequestId: null,
     output: "",
+    inputNotice: null,
     errorMessage: null,
     errorCode: null,
     errorRecoverable: false,

@@ -34,6 +34,7 @@ Tauri Host 是 Reflex Next 的轻量桌面外壳。
 - Clipboard Confirm：首次替换剪贴板确认
 - Error：脱敏错误说明、重试、打开设置和复制诊断 ID
 - Settings：默认 Provider、模型、模式、风格、场景策略、剪贴板策略和安全说明
+- Clipboard Read：用户点击后读取剪贴板文本，失败时展示可理解错误
 
 本切片只消费 Runtime/Core 事件流，不承载 Prompt 构建、Provider 请求或场景路由业务。
 
@@ -52,6 +53,7 @@ Tauri Host 是 Reflex Next 的轻量桌面外壳。
 - `settingsDraft` 只保存可展示默认值；真实 API Key 不进入前端状态。
 - `mockCore` 支持成功链和 provider 不可用错误链，便于无网络验证 Error Recovery。
 - UI reducer 同时兼容 `done.data.final_text` 与 `done.data.text`。
+- `clipboardBridge` 优先调用 Tauri `read_clipboard_text`，浏览器预览时回退 `navigator.clipboard.readText`，并统一转换空内容和权限失败提示。
 
 下一步需要补齐 Tauri/Rust 宿主命令：启动 Python sidecar、转发 `runtime_optimize/runtime_cancel`、读取 stdout 事件流并向前端发送 `reflex://core-event`。
 

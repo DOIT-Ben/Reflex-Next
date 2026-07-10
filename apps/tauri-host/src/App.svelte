@@ -3,6 +3,8 @@
   import { createDefaultCoreBridge } from "./domain/coreBridge";
   import {
     applyAdjustDraft,
+    applyClipboardError,
+    applyClipboardText,
     applyCoreEnvelope,
     applySettingsDraft,
     cancelGeneration,
@@ -20,6 +22,11 @@
     type HostSettingsDraft,
     type RequestSettings
   } from "./domain/hostState";
+  import {
+    createClipboardReader,
+    readClipboardText,
+    type ClipboardReader
+  } from "./domain/clipboardBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
   import type { TauriHostApi } from "./domain/coreBridge";
   import type { OptimizeMode, OptimizeStyle, ScenePolicy } from "./domain/reflexSession";
@@ -54,6 +61,7 @@
 
   let coreBridge = createDefaultCoreBridge();
   let hostApi: TauriHostApi | null = null;
+  let clipboardReader: ClipboardReader = createClipboardReader();
   let state: HostState = updateInput(
     createHostState(),
     "帮我把这段产品说明改得更清晰，并保留专业语气。"
@@ -68,6 +76,7 @@
     clipboard_policy: "manual"
   };
   let activeRun: AbortController | null = null;
+  let clipboardReading = false;
   let toastVisible = false;
   let toastText = "✓ 已复制到剪贴板";
 
@@ -75,6 +84,7 @@
     void createTauriHostApi().then((host) => {
       if (host) {
         hostApi = host;
+        clipboardReader = createClipboardReader(host);
         coreBridge = createDefaultCoreBridge(host);
       }
     });
@@ -91,6 +101,18 @@
 
   function setInput(value: string) {
     state = updateInput(state, value);
+  }
+
+  async function readClipboard() {
+    if (clipboardReading) return;
+    clipboardReading = true;
+    const result = await readClipboardText(clipboardReader);
+    clipboardReading = false;
+    if (result.ok) {
+      state = applyClipboardText(state, result.text);
+      return;
+    }
+    state = applyClipboardError(state, result.message);
   }
 
   function beginAdjust() {
@@ -398,10 +420,15 @@
             placeholder="粘贴文本、需求或提示词…"
           ></textarea>
           <div class="input-tools">
-            <button type="button">读取剪贴板</button>
+            <button type="button" disabled={clipboardReading} on:click={readClipboard}>
+              {clipboardReading ? "正在读取" : "读取剪贴板"}
+            </button>
             <span>{inputCount}</span>
           </div>
         </div>
+        {#if state.inputNotice}
+          <p class="input-notice">{state.inputNotice}</p>
+        {/if}
 
         <div class="summary-row">
           <span>{summary}</span>
