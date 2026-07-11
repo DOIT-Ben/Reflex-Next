@@ -377,6 +377,42 @@ requires-dist = [
 provides-extras = ["semantic", "dev"]
 
 [[package]]
+name = "reflex-provider-minimax"
+version = "0.1.0"
+source = { editable = "../../plugins/provider-minimax" }
+dependencies = [
+    { name = "httpx" },
+    { name = "reflex-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28,<0.29" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "reflex-core", editable = "../reflex-core" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "reflex-provider-openai-compatible"
+version = "0.1.0"
+source = { editable = "../../plugins/provider-openai-compatible" }
+dependencies = [
+    { name = "httpx" },
+    { name = "reflex-core" },
+    { name = "reflex-provider-minimax" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28,<0.29" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "reflex-core", editable = "../reflex-core" },
+    { name = "reflex-provider-minimax", editable = "../../plugins/provider-minimax" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "reflex-runtime"
 version = "0.1.0"
 source = { editable = "." }
@@ -390,6 +426,8 @@ builtins = [
     { name = "reflex-history-sqlite" },
     { name = "reflex-markdown-preview" },
     { name = "reflex-plugin-semantic-detector" },
+    { name = "reflex-provider-minimax" },
+    { name = "reflex-provider-openai-compatible" },
     { name = "reflex-translator" },
 ]
 dev = [
@@ -404,6 +442,8 @@ requires-dist = [
     { name = "reflex-history-sqlite", marker = "extra == 'builtins'", editable = "../../plugins/history-sqlite" },
     { name = "reflex-markdown-preview", marker = "extra == 'builtins'", editable = "../../plugins/markdown-preview" },
     { name = "reflex-plugin-semantic-detector", marker = "extra == 'builtins'", editable = "../../plugins/semantic-detector" },
+    { name = "reflex-provider-minimax", marker = "extra == 'builtins'", editable = "../../plugins/provider-minimax" },
+    { name = "reflex-provider-openai-compatible", marker = "extra == 'builtins'", editable = "../../plugins/provider-openai-compatible" },
     { name = "reflex-translator", marker = "extra == 'builtins'", editable = "../../plugins/translator" },
 ]
 provides-extras = ["builtins", "dev"]

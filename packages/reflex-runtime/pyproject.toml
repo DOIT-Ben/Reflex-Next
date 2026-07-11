@@ -18,6 +18,8 @@ builtins = [
   "reflex-markdown-preview",
   "reflex-plugin-semantic-detector",
   "reflex-translator",
+  "reflex-provider-minimax",
+  "reflex-provider-openai-compatible",
 ]
 dev = [
   "pytest",
@@ -36,3 +38,5 @@ reflex-batch-runner = { path = "../../plugins/batch-runner", editable = true }
 reflex-markdown-preview = { path = "../../plugins/markdown-preview", editable = true }
 reflex-plugin-semantic-detector = { path = "../../plugins/semantic-detector", editable = true }
 reflex-translator = { path = "../../plugins/translator", editable = true }
+reflex-provider-minimax = { path = "../../plugins/provider-minimax", editable = true }
+reflex-provider-openai-compatible = { path = "../../plugins/provider-openai-compatible", editable = true }

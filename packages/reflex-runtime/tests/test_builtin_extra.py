@@ -28,6 +28,8 @@ def test_capability_plugins_are_only_explicit_local_builtin_extras():
         "reflex-markdown-preview",
         "reflex-plugin-semantic-detector",
         "reflex-translator",
+        "reflex-provider-minimax",
+        "reflex-provider-openai-compatible",
     ]
     assert config["tool"]["uv"]["sources"]["reflex-history-sqlite"] == {
         "path": "../../plugins/history-sqlite",
@@ -47,6 +49,10 @@ def test_capability_plugins_are_only_explicit_local_builtin_extras():
     }
     assert config["tool"]["uv"]["sources"]["reflex-plugin-semantic-detector"] == {
         "path": "../../plugins/semantic-detector",
+        "editable": True,
+    }
+    assert config["tool"]["uv"]["sources"]["reflex-provider-openai-compatible"] == {
+        "path": "../../plugins/provider-openai-compatible",
         "editable": True,
     }
 
