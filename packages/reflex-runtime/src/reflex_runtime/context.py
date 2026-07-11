@@ -8,10 +8,11 @@ import sys
 import threading
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, TextIO
 
 from reflex_core import (
@@ -40,6 +41,7 @@ from .plugin_contracts import (
 )
 from .protocol import CommandEnvelope, ProtocolError
 from .provider_errors import ProviderRuntimeError, provider_unconfigured
+from .provider_gateway import ProviderGateway
 from .provider_registry import ProviderRegistry
 from .task_registry import DuplicateRequestId, TaskRegistry
 
@@ -80,6 +82,7 @@ class RuntimeContext:
         template_resolver: Any | None = None,
         capability_registry: CapabilityRegistry | None = None,
         capability_descriptors: tuple[PluginDescriptor, ...] | None = None,
+        provider_registry: ProviderRegistry | None = None,
         services: Any | None = None,
         thread_factory: Any = threading.Thread,
     ) -> None:
@@ -95,12 +98,10 @@ class RuntimeContext:
             else development
         )
         development_modules = ("reflex_provider_minimax",) if self._development else ()
-        plugin_manager = PluginManager(
-            development_modules=development_modules
-        )
+        plugin_manager = PluginManager(development_modules=development_modules)
         self._plugin_manager: PluginManager | None = None
         discovery = plugin_manager.discover_provider_factories()
-        self._registry = ProviderRegistry(discovery.factories)
+        self._registry = provider_registry or ProviderRegistry(discovery.factories)
         if capability_registry is None:
             self._plugin_manager = plugin_manager
             capability_discovery = plugin_manager.discover_capabilities()
@@ -590,11 +591,15 @@ class RuntimeContext:
                 if admin
                 else self._capabilities.invoke_public
             )
+            payload = command.payload["input"]
+            services = self._services
+            if self._has_capability_permission(plugin_id, "network-via-provider"):
+                payload, services = self._provider_backed_capability_call(payload)
             result = invoke(
                 plugin_id,
                 operation,
-                command.payload["input"],
-                self._services,
+                payload,
+                services,
                 token,
             )
             self._emit_plugin_result(command, token, result)
@@ -617,6 +622,25 @@ class RuntimeContext:
             with self._lock:
                 if self._threads.get(command.request_id) is threading.current_thread():
                     self._threads.pop(command.request_id, None)
+
+    def _has_capability_permission(self, plugin_id: str, permission: str) -> bool:
+        return any(
+            descriptor.plugin_id == plugin_id and permission in descriptor.permissions
+            for descriptor in self._capabilities.descriptors()
+        )
+
+    def _provider_backed_capability_call(
+        self, payload: dict[str, Any]
+    ) -> tuple[dict[str, Any], Mapping[str, Any]]:
+        plugin_payload = {
+            key: value for key, value in payload.items() if key not in {"provider", "model"}
+        }
+        gateway = ProviderGateway(
+            self._resolve_provider,
+            payload.get("provider"),
+            payload.get("model"),
+        )
+        return plugin_payload, MappingProxyType({"provider_gateway": gateway})
 
     def _emit_plugin_result(
         self,

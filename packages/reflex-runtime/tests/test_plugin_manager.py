@@ -46,7 +46,7 @@ def capability_descriptor(
     kind: str,
     operations: tuple[str, ...],
     public_operations: tuple[str, ...] | None = None,
-    permissions: tuple[str, ...] = (),
+    permissions: tuple[str, ...] | None = None,
 ):
     display_names = {
         "history-sqlite": "History",
@@ -58,7 +58,9 @@ def capability_descriptor(
         display_name=display_names.get(plugin_id, plugin_id),
         version="1",
         kind=kind,
-        permissions=permissions,
+        permissions=("network-via-provider",)
+        if permissions is None and plugin_id == "translator"
+        else (permissions or ()),
         operations=operations,
         public_operations=operations if public_operations is None else public_operations,
     )
@@ -369,6 +371,10 @@ def test_capability_groups_load_valid_builtins_and_represent_absent_history():
         "translator": "available",
         "markdown-preview": "available",
     }
+    translator_descriptor = next(
+        item for item in result.descriptors if item.plugin_id == "translator"
+    )
+    assert translator_descriptor.permissions == ("network-via-provider",)
 
 
 def test_conforming_history_plugin_loads_with_the_canonical_operation_contract():

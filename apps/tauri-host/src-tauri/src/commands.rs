@@ -287,6 +287,7 @@ pub async fn runtime_plugin_call(
     window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
     config_store: State<'_, ConfigStore>,
+    secret_store: State<'_, SecretStore>,
     history_key_store: State<'_, HistoryKeyStore>,
     command: Value,
 ) -> Result<(), String> {
@@ -301,16 +302,25 @@ pub async fn runtime_plugin_call(
         return send_configured_plugin_call_to(
             state.runtime(),
             &config_store,
+            &secret_store,
             &history_key_store,
             &history_path,
             window.label(),
             command,
         );
     }
-    state
-        .runtime()
-        .send_to(command, window.label())
-        .map_err(str::to_string)
+    send_configured_plugin_call_to(
+        state.runtime(),
+        &config_store,
+        &secret_store,
+        &history_key_store,
+        &app.path()
+            .app_data_dir()
+            .map(|path| history_database_path(&path))
+            .map_err(|_| "应用数据目录不可用。".to_string())?,
+        window.label(),
+        command,
+    )
 }
 
 #[tauri::command]
@@ -1094,20 +1104,23 @@ where
     })
 }
 
-fn send_configured_plugin_call_to<H>(
+fn send_configured_plugin_call_to<B, H>(
     runtime: &RuntimeController,
     config_store: &ConfigStore,
+    secret_store: &SecretStore<B>,
     history_key_store: &HistoryKeyStore<H>,
     history_path: &Path,
     target: &str,
     command: ValidatedCommand,
 ) -> Result<(), String>
 where
+    B: CredentialBackend,
     H: CredentialBackend,
 {
     runtime.with_lifecycle(|runtime, _generation| {
         let commands = build_configured_plugin_call_sequence(
             config_store,
+            secret_store,
             history_key_store,
             history_path,
             command,
@@ -1118,21 +1131,74 @@ where
     })
 }
 
-fn build_configured_plugin_call_sequence<H>(
+fn build_configured_plugin_call_sequence<B, H>(
     config_store: &ConfigStore,
+    secret_store: &SecretStore<B>,
     history_key_store: &HistoryKeyStore<H>,
     history_path: &Path,
     command: ValidatedCommand,
 ) -> Result<Vec<ValidatedCommand>, String>
 where
+    B: CredentialBackend,
     H: CredentialBackend,
 {
-    if command.payload.get("plugin_id").and_then(Value::as_str) != Some("history-sqlite") {
-        return Ok(vec![command]);
+    let plugin_id = command
+        .payload
+        .get("plugin_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| crate::plugin_commands::PLUGIN_COMMAND_DENIED_MESSAGE.to_string())?;
+    if plugin_id == "history-sqlite" {
+        let persisted = config_store.load().map_err(|error| error.to_string())?;
+        let mut commands =
+            build_history_config_sequence(&persisted, history_key_store, history_path, false)?;
+        commands.push(command);
+        return Ok(commands);
     }
     let persisted = config_store.load().map_err(|error| error.to_string())?;
-    let mut commands =
-        build_history_config_sequence(&persisted, history_key_store, history_path, false)?;
+    let mut commands = Vec::with_capacity(3);
+    if plugin_id == "translator" {
+        let input = command
+            .payload
+            .get("input")
+            .and_then(Value::as_object)
+            .ok_or_else(|| crate::plugin_commands::PLUGIN_COMMAND_DENIED_MESSAGE.to_string())?;
+        let provider_id = input
+            .get("provider")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(&persisted.provider)
+            .trim()
+            .to_ascii_lowercase();
+        let model = input
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(&persisted.model);
+        if provider_id != "mock" {
+            if let Some(secret) = secret_store
+                .read(&provider_id)
+                .map_err(|error| error.to_string())?
+            {
+                commands.push(
+                    configure_provider_command(
+                        &provider_id,
+                        &secret,
+                        serde_json::json!({
+                            "model": model,
+                            "tls_verify": persisted.tls_verify,
+                            "ca_bundle_path": persisted.ca_bundle_path,
+                        }),
+                    )
+                    .map_err(str::to_string)?,
+                );
+            }
+        }
+    }
+    let enabled = persisted
+        .enabled_plugins
+        .iter()
+        .any(|configured| configured == plugin_id);
+    commands.push(configure_plugin_command(plugin_id, enabled).map_err(str::to_string)?);
     commands.push(command);
     Ok(commands)
 }
@@ -1562,6 +1628,7 @@ mod tests {
 
             let sequence = super::build_configured_plugin_call_sequence(
                 &config_store,
+                &SecretStore::new(EmptyCredentialBackend),
                 &history_store,
                 &history_path,
                 command,
@@ -1613,6 +1680,7 @@ mod tests {
 
         let error = super::build_configured_plugin_call_sequence(
             &config_store,
+            &SecretStore::new(EmptyCredentialBackend),
             &history_store,
             &super::history_database_path(&directory),
             command,
@@ -1624,7 +1692,7 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_plugin_calls_do_not_read_history_keys_or_add_history_configuration() {
+    fn ordinary_plugin_calls_sync_enablement_without_reading_history_keys() {
         let directory = std::env::temp_dir().join(format!(
             "reflex-next-command-ordinary-plugin-{}",
             std::process::id()
@@ -1632,6 +1700,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
         let config_store = ConfigStore::new(PathBuf::from(&directory));
         let history_store = HistoryKeyStore::new(FailingCredentialBackend);
+        let secret_store = SecretStore::new(EmptyCredentialBackend);
 
         for plugin_id in ["translator", "markdown-preview"] {
             let command = ValidatedCommand {
@@ -1645,15 +1714,80 @@ mod tests {
             };
             let sequence = super::build_configured_plugin_call_sequence(
                 &config_store,
+                &secret_store,
                 &history_store,
                 &super::history_database_path(&directory),
                 command.clone(),
             )
             .unwrap();
 
-            assert_eq!(sequence, [command]);
+            assert_eq!(
+                sequence.iter().map(|item| item.kind).collect::<Vec<_>>(),
+                [CommandKind::ConfigurePlugin, CommandKind::PluginCall]
+            );
+            assert_eq!(sequence[0].payload["plugin_id"], plugin_id);
+            assert_eq!(sequence[0].payload["enabled"], true);
+            assert_eq!(sequence[1], command);
         }
         assert!(!directory.exists());
+    }
+
+    #[test]
+    fn translator_call_configures_the_selected_provider_before_enablement_and_call() {
+        let directory = std::env::temp_dir().join(format!(
+            "reflex-next-command-translator-provider-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        let config_store = ConfigStore::new(PathBuf::from(&directory));
+        let backend = MemoryCredentialBackend::default();
+        let secret_store = SecretStore::new(backend.clone());
+        secret_store
+            .save("minimax", "translation-fixture-provider-key")
+            .unwrap();
+        let history_store = HistoryKeyStore::new(FailingCredentialBackend);
+        let command = ValidatedCommand {
+            request_id: "translation-call".to_string(),
+            kind: CommandKind::PluginCall,
+            payload: json!({
+                "plugin_id": "translator",
+                "operation": "translate",
+                "input": {
+                    "text": "source",
+                    "target": "auto",
+                    "provider": "minimax",
+                    "model": "MiniMax-M2.7-highspeed"
+                }
+            }),
+        };
+
+        let sequence = super::build_configured_plugin_call_sequence(
+            &config_store,
+            &secret_store,
+            &history_store,
+            &super::history_database_path(&directory),
+            command.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            sequence.iter().map(|item| item.kind).collect::<Vec<_>>(),
+            [
+                CommandKind::ConfigureProvider,
+                CommandKind::ConfigurePlugin,
+                CommandKind::PluginCall
+            ]
+        );
+        assert_eq!(sequence[0].payload["provider_id"], "minimax");
+        assert_eq!(
+            sequence[0].payload["config"]["model"],
+            "MiniMax-M2.7-highspeed"
+        );
+        assert_eq!(sequence[1].payload["plugin_id"], "translator");
+        assert_eq!(sequence[1].payload["enabled"], true);
+        assert_eq!(sequence[2], command);
+        assert!(!format!("{sequence:?}").contains("translation-fixture-provider-key"));
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]

@@ -62,7 +62,7 @@ BUILTIN_CAPABILITY_DESCRIPTORS = {
         display_name="Translator",
         version="1",
         kind="transformer",
-        permissions=(),
+        permissions=("network-via-provider",),
         operations=("translate",),
         public_operations=("translate",),
     ),

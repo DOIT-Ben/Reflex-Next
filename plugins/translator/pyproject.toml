@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reflex-translator"
+version = "0.1.0"
+description = "Provider-backed streaming translation plugin for Reflex Next."
+requires-python = ">=3.11"
+dependencies = [
+  "reflex-core",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
+
+[project.entry-points."reflex.transformers"]
+translator = "reflex_translator:plugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "../../packages/reflex-core/src"]
+
+[tool.uv.sources]
+reflex-core = { path = "../../packages/reflex-core", editable = true }

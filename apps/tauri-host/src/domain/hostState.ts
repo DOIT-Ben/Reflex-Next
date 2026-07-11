@@ -611,6 +611,47 @@ export function applyCurrentResultRating(
   return { ...state, currentResult: next, recentResult: next };
 }
 
+export function applyTranslationAsCurrentResult(
+  state: HostState,
+  translatedText: string,
+  requestSequence: number,
+  sourceResult: CurrentResult | null = state.currentResult
+): HostState {
+  const source = sourceResult;
+  const output = typeof translatedText === "string" ? translatedText.trim() : "";
+  if (
+    !source ||
+    !output ||
+    output.length > 1_000_000 ||
+    !Number.isSafeInteger(requestSequence) ||
+    requestSequence < 1
+  ) {
+    return state;
+  }
+  const currentResult: CurrentResult = {
+    requestId: `translation-${source.requestId}-${requestSequence}`,
+    historyId: null,
+    output,
+    scene: "doc_translation",
+    style: "precise",
+    mode: "content",
+    provider: source.provider,
+    model: source.model,
+    elapsedMs: null,
+    saveStatus: "unsaved",
+    rating: null
+  };
+  return {
+    ...state,
+    phase: "completed",
+    activeRequestId: null,
+    output,
+    recentOutput: output,
+    currentResult,
+    recentResult: currentResult
+  };
+}
+
 export function applyHistoryReuseIntent(
   state: HostState,
   value: unknown

@@ -316,6 +316,7 @@ dependencies = [
 [package.optional-dependencies]
 builtins = [
     { name = "reflex-history-sqlite" },
+    { name = "reflex-translator" },
 ]
 dev = [
     { name = "pytest" },
@@ -326,8 +327,24 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28,<0.29" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "reflex-history-sqlite", marker = "extra == 'builtins'", editable = "../../plugins/history-sqlite" },
+    { name = "reflex-translator", marker = "extra == 'builtins'", editable = "../../plugins/translator" },
 ]
 provides-extras = ["builtins", "dev"]
+
+[[package]]
+name = "reflex-translator"
+version = "0.1.0"
+source = { editable = "../../plugins/translator" }
+dependencies = [
+    { name = "reflex-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "reflex-core", editable = "../reflex-core" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "typing-extensions"

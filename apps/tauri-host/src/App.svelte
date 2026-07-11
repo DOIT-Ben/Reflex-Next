@@ -13,6 +13,7 @@
     applyPersistedConfig,
     applySceneSelection,
     applySettingsDraft,
+    applyTranslationAsCurrentResult,
     cancelGeneration,
     cancelAdjust,
     cancelSettings,
@@ -34,6 +35,7 @@
     type HostState,
     type HistoryReuseIntent,
     type HostSettingsDraft,
+    type CurrentResult,
     type RequestSettings,
     type ResultStyle,
     type SettingsPluginId
@@ -65,6 +67,21 @@
     type SettingsApi
   } from "./domain/settingsApi";
   import type { CoreBridge, TauriHostApi } from "./domain/coreBridge";
+  import {
+    appendTranslationChunk,
+    buildTranslationInput,
+    cancelTranslation,
+    closeTranslation,
+    completeTranslation,
+    createTranslationState,
+    failTranslation,
+    openTranslation,
+    selectTranslationTarget,
+    startTranslation,
+    translationErrorMessage,
+    type TranslationLanguage,
+    type TranslationTarget
+  } from "./domain/translationState";
   import {
     listSceneOptions,
     type OptimizeMode,
@@ -116,6 +133,11 @@
     { id: "plugins", label: "插件" }
   ] as const;
   type SettingsSection = (typeof settingsSections)[number]["id"];
+  const translationTargets: Array<{ id: TranslationTarget; label: string }> = [
+    { id: "auto", label: "自动" },
+    { id: "zh", label: "中文" },
+    { id: "en", label: "English" }
+  ];
 
   let coreBridge: CoreBridge = new DemoCoreBridge();
   let capabilityBridge: CapabilityBridge | null = null;
@@ -128,6 +150,10 @@
   let draft: RequestSettings = { ...state.requestDraft };
   let settingsDraft: HostSettingsDraft = createDefaultSettingsDraft(state.requestDraft);
   let activeRun: AbortController | null = null;
+  let translationRun: AbortController | null = null;
+  let translation = createTranslationState();
+  let translationSourceResult: CurrentResult | null = null;
+  let translationCloseButton: HTMLButtonElement | null = null;
   let persistedConfig: AppConfig | null = null;
   let secretInput = "";
   let secretStatus: SecretStatus = {
@@ -211,6 +237,7 @@
       stopListening?.();
       stopHistoryReuseListening?.();
       activeRun?.abort();
+      translationRun?.abort();
     };
   });
 
@@ -222,6 +249,7 @@
   ].join(" · ");
   $: inputCount = `${state.inputText.trim().length} 字`;
   $: canGenerate = state.canGenerate && !isGenerating(state.phase);
+  $: translatorEnabled = persistedConfig?.enabled_plugins.includes("translator") ?? true;
 
   function setInput(value: string) {
     state = updateInput(state, value);
@@ -247,6 +275,7 @@
   }
 
   function handleHostAction(action: HostAction) {
+    if (translation.phase !== "closed") closeTranslationView();
     if (action === "settings") {
       beginSettings();
       return;
@@ -255,6 +284,7 @@
   }
 
   function beginAdjust() {
+    if (translation.phase !== "closed") closeTranslationView();
     state = openAdjust(state);
     draft = { ...(state.adjustDraft ?? state.requestDraft) };
   }
@@ -269,6 +299,7 @@
   }
 
   function beginSettings() {
+    if (translation.phase !== "closed") closeTranslationView();
     state = openSettings(state);
     settingsDraft = { ...(state.settingsDraft ?? settingsDraft) };
     settingsSection = "provider";
@@ -453,6 +484,116 @@
     }, 1400);
   }
 
+  function openTranslationView() {
+    const source = state.currentResult;
+    if (!source?.output.trim() || !translatorEnabled) return;
+    closeMoreActions();
+    translationSourceResult = { ...source };
+    translation = openTranslation(translation, source.output);
+    if (translation.phase !== "closed") {
+      window.setTimeout(() => translationCloseButton?.focus());
+      void runTranslation();
+    }
+  }
+
+  async function runTranslation() {
+    if (translation.phase === "closed") return;
+    translationRun?.abort();
+    const started = startTranslation(translation);
+    translation = started.state;
+    const request = started.request;
+    const controller = new AbortController();
+    translationRun = controller;
+    const input = buildTranslationInput(
+      translation,
+      translationSourceResult ?? {},
+      { provider: state.requestDraft.provider, model: state.requestDraft.model }
+    );
+    const bridge = capabilityBridge;
+    if (!bridge || !input) {
+      if (translationRun === controller) {
+        translation = failTranslation(
+          translation,
+          request,
+          "翻译暂时不可用，请重试。"
+        );
+        translationRun = null;
+      }
+      return;
+    }
+
+    try {
+      for await (const event of bridge.invoke("translator", "translate", input, {
+        signal: controller.signal,
+        timeoutMs: 60_000
+      })) {
+        if (controller.signal.aborted || translationRun !== controller) return;
+        if (event.status === "chunk") {
+          translation = appendTranslationChunk(translation, request, event.data.text);
+        } else if (event.status === "result") {
+          translation = completeTranslation(translation, request, event.data);
+        } else if (event.status === "cancelled") {
+          translation = cancelTranslation(translation, request);
+        } else if (event.status === "error") {
+          translation = failTranslation(
+            translation,
+            request,
+            translationErrorMessage(event.code)
+          );
+        }
+      }
+    } catch {
+      if (translationRun === controller) {
+        translation = controller.signal.aborted
+          ? cancelTranslation(translation, request)
+          : failTranslation(translation, request, "翻译暂时不可用，请重试。");
+      }
+    } finally {
+      if (translationRun === controller) translationRun = null;
+    }
+  }
+
+  function chooseTranslationTarget(target: TranslationTarget) {
+    const next = selectTranslationTarget(translation, target);
+    if (next === translation) return;
+    translation = next;
+    void runTranslation();
+  }
+
+  function cancelTranslationRun() {
+    const request = translation.request;
+    translationRun?.abort();
+    translationRun = null;
+    translation = cancelTranslation(translation, request);
+  }
+
+  function closeTranslationView(restoreFocus = false) {
+    translationRun?.abort();
+    translationRun = null;
+    translation = closeTranslation(translation);
+    translationSourceResult = null;
+    if (restoreFocus) window.setTimeout(() => moreActionsButton?.focus());
+  }
+
+  async function copyTranslation() {
+    if (!translation.translatedText) return;
+    await writeClipboardValue(translation.translatedText, "✓ 译文已复制");
+  }
+
+  function useTranslationAsCurrentResult() {
+    if (!translation.translatedText || !translationSourceResult) return;
+    const next = applyTranslationAsCurrentResult(
+      state,
+      translation.translatedText,
+      translation.request,
+      translationSourceResult
+    );
+    if (next === state) return;
+    state = next;
+    closeTranslationView();
+    showToast("已设为当前结果");
+  }
+
   function toggleMoreActions() {
     moreActionsOpen = !moreActionsOpen;
   }
@@ -624,6 +765,13 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (translation.phase !== "closed") {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeTranslationView(true);
+      }
+      return;
+    }
     if (moreActionsOpen && event.key === "Escape") {
       event.preventDefault();
       closeMoreActions(true);
@@ -671,6 +819,12 @@
 
   function sceneLabel(value: string | null): string {
     return scenes.find((item) => item.id === value)?.label ?? "自动识别";
+  }
+
+  function translationLanguageLabel(value: TranslationLanguage | null): string {
+    if (value === "zh") return "中文";
+    if (value === "en") return "English";
+    return "自动识别";
   }
 
   function chooseDraftScene(value: string) {
@@ -788,7 +942,11 @@
                 <button role="menuitem" on:click={() => runFromMoreActions("replace")}>替换剪贴板</button>
                 <button role="menuitem" on:click={() => runFromMoreActions("regenerate")}>重新生成</button>
                 <button role="menuitem" on:click={() => runFromMoreActions("adjust")}>调整</button>
-                <button role="menuitem" disabled>翻译</button>
+                <button
+                  role="menuitem"
+                  disabled={!translatorEnabled || !state.currentResult?.output}
+                  on:click={openTranslationView}
+                >翻译</button>
                 <button role="menuitem" disabled>Markdown 预览</button>
                 <div class="rating-menu" aria-label="评分">
                   <span>评分</span>
@@ -871,6 +1029,77 @@
         </button>
 
       </section>
+    {/if}
+
+    {#if translation.phase !== "closed"}
+      <div class="translation-layer" role="presentation">
+        <div class="translation-dialog" role="dialog" aria-modal="true" aria-label="翻译结果">
+          <div class="translation-head">
+            <div>
+              <h2>翻译结果</h2>
+              {#if translation.sourceLanguage && translation.targetLanguage}
+                <p>{translationLanguageLabel(translation.sourceLanguage)} → {translationLanguageLabel(translation.targetLanguage)}</p>
+              {/if}
+            </div>
+            <button
+              class="icon-button"
+              aria-label="关闭翻译"
+              bind:this={translationCloseButton}
+              on:click={() => closeTranslationView(true)}
+            >×</button>
+          </div>
+
+          <div class="translation-toolbar">
+            <span>目标语言</span>
+            <div class="translation-segments" role="group" aria-label="目标语言">
+              {#each translationTargets as item}
+                <button
+                  type="button"
+                  class:active={translation.target === item.id}
+                  aria-pressed={translation.target === item.id}
+                  disabled={translation.phase === "streaming"}
+                  on:click={() => chooseTranslationTarget(item.id)}
+                >{item.label}</button>
+              {/each}
+            </div>
+          </div>
+
+          <div class="translation-content">
+            <section class="translation-pane" aria-label="原文">
+              <h3>原文</h3>
+              <pre>{translation.sourceText}</pre>
+            </section>
+            <section class="translation-pane translated" aria-label="译文" aria-live="polite">
+              <h3>译文</h3>
+              {#if translation.phase === "error"}
+                <p class="translation-message error">{translation.error}</p>
+              {:else if translation.phase === "cancelled" && !translation.translatedText}
+                <p class="translation-message">翻译已取消。</p>
+              {:else if translation.translatedText}
+                <pre>{translation.translatedText}</pre>
+              {:else if translation.phase === "streaming"}
+                <p class="translation-message">正在翻译…</p>
+              {:else}
+                <p class="translation-message">准备翻译</p>
+              {/if}
+            </section>
+          </div>
+
+          <div class="translation-footer">
+            {#if translation.phase === "streaming"}
+              <button class="outline" type="button" on:click={cancelTranslationRun}>取消翻译</button>
+            {:else}
+              <button class="outline" type="button" on:click={runTranslation}>
+                {translation.phase === "completed" ? "重新翻译" : "重试"}
+              </button>
+            {/if}
+            {#if translation.phase === "completed"}
+              <button class="outline" type="button" on:click={copyTranslation}>复制译文</button>
+              <button class="primary small" type="button" on:click={useTranslationAsCurrentResult}>作为当前结果</button>
+            {/if}
+          </div>
+        </div>
+      </div>
     {/if}
 
     {#if state.overlay === "clipboard_confirm"}

@@ -9,6 +9,7 @@ import {
   applyClipboardText,
   applyPersistedConfig,
   applySettingsDraft,
+  applyTranslationAsCurrentResult,
   applySceneSelection,
   cancelGeneration,
   cancelAdjust,
@@ -67,6 +68,42 @@ describe("host state", () => {
       history_redaction: "secrets",
       enabled_plugins: ["translator", "markdown-preview"]
     });
+  });
+
+  it("promotes a translation as an unsaved current result with trusted provider metadata", () => {
+    const reused = applyHistoryReuseIntent(createHostState(), {
+      version: 1,
+      sequence: 1,
+      history_id: "history-translation-source",
+      kind: "result",
+      text: "source result",
+      scene: "email",
+      style: "creative",
+      mode: "prompt",
+      provider: "minimax",
+      model: "model-a",
+      elapsed_ms: 900,
+      rating: 5
+    });
+
+    const translated = applyTranslationAsCurrentResult(reused, "translated result", 3);
+
+    expect(translated.phase).toBe("completed");
+    expect(translated.output).toBe("translated result");
+    expect(translated.currentResult).toEqual({
+      requestId: "translation-history-reuse-history-translation-source-3",
+      historyId: null,
+      output: "translated result",
+      scene: "doc_translation",
+      style: "precise",
+      mode: "content",
+      provider: "minimax",
+      model: "model-a",
+      elapsedMs: null,
+      saveStatus: "unsaved",
+      rating: null
+    });
+    expect(translated.recentResult).toEqual(translated.currentResult);
   });
 
   it("round-trips every App settings field through hydrate save and cancel data paths", () => {

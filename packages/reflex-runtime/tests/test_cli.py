@@ -171,6 +171,69 @@ class StreamingFixtureCapability(FixtureCapability):
         yield {"status": "result", "data": {"text": "AB"}}
 
 
+class GatewayFixtureCapability:
+    descriptor = PluginDescriptor(
+        plugin_id="translator",
+        display_name="Gateway Translator",
+        version="fixture-1",
+        kind="transformer",
+        permissions=("network-via-provider",),
+        operations=("translate",),
+        public_operations=("translate",),
+    )
+
+    def __init__(self):
+        self.payload = None
+        self.service_keys = None
+
+    def invoke(self, operation, payload, services, cancellation):
+        self.payload = payload
+        self.service_keys = tuple(services)
+        gateway = services["provider_gateway"]
+        chunks = []
+        for chunk in gateway(
+            {
+                "messages": [
+                    {"role": "system", "content": "Translate only."},
+                    {"role": "user", "content": payload["text"]},
+                ]
+            },
+            payload["text"],
+            cancellation,
+        ):
+            chunks.append(chunk)
+            yield {"status": "chunk", "data": {"text": chunk}}
+        yield {"status": "result", "data": {"text": "".join(chunks)}}
+
+
+class RecordingGatewayProvider:
+    id = "minimax"
+    model = "fixture-model-a"
+
+    def __init__(self, error=None):
+        self.error = error
+        self.calls = []
+
+    def stream(self, rendered, request, cancellation):
+        self.calls.append((rendered, request, cancellation))
+        if self.error is not None:
+            raise self.error
+        yield "translated"
+
+
+class RecordingProviderRegistry:
+    def __init__(self, provider=None, error=None):
+        self.provider = provider
+        self.error = error
+        self.calls = []
+
+    def resolve(self, provider_id, model):
+        self.calls.append((provider_id, model))
+        if self.error is not None:
+            raise self.error
+        return self.provider
+
+
 class FixtureHistoryCapability:
     descriptor = PluginDescriptor(
         plugin_id="history-sqlite",
@@ -1109,6 +1172,175 @@ def test_runtime_plugin_call_uses_independent_plugin_event_contract():
     assert events[-1]["data"] == {"text": "FIXTURE"}
     assert all(event["type"] == "plugin_event" for event in events)
     assert all("event" not in event for event in events)
+
+
+def test_translator_permission_injects_bound_provider_gateway_and_strips_routing_fields():
+    from io import StringIO
+
+    output = StringIO()
+    capability = GatewayFixtureCapability()
+    provider = RecordingGatewayProvider()
+    provider_registry = RecordingProviderRegistry(provider)
+    registry = CapabilityRegistry(
+        [(capability.descriptor, capability)], enabled_plugins={"translator"}
+    )
+    runtime = RuntimeContext(
+        stdout=output,
+        stderr=StringIO(),
+        development=False,
+        provider_registry=provider_registry,
+        capability_registry=registry,
+        capability_descriptors=(capability.descriptor,),
+        services={"private_service": object()},
+    )
+
+    runtime.handle(
+        parse_command(
+            {
+                "version": 1,
+                "request_id": "translation-gateway",
+                "type": "plugin_call",
+                "payload": {
+                    "plugin_id": "translator",
+                    "operation": "translate",
+                    "input": {
+                        "text": "source",
+                        "target": "auto",
+                        "provider": "minimax",
+                        "model": "fixture-model-a",
+                    },
+                },
+            }
+        )
+    )
+    deadline = time.monotonic() + 2
+    while runtime.has_active_tasks() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+
+    assert capability.payload == {"text": "source", "target": "auto"}
+    assert capability.service_keys == ("provider_gateway",)
+    assert provider_registry.calls == [("minimax", "fixture-model-a")]
+    rendered, request, cancellation = provider.calls[0]
+    assert rendered["messages"][-1] == {"role": "user", "content": "source"}
+    assert request.text == "source"
+    assert request.mode == "content"
+    assert request.style == "precise"
+    assert request.scene == "doc_translation"
+    assert request.scene_policy == "manual"
+    assert request.provider == "minimax"
+    assert request.model == "fixture-model-a"
+    assert request.metadata == {"capability": "translator"}
+    assert cancellation.is_cancelled is False
+    assert [event["status"] for event in events] == ["started", "chunk", "result"]
+
+
+def test_translator_gateway_reuses_the_explicit_development_mock_provider():
+    from io import StringIO
+
+    output = StringIO()
+    capability = GatewayFixtureCapability()
+    provider_registry = RecordingProviderRegistry(
+        error=AssertionError("mock must not resolve through the configured Provider registry")
+    )
+    registry = CapabilityRegistry(
+        [(capability.descriptor, capability)], enabled_plugins={"translator"}
+    )
+    runtime = RuntimeContext(
+        stdout=output,
+        stderr=StringIO(),
+        development=True,
+        provider_registry=provider_registry,
+        capability_registry=registry,
+        capability_descriptors=(capability.descriptor,),
+    )
+
+    runtime.handle(
+        parse_command(
+            {
+                "version": 1,
+                "request_id": "translation-mock",
+                "type": "plugin_call",
+                "payload": {
+                    "plugin_id": "translator",
+                    "operation": "translate",
+                    "input": {
+                        "text": "source",
+                        "target": "auto",
+                        "provider": "mock",
+                        "model": "mock-stream",
+                    },
+                },
+            }
+        )
+    )
+    deadline = time.monotonic() + 2
+    while runtime.has_active_tasks() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+
+    assert provider_registry.calls == []
+    assert [event["status"] for event in events] == ["started", "chunk", "result"]
+    assert "source" in events[-1]["data"]["text"]
+
+
+@pytest.mark.parametrize(
+    ("registry_error", "provider_error", "expected_code"),
+    [
+        (None, type("SafeProviderFailure", (RuntimeError,), {"code": "provider_auth_failed"})("api_key=private"), "provider_auth_failed"),
+        (__import__("reflex_runtime.provider_errors", fromlist=["provider_unconfigured"]).provider_unconfigured(), None, "provider_unconfigured"),
+    ],
+)
+def test_translator_gateway_returns_only_safe_provider_error_codes(
+    registry_error, provider_error, expected_code
+):
+    from io import StringIO
+
+    output = StringIO()
+    diagnostics = StringIO()
+    capability = GatewayFixtureCapability()
+    provider = RecordingGatewayProvider(provider_error)
+    provider_registry = RecordingProviderRegistry(provider, registry_error)
+    registry = CapabilityRegistry(
+        [(capability.descriptor, capability)], enabled_plugins={"translator"}
+    )
+    runtime = RuntimeContext(
+        stdout=output,
+        stderr=diagnostics,
+        development=False,
+        provider_registry=provider_registry,
+        capability_registry=registry,
+        capability_descriptors=(capability.descriptor,),
+    )
+
+    runtime.handle(
+        parse_command(
+            {
+                "version": 1,
+                "request_id": f"translation-{expected_code}",
+                "type": "plugin_call",
+                "payload": {
+                    "plugin_id": "translator",
+                    "operation": "translate",
+                    "input": {
+                        "text": "source",
+                        "target": "auto",
+                        "provider": "minimax",
+                        "model": "fixture-model-a",
+                    },
+                },
+            }
+        )
+    )
+    deadline = time.monotonic() + 2
+    while runtime.has_active_tasks() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+
+    assert events[-1]["status"] == "error"
+    assert events[-1]["code"] == expected_code
+    assert "private" not in output.getvalue()
+    assert "private" not in diagnostics.getvalue()
 
 
 @pytest.mark.parametrize(
