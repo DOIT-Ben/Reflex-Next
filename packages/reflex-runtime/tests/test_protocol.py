@@ -270,6 +270,41 @@ def test_empty_history_key_map_is_valid_and_derives_absent_state():
     assert parsed.payload == {"keys": {}}
 
 
+def test_history_keyring_private_command_carries_active_and_pending_versions_without_plaintext_repr():
+    first = "11" * 32
+    second = "22" * 32
+    parsed = parse_command(
+        command(
+            "configure_history_keys",
+            {
+                "keys": {"v1": first, "v2": second},
+                "active_version": "v1",
+                "pending_version": "v2",
+            },
+        )
+    )
+
+    assert parsed.payload["active_version"] == "v1"
+    assert parsed.payload["pending_version"] == "v2"
+    assert first not in repr(parsed)
+    assert second not in repr(parsed)
+
+
+@pytest.mark.parametrize("active_version,pending_version", [("v2", "v1"), ("v1", "v1"), ("v0", None)])
+def test_history_keyring_rejects_invalid_version_relationships(active_version, pending_version):
+    with pytest.raises(ProtocolError):
+        parse_command(
+            command(
+                "configure_history_keys",
+                {
+                    "keys": {"v1": "11" * 32, "v2": "22" * 32},
+                    "active_version": active_version,
+                    "pending_version": pending_version,
+                },
+            )
+        )
+
+
 @pytest.mark.parametrize("operation", ["save", "append", "get", "search", "update_rating"])
 def test_public_plugin_call_rejects_history_write_and_legacy_aliases(operation):
     with pytest.raises(ProtocolError):

@@ -91,9 +91,19 @@ def test_unknown_and_legacy_operations_are_rejected_safely(
         history_plugin.invoke(operation, {}, history_services, cancellation)
 
 
-@pytest.mark.parametrize("operation", ["export", "scan", "repair", "backups", "restore", "rotate"])
-def test_d5_operations_do_not_pretend_success(
-    history_plugin, history_services, cancellation, operation
+@pytest.mark.parametrize(
+    ("operation", "payload"),
+    [
+        ("export", {}),
+        ("scan", {"debug": True}),
+        ("repair", {"confirmed": True}),
+        ("backups", {"path": "D:/forbidden"}),
+        ("restore", {"backup_id": "../forbidden"}),
+        ("rotate", {"action": "prepare", "target_version": "v0"}),
+    ],
+)
+def test_d5_operations_use_strict_path_free_payloads(
+    history_plugin, history_services, cancellation, operation, payload
 ):
-    with pytest.raises(HistoryPluginError, match="history_operation_unavailable"):
-        history_plugin.invoke(operation, {}, history_services, cancellation)
+    with pytest.raises(HistoryPluginError, match="history_payload_invalid"):
+        history_plugin.invoke(operation, payload, history_services, cancellation)

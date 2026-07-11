@@ -2,6 +2,7 @@ mod clipboard;
 mod commands;
 mod config_store;
 mod desktop;
+mod history_export;
 mod history_key_store;
 mod plugin_commands;
 mod runtime_commands;
@@ -27,7 +28,13 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let app_data_dir = app.path().app_data_dir()?;
+            history_export::cleanup_pending_export(
+                &history_export::pending_export_journal(&app_data_dir),
+            )
+            .map_err(std::io::Error::other)?;
             let config_store = config_store::ConfigStore::new(app.path().app_config_dir()?);
             let config = config_store.load().unwrap_or_default();
             let desktop_state = desktop::DesktopState::new(config.hotkey.clone());
@@ -40,6 +47,7 @@ pub fn run() {
             app.manage(desktop_state);
             app.manage(secret_store::SecretStore::windows());
             app.manage(history_key_store::HistoryKeyStore::windows());
+            app.manage(commands::HistoryOperationControl::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -58,7 +66,10 @@ pub fn run() {
             commands::runtime_cancel,
             commands::runtime_list_plugins,
             commands::runtime_plugin_call,
-            commands::runtime_plugin_cancel
+            commands::runtime_plugin_cancel,
+            commands::history_export,
+            commands::history_admin_operation,
+            commands::history_operation_cancel
         ])
         .build(tauri::generate_context!())
         .expect("error while building Reflex host");
@@ -116,5 +127,38 @@ mod tests {
         ] {
             assert!(!permissions.contains(&permission));
         }
+    }
+
+    #[test]
+    fn history_capability_is_window_scoped_and_exposes_no_private_runtime_builder() {
+        let capability: Value =
+            serde_json::from_str(include_str!("../capabilities/history.json")).unwrap();
+        assert_eq!(capability["windows"], serde_json::json!(["history"]));
+        let permissions = capability["permissions"].as_array().unwrap();
+        let permissions = permissions
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        for permission in [
+            "allow-history-export",
+            "allow-history-admin-operation",
+            "allow-history-operation-cancel",
+        ] {
+            assert!(permissions.contains(&permission));
+        }
+        for forbidden in [
+            "allow-configure-history-keys",
+            "allow-configure-history-policy",
+            "allow-plugin-admin-call",
+            "dialog:allow-message",
+            "dialog:allow-save",
+        ] {
+            assert!(!permissions.contains(&forbidden));
+        }
+        let config: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            config["app"]["security"]["capabilities"],
+            serde_json::json!(["main-capability", "history-capability"])
+        );
     }
 }

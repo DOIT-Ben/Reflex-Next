@@ -110,6 +110,7 @@ pub(crate) fn configure_provider_command(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn configure_history_keys_command(
     keys: BTreeMap<String, String>,
 ) -> Result<ValidatedCommand, &'static str> {
@@ -123,6 +124,52 @@ pub(crate) fn configure_history_keys_command(
             PRIVATE_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ),
         kind: CommandKind::ConfigureHistoryKeys,
+        payload,
+    })
+}
+
+pub(crate) fn configure_history_keyring_command(
+    keys: BTreeMap<String, String>,
+    active_version: Option<u32>,
+    pending_version: Option<u32>,
+) -> Result<ValidatedCommand, &'static str> {
+    let payload = serde_json::json!({
+        "keys": keys,
+        "active_version": active_version.map(|version| format!("v{version}")),
+        "pending_version": pending_version.map(|version| format!("v{version}")),
+    });
+    if !validate_payload(CommandKind::ConfigureHistoryKeys, &payload) {
+        return Err(COMMAND_INVALID_MESSAGE);
+    }
+    Ok(ValidatedCommand {
+        request_id: format!(
+            "host-history-keyring-{}",
+            PRIVATE_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ),
+        kind: CommandKind::ConfigureHistoryKeys,
+        payload,
+    })
+}
+
+pub(crate) fn plugin_admin_command(
+    plugin_id: &str,
+    operation: &str,
+    input: Value,
+) -> Result<ValidatedCommand, &'static str> {
+    let payload = serde_json::json!({
+        "plugin_id": plugin_id,
+        "operation": operation,
+        "input": input,
+    });
+    if !validate_payload(CommandKind::PluginAdminCall, &payload) {
+        return Err(COMMAND_INVALID_MESSAGE);
+    }
+    Ok(ValidatedCommand {
+        request_id: format!(
+            "host-admin-{operation}-{}",
+            PRIVATE_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ),
+        kind: CommandKind::PluginAdminCall,
         payload,
     })
 }
@@ -285,16 +332,36 @@ fn validate_payload(kind: CommandKind, payload: &Value) -> bool {
                 && payload.get("enabled").is_some_and(Value::is_boolean)
         }
         CommandKind::ConfigureHistoryKeys => {
-            has_exact_fields(payload, &["keys"])
-                && payload
-                    .get("keys")
-                    .and_then(Value::as_object)
-                    .is_some_and(|keys| {
-                        keys.iter().all(|(key_id, secret)| {
-                            is_safe_key_version(key_id)
-                                && secret.as_str().is_some_and(is_canonical_history_key)
-                        })
+            let fields_valid = has_exact_fields(payload, &["keys"])
+                || has_exact_fields(payload, &["keys", "active_version", "pending_version"]);
+            let keys_valid = payload
+                .get("keys")
+                .and_then(Value::as_object)
+                .is_some_and(|keys| {
+                    keys.iter().all(|(key_id, secret)| {
+                        is_safe_key_version(key_id)
+                            && secret.as_str().is_some_and(is_canonical_history_key)
                     })
+                });
+            if !fields_valid || !keys_valid {
+                return false;
+            }
+            if !payload.contains_key("active_version") {
+                return true;
+            }
+            let keys = payload.get("keys").and_then(Value::as_object).unwrap();
+            let active = payload.get("active_version").and_then(Value::as_str);
+            let pending = payload.get("pending_version").and_then(Value::as_str);
+            let active_valid = active
+                .is_none_or(|version| is_safe_key_version(version) && keys.contains_key(version));
+            let pending_valid = pending.is_none_or(|version| {
+                is_safe_key_version(version)
+                    && keys.contains_key(version)
+                    && active.is_some_and(|active| {
+                        version[1..].parse::<u32>().ok() > active[1..].parse::<u32>().ok()
+                    })
+            });
+            active_valid && pending_valid
         }
         CommandKind::ConfigureHistoryPolicy => {
             has_exact_fields(

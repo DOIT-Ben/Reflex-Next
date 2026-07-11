@@ -343,6 +343,7 @@ where
         Ok(status_from_state(&state))
     }
 
+    #[cfg(test)]
     pub(crate) fn active_keys(&self) -> Result<BTreeMap<String, String>, HistoryKeyStoreError> {
         let _guard = self.lock()?;
         let state = self.load_state()?;
@@ -359,6 +360,32 @@ where
             keys.insert(format!("v{version}"), encoded);
         }
         Ok(keys)
+    }
+
+    pub(crate) fn keyring(
+        &self,
+    ) -> Result<(BTreeMap<String, String>, HistoryKeyStatus), HistoryKeyStoreError> {
+        let _guard = self.lock()?;
+        let state = self.load_state()?;
+        self.validate_referenced_keys(&state)?;
+        let mut keys = BTreeMap::new();
+        if let Some(active) = state.active_version {
+            for version in 1..=active {
+                let encoded = self
+                    .backend_get(&key_account(version))?
+                    .ok_or(HistoryKeyStoreError::InvalidData)?;
+                validate_encoded_key(&encoded)?;
+                keys.insert(format!("v{version}"), encoded);
+            }
+        }
+        if let Some(pending) = state.pending_version {
+            let encoded = self
+                .backend_get(&key_account(pending))?
+                .ok_or(HistoryKeyStoreError::InvalidData)?;
+            validate_encoded_key(&encoded)?;
+            keys.insert(format!("v{pending}"), encoded);
+        }
+        Ok((keys, status_from_state(&state)))
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, ()>, HistoryKeyStoreError> {

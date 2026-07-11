@@ -218,7 +218,7 @@ class RuntimeContext:
 
     def configure_history_keys(self, command: CommandEnvelope) -> None:
         try:
-            self._capabilities.configure_history_keys(command.payload["keys"])
+            self._capabilities.configure_history_keys(**command.payload)
         except CapabilityDenied as error:
             self.emit_error(command.request_id, error.code, "History keys failed.")
             return

@@ -85,6 +85,10 @@ class CapabilityRegistry:
         self._enabled_plugins = set(enabled_plugins or ())
         self._history_unavailable = bool(history_unavailable)
         self._history_keys: dict[str, str] = {}
+        self._history_active_key_version: str | None = None
+        self._history_pending_key_version: str | None = None
+        self._history_maintenance = False
+        self._history_reads_blocked = False
         self._history_policy = HistoryPolicySnapshot(False, False, "secrets")
         self._history_database_path: Path | None = None
 
@@ -146,17 +150,40 @@ class CapabilityRegistry:
             else:
                 self._enabled_plugins.discard(plugin_id)
 
-    def configure_history_keys(self, keys: dict[str, str]) -> None:
-        if not isinstance(keys, dict) or any(
+    def configure_history_keys(
+        self,
+        keys: dict[str, str],
+        active_version: str | None = None,
+        pending_version: str | None = None,
+    ) -> None:
+        invalid = not isinstance(keys, dict) or any(
             not _safe_key_version(version)
             or not _safe_history_key(secret)
             for version, secret in keys.items()
-        ):
+        )
+        invalid = invalid or (
+            active_version is not None
+            and (not _safe_key_version(active_version) or active_version not in keys)
+        )
+        invalid = invalid or (
+            pending_version is not None
+            and (
+                active_version is None
+                or not _safe_key_version(pending_version)
+                or pending_version not in keys
+                or int(pending_version[1:]) <= int(active_version[1:])
+            )
+        )
+        if invalid:
             with self._lock:
                 self._history_unavailable = True
             raise CapabilityDenied("history_keys_invalid")
         with self._lock:
             self._history_keys = dict(keys)
+            self._history_active_key_version = active_version or (
+                max(keys, key=lambda version: int(version[1:])) if keys else None
+            )
+            self._history_pending_key_version = pending_version
 
     def configure_history_path(self, database_path: Path) -> None:
         if (
@@ -316,6 +343,7 @@ class CapabilityRegistry:
         *,
         channel: str,
     ) -> Any:
+        owns_maintenance = False
         with self._lock:
             registered = self._plugins.get(plugin_id)
             if registered is None:
@@ -338,12 +366,29 @@ class CapabilityRegistry:
             self._enforce_history_policy_unlocked(descriptor, operation, channel)
             if not isinstance(payload, dict):
                 raise CapabilityDenied("plugin_payload_invalid")
+            if descriptor.plugin_id == "history-sqlite":
+                blocked_during_maintenance = HISTORY_MUTATING_ADMIN_OPERATIONS | {"save", "rate"}
+                if self._history_maintenance and (
+                    self._history_reads_blocked
+                    or operation in blocked_during_maintenance
+                ):
+                    raise CapabilityDenied("history_busy")
+                if channel == "admin" and operation in {"repair", "restore", "rotate"}:
+                    self._history_maintenance = True
+                    self._history_reads_blocked = operation == "restore"
+                    owns_maintenance = True
             invocation_services = (
                 self._history_services_unlocked(services)
                 if descriptor.plugin_id == "history-sqlite"
                 else services
             )
-        return instance.invoke(operation, payload, invocation_services, cancellation)
+        try:
+            return instance.invoke(operation, payload, invocation_services, cancellation)
+        finally:
+            if owns_maintenance:
+                with self._lock:
+                    self._history_maintenance = False
+                    self._history_reads_blocked = False
 
     def _history_services_unlocked(self, services: Any) -> Mapping[str, Any]:
         database_path = self._history_database_path
@@ -352,6 +397,8 @@ class CapabilityRegistry:
             {
                 "database_path": database_path,
                 "keys": keys,
+                "active_key_version": self._history_active_key_version,
+                "pending_key_version": self._history_pending_key_version,
                 "history_enabled": self._history_policy.history_enabled,
                 "privacy_mode": self._history_policy.privacy_mode,
                 "history_redaction": self._history_policy.history_redaction,

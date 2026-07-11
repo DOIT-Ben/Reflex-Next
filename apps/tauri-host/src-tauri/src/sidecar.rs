@@ -368,6 +368,9 @@ impl ActiveRequest {
 
 type ActiveRequests = Arc<Mutex<HashMap<String, Arc<ActiveRequest>>>>;
 
+#[derive(Clone)]
+pub(crate) struct PrivateRuntimeGeneration(ActiveRequests);
+
 #[allow(dead_code)]
 pub struct PrivateEventStream {
     request_id: String,
@@ -379,10 +382,25 @@ pub struct PrivateEventStream {
 
 #[allow(dead_code)]
 impl PrivateEventStream {
+    pub(crate) fn generation(&self) -> PrivateRuntimeGeneration {
+        PrivateRuntimeGeneration(self.active_requests.clone())
+    }
+
     pub fn recv_timeout(&mut self, timeout: Duration) -> Result<Value, &'static str> {
         match self.receiver.recv_timeout(timeout) {
             Ok(payload) => Ok(payload),
             Err(_) => {
+                self.cleanup();
+                Err(RUNTIME_UNAVAILABLE_MESSAGE)
+            }
+        }
+    }
+
+    pub fn poll_timeout(&mut self, timeout: Duration) -> Result<Option<Value>, &'static str> {
+        match self.receiver.recv_timeout(timeout) {
+            Ok(payload) => Ok(Some(payload)),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
                 self.cleanup();
                 Err(RUNTIME_UNAVAILABLE_MESSAGE)
             }
@@ -507,6 +525,52 @@ where
     ) -> Result<PrivateEventStream, &'static str> {
         self.send_private_for_generation(command, None)
             .map(|(stream, _)| stream)
+    }
+
+    pub fn send_private_sequence(
+        &self,
+        commands: Vec<ValidatedCommand>,
+    ) -> Result<PrivateEventStream, &'static str> {
+        self.send_private_sequence_for_generation(commands, None)
+    }
+
+    fn send_private_sequence_for_generation(
+        &self,
+        commands: Vec<ValidatedCommand>,
+        expected_generation: Option<&ActiveRequests>,
+    ) -> Result<PrivateEventStream, &'static str> {
+        let _sequence = self
+            .sequence
+            .lock()
+            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+        let command_count = commands.len();
+        let mut generation = expected_generation.cloned();
+        for (index, command) in commands.into_iter().enumerate() {
+            if command.kind == crate::runtime_commands::CommandKind::PluginAdminCall {
+                if index + 1 != command_count {
+                    return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+                }
+                return self
+                    .send_private_for_generation(command, generation.as_ref())
+                    .map(|(stream, _)| stream);
+            }
+            if let Some(expected_message) = expected_private_status(command.kind) {
+                let (mut stream, active_requests) =
+                    self.send_private_for_generation(command, generation.as_ref())?;
+                if generation.is_none() {
+                    generation = Some(active_requests);
+                }
+                let payload = stream.recv_timeout(PRIVATE_CONFIGURATION_TIMEOUT)?;
+                if !is_expected_private_success(&payload, expected_message) {
+                    return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+                }
+            } else if is_private_command(command.kind) {
+                self.send_detached_private(command, generation.as_ref())?;
+            } else {
+                return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+            }
+        }
+        Err(RUNTIME_UNAVAILABLE_MESSAGE)
     }
 
     fn send_private_for_generation(
@@ -845,6 +909,30 @@ impl RuntimeController {
         commands: Vec<ValidatedCommand>,
     ) -> Result<(), &'static str> {
         self.get_or_start_sidecar()?.send_sequence(commands)
+    }
+
+    pub(crate) fn send_private_sequence(
+        &self,
+        commands: Vec<ValidatedCommand>,
+    ) -> Result<PrivateEventStream, &'static str> {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+        self.get_or_start_sidecar()?.send_private_sequence(commands)
+    }
+
+    pub(crate) fn send_private_sequence_for_generation(
+        &self,
+        commands: Vec<ValidatedCommand>,
+        generation: &PrivateRuntimeGeneration,
+    ) -> Result<PrivateEventStream, &'static str> {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+        self.get_or_start_sidecar()?
+            .send_private_sequence_for_generation(commands, Some(&generation.0))
     }
 
     fn get_or_start_sidecar(&self) -> Result<Arc<RuntimeSidecar<OsProcessFactory>>, &'static str> {
@@ -2400,6 +2488,82 @@ mod tests {
     }
 
     #[test]
+    fn private_admin_sequence_delivers_chunks_only_to_waiter() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
+        let process = FakeProcess::with_stdout_reader(
+            writes.clone(),
+            Box::new(WriteGatedReader::new(
+                writes.clone(),
+                release.clone(),
+                vec![
+                    (
+                        1,
+                        core_status("policy-private", "history_policy_configured"),
+                    ),
+                    (
+                        2,
+                        plugin_status("export-private", "export", "started", json!({})),
+                    ),
+                    (
+                        2,
+                        plugin_status(
+                            "export-private",
+                            "export",
+                            "chunk",
+                            json!({"bytes": "5Lit5paH"}),
+                        ),
+                    ),
+                    (
+                        2,
+                        plugin_status(
+                            "export-private",
+                            "export",
+                            "result",
+                            json!({"record_count": 1}),
+                        ),
+                    ),
+                ],
+            )),
+        );
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![process]),
+            Arc::new(NamedRecordingEmitter(events.clone())),
+        );
+        let policy = ValidatedCommand {
+            request_id: "policy-private".to_string(),
+            ..configure_history_policy_command(true, false, "secrets").unwrap()
+        };
+        let admin = ValidatedCommand {
+            request_id: "export-private".to_string(),
+            kind: CommandKind::PluginAdminCall,
+            payload: json!({
+                "plugin_id": "history-sqlite",
+                "operation": "export",
+                "input": {"format": "json", "filters": {}}
+            }),
+        };
+
+        let mut stream = sidecar.send_private_sequence(vec![policy, admin]).unwrap();
+        let started = stream
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        let chunk = stream
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        let result = stream
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+
+        assert_eq!(started["status"], "started");
+        assert_eq!(chunk["data"]["bytes"], "5Lit5paH");
+        assert_eq!(result["status"], "result");
+        assert!(events.lock().unwrap().is_empty());
+        release.store(true, Ordering::Release);
+    }
+
+    #[test]
     fn configuration_sequence_fails_instead_of_restarting_after_child_exit() {
         let writes = Arc::new(Mutex::new(Vec::new()));
         let first_release = Arc::new(AtomicBool::new(false));
@@ -3257,6 +3421,23 @@ mod tests {
             "{{\"version\":1,\"request_id\":\"{request_id}\",\"type\":\"plugin_event\",\"plugin_id\":\"{plugin_id}\",\"operation\":\"{operation}\",\"status\":\"result\",\"data\":{{}}}}\n"
         )
         .into_bytes()
+    }
+
+    fn plugin_status(request_id: &str, operation: &str, status: &str, data: Value) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "version": 1,
+            "request_id": request_id,
+            "type": "plugin_event",
+            "plugin_id": "history-sqlite",
+            "operation": operation,
+            "status": status,
+            "data": data,
+        }))
+        .map(|mut value| {
+            value.push(b'\n');
+            value
+        })
+        .unwrap()
     }
 
     fn plugin_configuration(request_id: &str, plugin_id: &str, enabled: bool) -> ValidatedCommand {

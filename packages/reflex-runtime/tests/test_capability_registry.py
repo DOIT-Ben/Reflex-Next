@@ -28,6 +28,20 @@ class RecordingPlugin:
         return {"ok": True}
 
 
+class BlockingHistoryPlugin(RecordingPlugin):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def invoke(self, operation, payload, services, cancellation):
+        self.calls.append((operation, payload, services, cancellation))
+        if operation in {"repair", "restore"}:
+            self.entered.set()
+            self.release.wait(timeout=2)
+        return {"ok": True}
+
+
 def descriptor(
     plugin_id: str,
     kind: str,
@@ -552,6 +566,97 @@ def test_history_plugin_receives_only_a_private_immutable_policy_and_key_snapsho
         forwarded["history"]["privacy_mode"] = True
     with pytest.raises(TypeError):
         forwarded["history"]["keys"]["v2"] = "22" * 32
+
+
+def test_history_plugin_receives_versioned_keyring_and_shared_private_state():
+    plugin = RecordingPlugin()
+    registry = CapabilityRegistry([(history_descriptor(), plugin)])
+    registry.configure_history_path(Path("D:/private/history/history.sqlite3"))
+    registry.configure_history_keys(
+        {"v1": "11" * 32, "v2": "22" * 32},
+        active_version="v1",
+        pending_version="v2",
+    )
+    registry.configure_history_policy(
+        history_enabled=True,
+        privacy_mode=False,
+        history_redaction="secrets",
+    )
+
+    registry.invoke_admin(
+        "history-sqlite",
+        "rotate",
+        {"action": "prepare", "target_version": "v2"},
+        {},
+        CancellationToken(),
+    )
+
+    forwarded = plugin.calls[-1][2]
+    assert forwarded["history"]["active_key_version"] == "v1"
+    assert forwarded["history"]["pending_key_version"] == "v2"
+
+
+def test_runtime_repair_returns_busy_to_writes_but_allows_safe_reads():
+    plugin = BlockingHistoryPlugin()
+    registry = CapabilityRegistry([(history_descriptor(), plugin)])
+    registry.configure_history_path(Path("D:/private/history/history.sqlite3"))
+    registry.configure_history_keys({"v1": "11" * 32})
+    registry.configure_history_policy(
+        history_enabled=True,
+        privacy_mode=False,
+        history_redaction="secrets",
+    )
+    worker = threading.Thread(
+        target=lambda: registry.invoke_admin(
+            "history-sqlite", "repair", {}, {}, CancellationToken()
+        )
+    )
+    worker.start()
+    assert plugin.entered.wait(timeout=1)
+    with pytest.raises(CapabilityDenied, match="history_busy"):
+        registry.invoke_internal(
+            "history-sqlite", "save", {}, {}, CancellationToken(), trusted=True
+        )
+    with pytest.raises(CapabilityDenied, match="history_busy"):
+        registry.invoke_public(
+            "history-sqlite", "rate", {}, {}, CancellationToken()
+        )
+    assert registry.invoke_public(
+        "history-sqlite", "list", {}, {}, CancellationToken()
+    ) == {"ok": True}
+    plugin.release.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+
+
+def test_runtime_restore_blocks_reads_during_database_replacement():
+    plugin = BlockingHistoryPlugin()
+    registry = CapabilityRegistry([(history_descriptor(), plugin)])
+    registry.configure_history_path(Path("D:/private/history/history.sqlite3"))
+    registry.configure_history_keys({"v1": "11" * 32})
+    registry.configure_history_policy(
+        history_enabled=True,
+        privacy_mode=False,
+        history_redaction="secrets",
+    )
+    worker = threading.Thread(
+        target=lambda: registry.invoke_admin(
+            "history-sqlite",
+            "restore",
+            {"backup_id": "backup-1"},
+            {},
+            CancellationToken(),
+        )
+    )
+    worker.start()
+    assert plugin.entered.wait(timeout=1)
+    with pytest.raises(CapabilityDenied, match="history_busy"):
+        registry.invoke_public(
+            "history-sqlite", "list", {}, {}, CancellationToken()
+        )
+    plugin.release.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
 
 
 def test_history_path_is_stored_privately_and_cannot_be_overridden_by_call_services():

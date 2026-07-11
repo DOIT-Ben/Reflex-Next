@@ -149,6 +149,46 @@ def test_migration_backup_failure_enters_sticky_read_only_recovery_mode(
     ).exists()
 
 
+def test_recovery_required_marker_survives_plugin_restart_and_repair_clears_it(
+    history_plugin,
+    history_services,
+    make_snapshot,
+    cancellation,
+    monkeypatch,
+):
+    from reflex_history_sqlite import plugin
+
+    save(history_plugin, make_snapshot(), history_services, cancellation)
+    original_list = HistoryRepository.list
+
+    def enter_recovery(*_args, **_kwargs):
+        raise HistoryPluginError("history_recovery_required")
+
+    monkeypatch.setattr(HistoryRepository, "list", enter_recovery)
+    with pytest.raises(HistoryPluginError, match="history_recovery_required"):
+        list_records(history_plugin, history_services, cancellation)
+    monkeypatch.setattr(HistoryRepository, "list", original_list)
+
+    database_path = history_services["history"]["database_path"]
+    marker = database_path.with_name(f".{database_path.name}.recovery-required")
+    assert marker.read_bytes() == b"recovery-required\n"
+    restarted = plugin()
+    with pytest.raises(HistoryPluginError, match="history_recovery_required"):
+        save(restarted, make_snapshot(id="blocked"), history_services, cancellation)
+    assert list_records(restarted, history_services, cancellation)["items"]
+
+    repaired = restarted.invoke("repair", {}, history_services, cancellation)
+
+    assert repaired["indexes_rebuilt"] is True
+    assert not marker.exists()
+    assert save(
+        restarted,
+        make_snapshot(id="after-repair"),
+        history_services,
+        cancellation,
+    )["id"] == "after-repair"
+
+
 def test_save_redacts_before_encryption_and_database_contains_no_plaintext_or_secret(
     history_plugin, history_services, make_snapshot, cancellation
 ):

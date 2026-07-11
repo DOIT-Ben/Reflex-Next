@@ -18,6 +18,8 @@ ALLOWED_STYLES = frozenset(
 ALLOWED_STATUSES = frozenset({"completed", "failed", "cancelled"})
 ALLOWED_SORTS = frozenset({"created_at", "rating"})
 ALLOWED_DIRECTIONS = frozenset({"asc", "desc"})
+ALLOWED_EXPORT_FORMATS = frozenset({"json", "csv", "markdown"})
+ROTATION_ACTIONS = frozenset({"prepare", "finalize", "rollback", "resume"})
 FILTER_FIELDS = frozenset(
     {"provider", "scene", "style", "date_from", "date_to", "rating"}
 )
@@ -114,19 +116,21 @@ class HistoryServiceSnapshot:
     history_enabled: bool
     privacy_mode: bool
     history_redaction: str
+    active_key_version: str | None = None
+    pending_key_version: str | None = None
 
     @classmethod
     def from_services(cls, services: object) -> "HistoryServiceSnapshot":
         if not isinstance(services, Mapping):
             raise HistoryPluginError("history_service_unavailable")
         value = services.get("history")
-        if not isinstance(value, Mapping) or set(value) != {
-            "database_path",
-            "keys",
-            "history_enabled",
-            "privacy_mode",
-            "history_redaction",
-        }:
+        allowed = {
+            "database_path", "keys", "history_enabled", "privacy_mode",
+            "history_redaction", "active_key_version", "pending_key_version",
+        }
+        if not isinstance(value, Mapping) or not set(value).issubset(allowed) or not {
+            "database_path", "keys", "history_enabled", "privacy_mode", "history_redaction"
+        }.issubset(value):
             raise HistoryPluginError("history_service_unavailable")
         database_path = value["database_path"]
         keys = value["keys"]
@@ -146,18 +150,36 @@ class HistoryServiceSnapshot:
             raise HistoryPluginError("history_service_unavailable")
         if value["history_redaction"] not in {"secrets", "none"}:
             raise HistoryPluginError("history_service_unavailable")
+        for name in ("active_key_version", "pending_key_version"):
+            version = value.get(name)
+            if version is not None and (
+                not isinstance(version, str) or re.fullmatch(r"v[1-9][0-9]{0,6}", version) is None
+            ):
+                raise HistoryPluginError("history_service_unavailable")
         return cls(
             database_path=database_path,
             keys=_RedactedMapping(keys),
             history_enabled=value["history_enabled"],
             privacy_mode=value["privacy_mode"],
             history_redaction=value["history_redaction"],
+            active_key_version=value.get("active_key_version"),
+            pending_key_version=value.get("pending_key_version"),
         )
 
     def decoded_keys(self) -> dict[int, bytes]:
         if not self.keys:
             raise HistoryPluginError("history_key_unavailable")
         return {int(version[1:]): bytes.fromhex(secret) for version, secret in self.keys.items()}
+
+    @property
+    def active_version(self) -> int:
+        if self.active_key_version is not None:
+            return int(self.active_key_version[1:])
+        return max(self.decoded_keys())
+
+    @property
+    def pending_version(self) -> int | None:
+        return int(self.pending_key_version[1:]) if self.pending_key_version else None
 
 
 @dataclass(frozen=True, repr=False)
@@ -313,3 +335,30 @@ def parse_rate_payload(payload: object) -> tuple[str, int | None]:
 
 def parse_clear_payload(payload: object) -> None:
     _exact_fields(payload, frozenset(), frozenset())
+
+
+def parse_export_payload(payload: object) -> tuple[str, HistoryListRequest]:
+    value = _exact_fields(payload, frozenset({"format", "filters"}), frozenset({"format", "filters"}))
+    if value["format"] not in ALLOWED_EXPORT_FORMATS or not isinstance(value["filters"], dict):
+        raise invalid_payload()
+    request = HistoryListRequest.from_payload(
+        {"page_size": MAX_PAGE_SIZE, "sort": "created_at", "direction": "asc", "filters": value["filters"]}
+    )
+    return value["format"], request
+
+
+def parse_backup_id_payload(payload: object) -> str:
+    value = _exact_fields(payload, frozenset({"backup_id"}), frozenset({"backup_id"}))
+    return _safe_id(value["backup_id"])
+
+
+def parse_rotate_payload(payload: object) -> tuple[str, str, int]:
+    allowed = frozenset({"action", "target_version", "batch_size"})
+    value = _exact_fields(payload, allowed, frozenset({"action", "target_version"}))
+    target = value["target_version"]
+    if value["action"] not in ROTATION_ACTIONS or not isinstance(target, str) or re.fullmatch(r"v[1-9][0-9]{0,6}", target) is None:
+        raise invalid_payload()
+    batch_size = value.get("batch_size", 25)
+    if not isinstance(batch_size, int) or isinstance(batch_size, bool) or not 1 <= batch_size <= 100:
+        raise invalid_payload()
+    return value["action"], target, batch_size

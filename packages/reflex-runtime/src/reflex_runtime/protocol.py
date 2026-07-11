@@ -21,6 +21,7 @@ COMMAND_TYPES = frozenset(
         "configure_history_policy",
         "configure_history_path",
         "plugin_admin_call",
+        "plugin_admin_call",
     }
 )
 CONFIGURE_PROVIDER_FIELDS = frozenset({"provider_id", "secret", "config"})
@@ -183,7 +184,11 @@ def _validate_plugin_configuration(payload: dict[str, Any]) -> None:
 
 def _validate_history_keys(payload: dict[str, Any]) -> None:
     message = "invalid history key configuration command"
-    _require_fields(payload, CONFIGURE_HISTORY_KEYS_FIELDS, message)
+    if set(payload) not in {
+        CONFIGURE_HISTORY_KEYS_FIELDS,
+        frozenset({"keys", "active_version", "pending_version"}),
+    }:
+        raise ProtocolError(message)
     keys = payload.get("keys")
     if not isinstance(keys, dict):
         raise ProtocolError(message)
@@ -192,6 +197,19 @@ def _validate_history_keys(payload: dict[str, Any]) -> None:
             raise ProtocolError(message)
         if not _safe_history_key(secret):
             raise ProtocolError(message)
+    if set(payload) == CONFIGURE_HISTORY_KEYS_FIELDS:
+        return
+    active = payload.get("active_version")
+    pending = payload.get("pending_version")
+    if active is not None and (not _safe_key_version(active) or active not in keys):
+        raise ProtocolError(message)
+    if pending is not None and (
+        not _safe_key_version(pending)
+        or pending not in keys
+        or active is None
+        or int(pending[1:]) <= int(active[1:])
+    ):
+        raise ProtocolError(message)
 
 
 def _validate_history_policy(payload: dict[str, Any]) -> None:

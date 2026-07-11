@@ -1,22 +1,93 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use base64::Engine;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::config_store::{AppConfig, ConfigStore};
 use crate::desktop::{DesktopState, DesktopStatus};
 use crate::history_key_store::HistoryKeyStore;
 use crate::runtime_commands::{
-    configure_history_keys_command, configure_history_path_command,
+    configure_history_keyring_command, configure_history_path_command,
     configure_history_policy_command, configure_plugin_command, configure_provider_command,
-    validate_command, CommandKind, ValidatedCommand,
+    plugin_admin_command, validate_command, CommandKind, ValidatedCommand,
 };
 use crate::secret_store::{CredentialBackend, SecretStatus, SecretStore};
-use crate::sidecar::{EventEmitter, RuntimeController};
+use crate::sidecar::{
+    EventEmitter, PrivateEventStream, PrivateRuntimeGeneration, RuntimeController,
+};
 
 pub struct TauriRuntimeState {
     runtime: RuntimeController,
+}
+
+pub struct HistoryOperationControl {
+    running: AtomicBool,
+    cancelled: AtomicBool,
+    commit_lock: Mutex<()>,
+}
+
+impl HistoryOperationControl {
+    pub fn new() -> Self {
+        Self {
+            running: AtomicBool::new(false),
+            cancelled: AtomicBool::new(false),
+            commit_lock: Mutex::new(()),
+        }
+    }
+
+    fn begin(&self) -> Result<(), String> {
+        let _guard = self
+            .commit_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.running.swap(true, Ordering::AcqRel) {
+            return Err("历史操作正在进行，请稍候。".to_string());
+        }
+        self.cancelled.store(false, Ordering::Release);
+        Ok(())
+    }
+
+    fn finish(&self) {
+        let _guard = self
+            .commit_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.running.store(false, Ordering::Release);
+        self.cancelled.store(false, Ordering::Release);
+    }
+
+    fn cancel(&self) {
+        let _guard = self
+            .commit_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.running.load(Ordering::Acquire) {
+            self.cancelled.store(true, Ordering::Release);
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    fn with_commit<T>(
+        &self,
+        commit: impl FnOnce() -> Result<T, String>,
+    ) -> Result<Option<T>, String> {
+        let _guard = self
+            .commit_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.is_cancelled() {
+            return Ok(None);
+        }
+        commit().map(Some)
+    }
 }
 
 impl TauriRuntimeState {
@@ -227,6 +298,530 @@ pub async fn runtime_plugin_cancel(
     forward_runtime_command(state.runtime(), command, CommandKind::Cancel)
 }
 
+const HISTORY_OPERATION_ERROR_MESSAGE: &str = "历史操作失败，请重试。";
+
+#[tauri::command]
+pub async fn history_export(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, TauriRuntimeState>,
+    config_store: State<'_, ConfigStore>,
+    history_key_store: State<'_, HistoryKeyStore>,
+    control: State<'_, HistoryOperationControl>,
+    request: Value,
+) -> Result<String, String> {
+    crate::plugin_commands::authorize_history_management(window.label(), "export")
+        .map_err(str::to_string)?;
+    let request =
+        crate::history_export::validate_export_request(request).map_err(str::to_string)?;
+    let confirmed = app
+        .dialog()
+        .message("导出的历史记录将以明文保存。请仅保存到可信位置。")
+        .title("导出历史记录")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show();
+    if !confirmed {
+        return Ok("cancelled".to_string());
+    }
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("导出历史记录")
+        .set_file_name(format!("reflex-history.{}", request.format.extension()))
+        .add_filter("历史记录", &[request.format.extension()])
+        .blocking_save_file();
+    let Some(target) = selected.and_then(|path| path.into_path().ok()) else {
+        return Ok("cancelled".to_string());
+    };
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    let history_path = history_database_path(&app_data_dir);
+    let export_journal = crate::history_export::pending_export_journal(&app_data_dir);
+    let input = serde_json::json!({
+        "format": request.format.wire_name(),
+        "filters": request.filters,
+    });
+    control.begin()?;
+    let result = run_history_export(
+        state.runtime(),
+        &config_store,
+        &history_key_store,
+        &history_path,
+        input,
+        &control,
+        &target,
+        &export_journal,
+    );
+    control.finish();
+    Ok(if result? { "completed" } else { "cancelled" }.to_string())
+}
+
+#[tauri::command]
+pub async fn history_admin_operation(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, TauriRuntimeState>,
+    config_store: State<'_, ConfigStore>,
+    history_key_store: State<'_, HistoryKeyStore>,
+    control: State<'_, HistoryOperationControl>,
+    operation: String,
+    input: Value,
+) -> Result<String, String> {
+    crate::plugin_commands::authorize_history_management(window.label(), &operation)
+        .map_err(str::to_string)?;
+    if !input.is_object() {
+        return Err(crate::plugin_commands::PLUGIN_COMMAND_DENIED_MESSAGE.to_string());
+    }
+    let confirmed = app
+        .dialog()
+        .message(history_confirmation_message(&operation))
+        .title("确认历史操作")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show();
+    if !confirmed {
+        return Ok("cancelled".to_string());
+    }
+    let history_path = app
+        .path()
+        .app_data_dir()
+        .map(|path| history_database_path(&path))
+        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    if operation == "rotate" {
+        control.begin()?;
+        let result = rotate_history_keys(
+            state.runtime(),
+            &config_store,
+            &history_key_store,
+            &history_path,
+            &control,
+        );
+        control.finish();
+        if !result? {
+            return Ok("cancelled".to_string());
+        }
+    } else {
+        control.begin()?;
+        let result = run_history_admin(
+            state.runtime(),
+            &config_store,
+            &history_key_store,
+            &history_path,
+            &operation,
+            input,
+            &control,
+            true,
+        );
+        control.finish();
+        if matches!(result?, HistoryAdminOutcome::Cancelled) {
+            return Ok("cancelled".to_string());
+        }
+    }
+    Ok("completed".to_string())
+}
+
+#[tauri::command]
+pub async fn history_operation_cancel(
+    window: tauri::WebviewWindow,
+    control: State<'_, HistoryOperationControl>,
+) -> Result<(), String> {
+    if window.label() != "history" {
+        return Err(crate::plugin_commands::PLUGIN_COMMAND_DENIED_MESSAGE.to_string());
+    }
+    control.cancel();
+    Ok(())
+}
+
+struct PrivateAdminResponse {
+    data: Value,
+    generation: PrivateRuntimeGeneration,
+}
+
+enum HistoryAdminOutcome {
+    Completed(PrivateAdminResponse),
+    Cancelled,
+}
+
+fn run_history_admin<H>(
+    runtime: &RuntimeController,
+    config_store: &ConfigStore,
+    history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
+    operation: &str,
+    input: Value,
+    control: &HistoryOperationControl,
+    cancellable: bool,
+) -> Result<HistoryAdminOutcome, String>
+where
+    H: CredentialBackend,
+{
+    let stream = start_history_admin_stream(
+        runtime,
+        config_store,
+        history_key_store,
+        history_path,
+        operation,
+        input,
+    )?;
+    collect_history_admin(stream, control, cancellable)
+}
+
+fn run_history_admin_for_generation<H>(
+    runtime: &RuntimeController,
+    config_store: &ConfigStore,
+    history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
+    operation: &str,
+    input: Value,
+    control: &HistoryOperationControl,
+    generation: &PrivateRuntimeGeneration,
+) -> Result<HistoryAdminOutcome, String>
+where
+    H: CredentialBackend,
+{
+    let stream = start_history_admin_stream_for_generation(
+        runtime,
+        config_store,
+        history_key_store,
+        history_path,
+        operation,
+        input,
+        generation,
+    )?;
+    collect_history_admin(stream, control, false)
+}
+
+fn collect_history_admin(
+    mut stream: PrivateEventStream,
+    control: &HistoryOperationControl,
+    cancellable: bool,
+) -> Result<HistoryAdminOutcome, String> {
+    loop {
+        if cancellable && control.is_cancelled() {
+            stream.cancel();
+            return Ok(HistoryAdminOutcome::Cancelled);
+        }
+        let payload = match stream
+            .poll_timeout(Duration::from_millis(250))
+            .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?
+        {
+            Some(payload) => payload,
+            None => continue,
+        };
+        let status = payload.get("status").and_then(Value::as_str);
+        match status {
+            Some("started" | "progress") => {}
+            Some("chunk") => return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
+            Some("result") => {
+                let generation = stream.generation();
+                return Ok(HistoryAdminOutcome::Completed(PrivateAdminResponse {
+                    data: payload
+                        .get("data")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                    generation,
+                }));
+            }
+            Some("cancelled" | "error") | None => {
+                return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
+            }
+            _ => return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
+        }
+    }
+}
+
+fn run_history_export<H>(
+    runtime: &RuntimeController,
+    config_store: &ConfigStore,
+    history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
+    input: Value,
+    control: &HistoryOperationControl,
+    target: &Path,
+    export_journal: &Path,
+) -> Result<bool, String>
+where
+    H: CredentialBackend,
+{
+    let mut stream = start_history_admin_stream(
+        runtime,
+        config_store,
+        history_key_store,
+        history_path,
+        "export",
+        input,
+    )?;
+    let mut writer = crate::history_export::AtomicExportWriter::new_registered(
+        target,
+        export_journal,
+    )
+    .map_err(str::to_string)?;
+    loop {
+        if control.is_cancelled() {
+            stream.cancel();
+            return Ok(false);
+        }
+        let payload = match stream
+            .poll_timeout(Duration::from_millis(250))
+            .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?
+        {
+            Some(payload) => payload,
+            None => continue,
+        };
+        match payload.get("status").and_then(Value::as_str) {
+            Some("started" | "progress") => {}
+            Some("chunk") => {
+                let encoded = payload
+                    .pointer("/data/bytes")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+                writer.write_chunk(&decoded).map_err(str::to_string)?;
+            }
+            Some("result") => {
+                return commit_history_export(writer, control);
+            }
+            Some("cancelled" | "error") | None => {
+                return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
+            }
+            _ => return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
+        }
+    }
+}
+
+fn commit_history_export(
+    writer: crate::history_export::AtomicExportWriter,
+    control: &HistoryOperationControl,
+) -> Result<bool, String> {
+    control
+        .with_commit(|| writer.commit().map_err(str::to_string))
+        .map(|committed| committed.is_some())
+}
+
+fn start_history_admin_stream<H>(
+    runtime: &RuntimeController,
+    config_store: &ConfigStore,
+    history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
+    operation: &str,
+    input: Value,
+) -> Result<PrivateEventStream, String>
+where
+    H: CredentialBackend,
+{
+    let commands = build_history_admin_sequence(
+        config_store,
+        history_key_store,
+        history_path,
+        operation,
+        input,
+    )?;
+    runtime
+        .send_private_sequence(commands)
+        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())
+}
+
+fn start_history_admin_stream_for_generation<H>(
+    runtime: &RuntimeController,
+    config_store: &ConfigStore,
+    history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
+    operation: &str,
+    input: Value,
+    generation: &PrivateRuntimeGeneration,
+) -> Result<PrivateEventStream, String>
+where
+    H: CredentialBackend,
+{
+    let commands = build_history_admin_sequence(
+        config_store,
+        history_key_store,
+        history_path,
+        operation,
+        input,
+    )?;
+    runtime
+        .send_private_sequence_for_generation(commands, generation)
+        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())
+}
+
+fn build_history_admin_sequence<H>(
+    config_store: &ConfigStore,
+    history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
+    operation: &str,
+    input: Value,
+) -> Result<Vec<ValidatedCommand>, String>
+where
+    H: CredentialBackend,
+{
+    let persisted = config_store
+        .load()
+        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    let mut commands =
+        build_history_config_sequence(&persisted, history_key_store, history_path, false)?;
+    commands.push(
+        plugin_admin_command("history-sqlite", operation, input)
+            .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?,
+    );
+    Ok(commands)
+}
+
+fn rotate_history_keys<H>(
+    runtime: &RuntimeController,
+    config_store: &ConfigStore,
+    history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
+    control: &HistoryOperationControl,
+) -> Result<bool, String>
+where
+    H: CredentialBackend,
+{
+    if resume_promoted_rotation(history_key_store, |active| {
+        match run_history_admin(
+            runtime,
+            config_store,
+            history_key_store,
+            history_path,
+            "rotate",
+            serde_json::json!({"action": "resume", "target_version": format!("v{active}")}),
+            control,
+            false,
+        )? {
+            HistoryAdminOutcome::Completed(response) => Ok(response
+                .data
+                .get("resumed")
+                .and_then(Value::as_bool)
+                == Some(true)),
+            HistoryAdminOutcome::Cancelled => Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
+        }
+    })? {
+        return Ok(true);
+    }
+    let status = history_key_store
+        .begin_rotation()
+        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    let target = status
+        .pending_version
+        .ok_or_else(|| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    let prepared = run_history_admin(
+        runtime,
+        config_store,
+        history_key_store,
+        history_path,
+        "rotate",
+        serde_json::json!({"action": "prepare", "target_version": format!("v{target}")}),
+        control,
+        true,
+    );
+    let Some(prepared) = resolve_rotation_prepare(prepared)? else {
+        return Ok(false);
+    };
+    if prepared
+        .data
+        .get("promotion_required")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
+    }
+    let generation = prepared.generation;
+    promote_history_rotation_or_rollback(history_key_store, || {
+        match run_history_admin_for_generation(
+            runtime,
+            config_store,
+            history_key_store,
+            history_path,
+            "rotate",
+            serde_json::json!({"action": "rollback", "target_version": format!("v{target}")}),
+            control,
+            &generation,
+        )? {
+            HistoryAdminOutcome::Completed(_) => Ok(()),
+            HistoryAdminOutcome::Cancelled => Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
+        }
+    })?;
+    let finalized = run_history_admin(
+        runtime,
+        config_store,
+        history_key_store,
+        history_path,
+        "rotate",
+        serde_json::json!({"action": "finalize", "target_version": format!("v{target}")}),
+        control,
+        false,
+    )?;
+    if matches!(finalized, HistoryAdminOutcome::Completed(_)) {
+        Ok(true)
+    } else {
+        Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string())
+    }
+}
+
+fn resolve_rotation_prepare(
+    prepared: Result<HistoryAdminOutcome, String>,
+) -> Result<Option<PrivateAdminResponse>, String> {
+    match prepared {
+        Ok(HistoryAdminOutcome::Completed(response)) => Ok(Some(response)),
+        Ok(HistoryAdminOutcome::Cancelled) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn resume_promoted_rotation<H>(
+    history_key_store: &HistoryKeyStore<H>,
+    resume: impl FnOnce(u32) -> Result<bool, String>,
+) -> Result<bool, String>
+where
+    H: CredentialBackend,
+{
+    let status = history_key_store
+        .status()
+        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    if status.pending_version.is_some() {
+        return Ok(false);
+    }
+    let Some(active) = status.active_version else {
+        return Ok(false);
+    };
+    resume(active)
+}
+
+fn promote_history_rotation_or_rollback<H>(
+    history_key_store: &HistoryKeyStore<H>,
+    rollback_python: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String>
+where
+    H: CredentialBackend,
+{
+    if history_key_store.promote().is_ok() {
+        return Ok(());
+    }
+    if rollback_python().is_err() {
+        return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
+    }
+    history_key_store
+        .rollback()
+        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string())
+}
+
+fn history_confirmation_message(operation: &str) -> &'static str {
+    match operation {
+        "delete" => "确定删除这条历史记录吗？",
+        "clear" => "确定清空全部历史记录吗？此操作不可撤销。",
+        "repair" => "确定扫描并修复历史记录吗？操作前会创建备份。",
+        "restore" => "确定恢复所选备份吗？当前历史会先备份。",
+        "rotate" => "确定轮换历史加密密钥吗？操作期间历史写入会暂停。",
+        _ => "确定继续此历史操作吗？",
+    }
+}
+
 fn forward_runtime_command(
     runtime: &RuntimeController,
     command: Value,
@@ -382,14 +977,27 @@ fn build_history_config_sequence<H>(
 where
     H: CredentialBackend,
 {
-    let history_keys = match history_key_store.active_keys() {
-        Ok(keys) => keys,
-        Err(_error) if allow_backend_failure => std::collections::BTreeMap::new(),
+    let (history_keys, key_status) = match history_key_store.keyring() {
+        Ok(value) => value,
+        Err(_error) if allow_backend_failure => (
+            std::collections::BTreeMap::new(),
+            crate::history_key_store::HistoryKeyStatus {
+                configured: false,
+                active_version: None,
+                pending_version: None,
+                rotation_pending: false,
+            },
+        ),
         Err(error) => return Err(error.to_string()),
     };
     Ok(vec![
         configure_history_path_command(history_path).map_err(str::to_string)?,
-        configure_history_keys_command(history_keys).map_err(str::to_string)?,
+        configure_history_keyring_command(
+            history_keys,
+            key_status.active_version,
+            key_status.pending_version,
+        )
+        .map_err(str::to_string)?,
         configure_history_policy_command(
             persisted.history_enabled,
             persisted.privacy_mode,
@@ -489,6 +1097,57 @@ mod tests {
 
         fn delete(&self, service: &str, account: &str) -> Result<(), ()> {
             self.0
+                .lock()
+                .unwrap()
+                .remove(&(service.to_string(), account.to_string()));
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct PromoteFailingCredentialBackend {
+        values: Arc<Mutex<HashMap<(String, String), String>>>,
+        events: Arc<Mutex<Vec<&'static str>>>,
+        failed: Arc<Mutex<bool>>,
+    }
+
+    impl CredentialBackend for PromoteFailingCredentialBackend {
+        fn get(&self, service: &str, account: &str) -> Result<Option<String>, ()> {
+            Ok(self
+                .values
+                .lock()
+                .unwrap()
+                .get(&(service.to_string(), account.to_string()))
+                .cloned())
+        }
+
+        fn set(&self, service: &str, account: &str, secret: &str) -> Result<(), ()> {
+            if account == "state" {
+                let state: serde_json::Value = serde_json::from_str(secret).unwrap();
+                if state["active_version"] == 2
+                    && state["pending_version"].is_null()
+                    && !*self.failed.lock().unwrap()
+                {
+                    *self.failed.lock().unwrap() = true;
+                    self.events
+                        .lock()
+                        .unwrap()
+                        .push("credential-promote-failed");
+                    return Err(());
+                }
+                if *self.failed.lock().unwrap() && state["active_version"] == 1 {
+                    self.events.lock().unwrap().push("credential-rollback");
+                }
+            }
+            self.values.lock().unwrap().insert(
+                (service.to_string(), account.to_string()),
+                secret.to_string(),
+            );
+            Ok(())
+        }
+
+        fn delete(&self, service: &str, account: &str) -> Result<(), ()> {
+            self.values
                 .lock()
                 .unwrap()
                 .remove(&(service.to_string(), account.to_string()));
@@ -775,6 +1434,152 @@ mod tests {
 
         assert_eq!(path, app_data.join("history").join("history.sqlite3"));
         assert!(!app_data.exists());
+    }
+
+    #[test]
+    fn export_cancelled_after_result_preserves_target_and_removes_temporary_file() {
+        let root = std::env::temp_dir().join(format!(
+            "reflex-next-command-export-result-cancel-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("history.json");
+        std::fs::write(&target, b"old").unwrap();
+        let mut writer = crate::history_export::AtomicExportWriter::new(&target).unwrap();
+        writer.write_chunk(b"new private body").unwrap();
+        let control = super::HistoryOperationControl::new();
+        control.begin().unwrap();
+        control.cancel();
+
+        let committed = super::commit_history_export(writer, &control).unwrap();
+
+        assert!(!committed);
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_commit_and_cancel_share_one_linearized_critical_section() {
+        let control = Arc::new(super::HistoryOperationControl::new());
+        control.begin().unwrap();
+        let commit_entered = Arc::new(std::sync::Barrier::new(2));
+        let release_commit = Arc::new(std::sync::Barrier::new(2));
+        let commit_control = control.clone();
+        let commit_entered_for_worker = commit_entered.clone();
+        let release_commit_for_worker = release_commit.clone();
+        let commit = std::thread::spawn(move || {
+            commit_control.with_commit(|| {
+                commit_entered_for_worker.wait();
+                release_commit_for_worker.wait();
+                Ok(())
+            })
+        });
+        commit_entered.wait();
+        let cancel_returned = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_control = control.clone();
+        let cancel_returned_for_worker = cancel_returned.clone();
+        let cancel = std::thread::spawn(move || {
+            cancel_control.cancel();
+            cancel_returned_for_worker.store(true, std::sync::atomic::Ordering::Release);
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        assert!(!cancel_returned.load(std::sync::atomic::Ordering::Acquire));
+        release_commit.wait();
+
+        assert!(commit.join().unwrap().unwrap().is_some());
+        cancel.join().unwrap();
+        assert!(cancel_returned.load(std::sync::atomic::Ordering::Acquire));
+        control.finish();
+    }
+
+    #[test]
+    fn credential_promote_failure_rolls_back_python_before_pending_key_state() {
+        let backend = PromoteFailingCredentialBackend::default();
+        let events = backend.events.clone();
+        let store = HistoryKeyStore::new(backend);
+        store.ensure_active().unwrap();
+        store.begin_rotation().unwrap();
+        events.lock().unwrap().clear();
+
+        let result = super::promote_history_rotation_or_rollback(&store, || {
+            events.lock().unwrap().push("python-rollback");
+            Ok(())
+        });
+
+        assert!(result.is_err());
+        assert_eq!(store.status().unwrap().active_version, Some(1));
+        assert_eq!(store.status().unwrap().pending_version, None);
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                "credential-promote-failed",
+                "python-rollback",
+                "credential-rollback"
+            ]
+        );
+    }
+
+    #[test]
+    fn credential_promote_failure_preserves_pending_key_when_python_rollback_fails() {
+        let backend = PromoteFailingCredentialBackend::default();
+        let events = backend.events.clone();
+        let store = HistoryKeyStore::new(backend);
+        store.ensure_active().unwrap();
+        store.begin_rotation().unwrap();
+        events.lock().unwrap().clear();
+
+        let result = super::promote_history_rotation_or_rollback(&store, || {
+            events.lock().unwrap().push("python-rollback-failed");
+            Err(super::HISTORY_OPERATION_ERROR_MESSAGE.to_string())
+        });
+
+        assert!(result.is_err());
+        assert_eq!(store.status().unwrap().active_version, Some(1));
+        assert_eq!(store.status().unwrap().pending_version, Some(2));
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["credential-promote-failed", "python-rollback-failed"]
+        );
+    }
+
+    #[test]
+    fn promoted_rotation_is_resumed_before_allocating_another_pending_key() {
+        let store = HistoryKeyStore::new(MemoryCredentialBackend::default());
+        store.ensure_active().unwrap();
+        store.begin_rotation().unwrap();
+        store.promote().unwrap();
+        let resumed_target = Arc::new(Mutex::new(None));
+        let recorded_target = resumed_target.clone();
+
+        let resumed = super::resume_promoted_rotation(&store, move |target| {
+            *recorded_target.lock().unwrap() = Some(target);
+            Ok(true)
+        })
+        .unwrap();
+
+        assert!(resumed);
+        assert_eq!(*resumed_target.lock().unwrap(), Some(2));
+        assert_eq!(store.status().unwrap().active_version, Some(2));
+        assert_eq!(store.status().unwrap().pending_version, None);
+    }
+
+    #[test]
+    fn unconfirmed_rotation_cancellation_preserves_pending_key_state() {
+        let store = HistoryKeyStore::new(MemoryCredentialBackend::default());
+        store.ensure_active().unwrap();
+        store.begin_rotation().unwrap();
+
+        let resolved = super::resolve_rotation_prepare(Ok(
+            super::HistoryAdminOutcome::Cancelled,
+        ))
+        .unwrap();
+
+        assert!(resolved.is_none());
+        assert_eq!(store.status().unwrap().active_version, Some(1));
+        assert_eq!(store.status().unwrap().pending_version, Some(2));
     }
 
     #[test]

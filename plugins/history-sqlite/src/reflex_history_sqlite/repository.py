@@ -6,13 +6,17 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import sqlite3
+import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any, Iterator
 
 from cryptography.exceptions import InvalidTag
+from reflex_core import CancellationToken, OperationCancelled
 
 from .codec import EncryptedField, HistoryCodec, HistoryMetadata
 from .contract import (
@@ -75,6 +79,15 @@ CREATE INDEX IF NOT EXISTS history_records_rating_idx ON history_records(rating)
 CREATE INDEX IF NOT EXISTS history_records_status_idx ON history_records(status);
 """
 
+INDEX_DEFINITIONS = (
+    ("history_records_created_at_idx", "CREATE INDEX history_records_created_at_idx ON history_records(created_at)"),
+    ("history_records_provider_idx", "CREATE INDEX history_records_provider_idx ON history_records(provider)"),
+    ("history_records_scene_idx", "CREATE INDEX history_records_scene_idx ON history_records(scene)"),
+    ("history_records_style_idx", "CREATE INDEX history_records_style_idx ON history_records(style)"),
+    ("history_records_rating_idx", "CREATE INDEX history_records_rating_idx ON history_records(rating)"),
+    ("history_records_status_idx", "CREATE INDEX history_records_status_idx ON history_records(status)"),
+)
+
 
 class HistoryRepository:
     def __init__(
@@ -87,7 +100,7 @@ class HistoryRepository:
         self._path = services.database_path
         self._keys = services.decoded_keys()
         self._codec = HistoryCodec(self._keys)
-        self._active_key_version = max(self._keys)
+        self._active_key_version = services.active_version
         self._schema_lock = schema_lock
 
     @property
@@ -231,6 +244,575 @@ class HistoryRepository:
                 connection.rollback()
                 raise
         return {"deleted": cursor.rowcount}
+
+    def export_records(
+        self, request: HistoryListRequest, cancellation: Any
+    ) -> Iterator[dict[str, Any]]:
+        if not self.exists:
+            return
+        cursor = None
+        while True:
+            cancellation.raise_if_cancelled()
+            rows = self._select_rows(request, cursor, 100)
+            for row in rows:
+                cancellation.raise_if_cancelled()
+                detail = self._detail_row(row)
+                if not detail["corrupted"]:
+                    yield detail
+            if len(rows) < 100:
+                return
+            cursor = self._cursor_values(rows[-1], request)
+
+    def scan(self, cancellation: Any) -> dict[str, Any]:
+        if not self.exists:
+            return {"quick_check": "ok", "record_count": 0, "verified_records": 0, "corrupted_records": 0}
+        verification = self._verify_database(self._path, cancellation)
+        return {
+            "quick_check": "ok",
+            "record_count": verification["record_count"],
+            "verified_records": verification["verified"],
+            "corrupted_records": verification["corrupted"],
+        }
+
+    def repair(self, cancellation: Any) -> dict[str, Any]:
+        if not self.exists:
+            raise HistoryPluginError("history_not_found")
+        self._require_quick_check(self._path)
+        manifest = self.create_backup(cancellation)
+        cancellation.raise_if_cancelled()
+        verified = quarantined = 0
+        with self._connection(create=False, writable=True) as connection:
+            rows = self._all_rows(connection)
+            record_count = 0
+            try:
+                for row in rows:
+                    record_count += 1
+                    cancellation.raise_if_cancelled()
+                    if self._row_is_valid(row):
+                        verified += 1
+                        continue
+                    connection.execute(
+                        "INSERT OR REPLACE INTO repair_quarantine(id, reason, quarantined_at) VALUES (?, ?, ?)",
+                        (row["id"], "history_record_corrupted", _utc_now()),
+                    )
+                    connection.execute("DELETE FROM history_records WHERE id = ?", (row["id"],))
+                    quarantined += 1
+                for name, _statement in INDEX_DEFINITIONS:
+                    connection.execute(f'DROP INDEX IF EXISTS "{name}"')
+                for _name, statement in INDEX_DEFINITIONS:
+                    connection.execute(statement)
+                cancellation.raise_if_cancelled()
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
+        return {
+            "backup_id": manifest["id"],
+            "record_count": record_count,
+            "verified_records": verified,
+            "quarantined_records": quarantined,
+            "indexes_rebuilt": True,
+        }
+
+    def create_backup(self, cancellation: Any) -> dict[str, Any]:
+        if not self.exists:
+            raise HistoryPluginError("history_not_found")
+        backup_id = f"backup-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex[:12]}"
+        directory = self._backup_directory()
+        directory.mkdir(parents=True, exist_ok=True)
+        database_path = directory / f"{backup_id}.sqlite3"
+        manifest_path = directory / f"{backup_id}.json"
+        try:
+            self._online_backup(database_path, cancellation)
+            verification = self._verify_database(database_path, cancellation)
+            manifest = {
+                "id": backup_id,
+                "schema_version": SCHEMA_VERSION,
+                "created_at": _utc_now(),
+                "key_versions": [f"v{version}" for version in verification["key_versions"]],
+                "record_count": verification["record_count"],
+                "aead": {"verified": verification["verified"], "corrupted": verification["corrupted"]},
+            }
+            encoded = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            temporary = manifest_path.with_suffix(".json.tmp")
+            with temporary.open("wb") as stream:
+                stream.write(encoded)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, manifest_path)
+            _fsync_directory(directory)
+            return manifest
+        except BaseException:
+            database_path.unlink(missing_ok=True)
+            manifest_path.unlink(missing_ok=True)
+            manifest_path.with_suffix(".json.tmp").unlink(missing_ok=True)
+            raise
+
+    def backups(self, cancellation: Any) -> dict[str, Any]:
+        directory = self._backup_directory()
+        if not directory.is_dir():
+            return {"items": []}
+        items: list[dict[str, Any]] = []
+        for manifest_path in sorted(directory.glob("backup-*.json"), reverse=True):
+            cancellation.raise_if_cancelled()
+            manifest = self._load_manifest(manifest_path)
+            database_path = directory / f"{manifest['id']}.sqlite3"
+            if database_path.is_file():
+                items.append(manifest)
+        return {"items": items}
+
+    def restore(self, backup_id: str, cancellation: Any) -> dict[str, Any]:
+        selected = self._listed_backup(backup_id)
+        pre_restore = self.create_backup(cancellation)
+        temporary = self._path.with_name(f".{self._path.name}.restore-{uuid.uuid4().hex}.tmp")
+        try:
+            self._copy_database(self._backup_directory() / f"{selected['id']}.sqlite3", temporary, cancellation)
+            verification = self._verify_database(temporary, cancellation)
+            if (
+                verification["record_count"] != selected["record_count"]
+                or verification["corrupted"] != 0
+            ):
+                raise HistoryPluginError("history_backup_invalid")
+            cancellation.raise_if_cancelled()
+            self._replace_database(
+                temporary,
+                cancellation,
+                expected_record_count=selected["record_count"],
+            )
+        except HistoryPluginError:
+            temporary.unlink(missing_ok=True)
+            raise
+        except Exception as error:
+            temporary.unlink(missing_ok=True)
+            raise HistoryPluginError("history_recovery_required") from error
+        return {"restored": True, "backup_id": backup_id, "pre_restore_backup_id": pre_restore["id"]}
+
+    def has_rotation_checkpoint(self) -> bool:
+        if not self.exists:
+            return False
+        with self._connection(create=False, writable=False) as connection:
+            try:
+                return connection.execute("SELECT 1 FROM rotation_checkpoint WHERE id = 1").fetchone() is not None
+            except sqlite3.OperationalError:
+                return False
+
+    def prepare_rotation(self, target_version: int, batch_size: int, cancellation: Any) -> dict[str, Any]:
+        if self._services.pending_version != target_version or target_version not in self._keys:
+            raise HistoryPluginError("history_key_unavailable")
+        if target_version <= self._services.active_version:
+            raise HistoryPluginError("history_payload_invalid")
+        checkpoint = self._rotation_checkpoint()
+        backup_id = checkpoint["backup_id"] if checkpoint else None
+        try:
+            if checkpoint is None:
+                self._rotation_phase_hook("frozen")
+                backup = self.create_backup(cancellation)
+                backup_id = backup["id"]
+                self._rotation_phase_hook("backup")
+                with self._connection(create=False, writable=True) as connection:
+                    high_water = connection.execute("SELECT MAX(id) FROM history_records").fetchone()[0]
+                    connection.execute(
+                        "INSERT OR REPLACE INTO rotation_checkpoint(id, rotation_id, source_version, target_version, phase, backup_id, high_water_mark, last_record_id) VALUES (1, ?, ?, ?, ?, ?, ?, NULL)",
+                        (uuid.uuid4().hex, self._services.active_version, target_version, "metadata", backup_id, high_water),
+                    )
+                    connection.commit()
+                self._rotation_phase_hook("metadata")
+            elif checkpoint["target_version"] != target_version:
+                raise HistoryPluginError("history_busy")
+            while True:
+                cancellation.raise_if_cancelled()
+                changed = self._reencrypt_batch(target_version, batch_size, cancellation)
+                if not changed:
+                    break
+                self._rotation_phase_hook("reencrypt")
+            verification = self._verify_database(self._path, cancellation)
+            if verification["corrupted"]:
+                raise HistoryPluginError("history_rotation_failed")
+            with self._connection(create=False, writable=True) as connection:
+                connection.execute("UPDATE rotation_checkpoint SET phase = 'verified' WHERE id = 1")
+                connection.commit()
+            self._rotation_phase_hook("verified")
+            return {"promotion_required": True, "target_version": f"v{target_version}", "backup_id": backup_id}
+        except Exception as error:
+            try:
+                if backup_id is not None:
+                    self._restore_backup_without_snapshot(
+                        backup_id,
+                        CancellationToken(),
+                    )
+                self._clear_rotation_checkpoint()
+            except Exception as rollback_error:
+                raise HistoryPluginError("history_recovery_required") from rollback_error
+            if isinstance(error, OperationCancelled):
+                raise
+            if isinstance(error, HistoryPluginError) and error.code in {"history_busy", "history_payload_invalid", "history_key_unavailable"}:
+                raise
+            raise HistoryPluginError("history_rotation_failed") from error
+
+    def finalize_rotation(self, target_version: int) -> dict[str, Any]:
+        checkpoint = self._rotation_checkpoint()
+        if (
+            checkpoint is None
+            or checkpoint["target_version"] != target_version
+            or checkpoint["phase"] != "verified"
+            or self._services.active_version != target_version
+            or self._services.pending_version is not None
+        ):
+            raise HistoryPluginError("history_rotation_failed")
+        self._clear_rotation_checkpoint()
+        return {"rotated": True, "active_version": f"v{target_version}"}
+
+    def resume_rotation(self, target_version: int) -> dict[str, Any]:
+        checkpoint = self._rotation_checkpoint()
+        if checkpoint is None:
+            return {"resumed": False}
+        if (
+            checkpoint["target_version"] != target_version
+            or checkpoint["phase"] != "verified"
+            or self._services.active_version != target_version
+            or self._services.pending_version is not None
+        ):
+            raise HistoryPluginError("history_rotation_failed")
+        self._clear_rotation_checkpoint()
+        return {
+            "resumed": True,
+            "rotated": True,
+            "active_version": f"v{target_version}",
+        }
+
+    def rollback_rotation(self, target_version: int, cancellation: Any) -> dict[str, Any]:
+        checkpoint = self._rotation_checkpoint()
+        if checkpoint is None or checkpoint["target_version"] != target_version:
+            raise HistoryPluginError("history_rotation_failed")
+        self._restore_backup_without_snapshot(checkpoint["backup_id"], cancellation)
+        self._clear_rotation_checkpoint()
+        return {"rolled_back": True, "active_version": f"v{checkpoint['source_version']}"}
+
+    def _online_backup(self, destination: Path, cancellation: Any) -> None:
+        cancellation.raise_if_cancelled()
+        source = sqlite3.connect(f"file:{self._path.as_posix()}?mode=ro", uri=True, timeout=5)
+        target = sqlite3.connect(destination)
+        try:
+            source.backup(target, pages=64, progress=lambda *_: cancellation.raise_if_cancelled())
+            target.commit()
+        finally:
+            target.close()
+            source.close()
+        with destination.open("r+b") as stream:
+            os.fsync(stream.fileno())
+
+    def _copy_database(self, source_path: Path, destination: Path, cancellation: Any) -> None:
+        source = sqlite3.connect(f"file:{source_path.as_posix()}?mode=ro", uri=True)
+        target = sqlite3.connect(destination)
+        try:
+            source.backup(target, pages=64, progress=lambda *_: cancellation.raise_if_cancelled())
+            target.commit()
+        finally:
+            target.close()
+            source.close()
+        with destination.open("r+b") as stream:
+            os.fsync(stream.fileno())
+
+    def _verify_database(self, path: Path, cancellation: Any) -> dict[str, Any]:
+        self._require_quick_check(path)
+        connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        try:
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version != SCHEMA_VERSION:
+                raise HistoryPluginError("history_backup_invalid")
+            required_tables = {
+                "history_records",
+                "schema_meta",
+                "repair_quarantine",
+                "rotation_checkpoint",
+            }
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            schema_version = connection.execute(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+            ).fetchone()
+            if (
+                not required_tables.issubset(tables)
+                or schema_version is None
+                or schema_version[0] != str(SCHEMA_VERSION)
+            ):
+                raise HistoryPluginError("history_backup_invalid")
+            rows = self._all_rows(connection)
+            record_count = verified = corrupted = 0
+            key_versions: set[int] = set()
+            for row in rows:
+                record_count += 1
+                cancellation.raise_if_cancelled()
+                key_versions.add(row["key_version"])
+                if self._row_is_valid(row):
+                    verified += 1
+                else:
+                    corrupted += 1
+            return {"record_count": record_count, "verified": verified, "corrupted": corrupted, "key_versions": sorted(key_versions)}
+        finally:
+            connection.close()
+
+    def _row_is_valid(self, row: sqlite3.Row) -> bool:
+        metadata = self._metadata_from_summary(row)
+        try:
+            self._codec.decrypt(EncryptedField(row["input_nonce"], row["input_ciphertext"]), metadata, row["key_version"], "input")
+            self._codec.decrypt(EncryptedField(row["output_nonce"], row["output_ciphertext"]), metadata, row["key_version"], "output")
+            return True
+        except (InvalidTag, ValueError):
+            return False
+
+    def _all_rows(self, connection: sqlite3.Connection) -> Iterator[sqlite3.Row]:
+        last_id: str | None = None
+        while True:
+            if last_id is None:
+                rows = connection.execute(
+                    f"SELECT {SUMMARY_COLUMNS}, input_nonce, input_ciphertext, output_nonce, output_ciphertext, key_version FROM history_records ORDER BY id LIMIT 100"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    f"SELECT {SUMMARY_COLUMNS}, input_nonce, input_ciphertext, output_nonce, output_ciphertext, key_version FROM history_records WHERE id > ? ORDER BY id LIMIT 100",
+                    (last_id,),
+                ).fetchall()
+            if not rows:
+                return
+            last_id = rows[-1]["id"]
+            yield from rows
+
+    def _require_quick_check(self, path: Path) -> None:
+        connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        try:
+            rows = connection.execute("PRAGMA quick_check").fetchall()
+            if rows != [("ok",)]:
+                raise HistoryPluginError("history_recovery_required")
+        finally:
+            connection.close()
+
+    def _backup_directory(self) -> Path:
+        return self._path.parent / "backups"
+
+    def _load_manifest(self, path: Path) -> dict[str, Any]:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise HistoryPluginError("history_backup_invalid") from error
+        expected = {"id", "schema_version", "created_at", "key_versions", "record_count", "aead"}
+        if (
+            not isinstance(value, dict) or set(value) != expected
+            or not isinstance(value["id"], str) or path.name != f"{value['id']}.json"
+            or value["schema_version"] != SCHEMA_VERSION
+            or not isinstance(value["key_versions"], list)
+            or any(version not in self._services.keys for version in value["key_versions"])
+            or not isinstance(value["record_count"], int)
+            or not isinstance(value["aead"], dict)
+            or set(value["aead"]) != {"verified", "corrupted"}
+        ):
+            raise HistoryPluginError("history_backup_invalid")
+        return value
+
+    def _listed_backup(self, backup_id: str) -> dict[str, Any]:
+        manifest_path = self._backup_directory() / f"{backup_id}.json"
+        if not manifest_path.is_file():
+            raise HistoryPluginError("history_backup_invalid")
+        return self._load_manifest(manifest_path)
+
+    def _replace_database(
+        self,
+        replacement: Path,
+        cancellation: Any,
+        *,
+        expected_record_count: int,
+    ) -> None:
+        rollback = self._path.with_name(f".{self._path.name}.rollback-{uuid.uuid4().hex}")
+        self._checkpoint_for_replace()
+        self._write_replace_state(rollback, replacement)
+        try:
+            os.replace(self._path, rollback)
+            os.replace(replacement, self._path)
+            verification = self._verify_database(self._path, cancellation)
+            if (
+                verification["record_count"] != expected_record_count
+                or verification["corrupted"] != 0
+                or any(
+                    version not in self._keys
+                    for version in verification["key_versions"]
+                )
+            ):
+                raise HistoryPluginError("history_backup_invalid")
+            cancellation.raise_if_cancelled()
+            rollback.unlink(missing_ok=True)
+            for suffix in ("-wal", "-shm"):
+                self._path.with_name(self._path.name + suffix).unlink(missing_ok=True)
+            _fsync_directory(self._path.parent)
+            self._clear_replace_state()
+        except BaseException:
+            try:
+                if rollback.exists():
+                    os.replace(rollback, self._path)
+                replacement.unlink(missing_ok=True)
+                self._clear_replace_state()
+            except BaseException as recovery_error:
+                raise HistoryPluginError("history_recovery_required") from recovery_error
+            raise
+
+    def _checkpoint_for_replace(self) -> None:
+        if not self._path.is_file():
+            raise HistoryPluginError("history_not_found")
+        connection = sqlite3.connect(self._path, timeout=5)
+        try:
+            result = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if result is None or result[0] != 0:
+                raise HistoryPluginError("history_storage_busy")
+        finally:
+            connection.close()
+        for suffix in ("-wal", "-shm"):
+            self._path.with_name(self._path.name + suffix).unlink(missing_ok=True)
+
+    def recover_interrupted_replace(self) -> None:
+        marker = self._replace_state_path()
+        if not marker.is_file():
+            return
+        with self._schema_lock:
+            if not marker.is_file():
+                return
+            try:
+                state = self._load_replace_state()
+                rollback = self._path.parent / state["rollback"]
+                replacement = self._path.parent / state["replacement"]
+                if rollback.is_file():
+                    os.replace(rollback, self._path)
+                elif not self._path.is_file():
+                    raise HistoryPluginError("history_recovery_required")
+                replacement.unlink(missing_ok=True)
+                self._clear_replace_state()
+            except HistoryPluginError:
+                raise
+            except Exception as error:
+                raise HistoryPluginError("history_recovery_required") from error
+
+    def _replace_state_path(self) -> Path:
+        return self._path.with_name(f".{self._path.name}.replace-state.json")
+
+    def _write_replace_state(self, rollback: Path, replacement: Path) -> None:
+        if rollback.parent != self._path.parent or replacement.parent != self._path.parent:
+            raise HistoryPluginError("history_recovery_required")
+        state = {
+            "version": 1,
+            "rollback": rollback.name,
+            "replacement": replacement.name,
+        }
+        if not self._valid_replace_state(state):
+            raise HistoryPluginError("history_recovery_required")
+        marker = self._replace_state_path()
+        temporary = marker.with_name(f".{marker.name}.{uuid.uuid4().hex}.tmp")
+        encoded = json.dumps(
+            state,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+        try:
+            with temporary.open("xb") as stream:
+                stream.write(encoded)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, marker)
+            _fsync_directory(self._path.parent)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _load_replace_state(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self._replace_state_path().read_text(encoding="ascii"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise HistoryPluginError("history_recovery_required") from error
+        if not self._valid_replace_state(value):
+            raise HistoryPluginError("history_recovery_required")
+        return value
+
+    def _valid_replace_state(self, value: Any) -> bool:
+        if not isinstance(value, dict) or set(value) != {
+            "version",
+            "rollback",
+            "replacement",
+        }:
+            return False
+        rollback = value["rollback"]
+        replacement = value["replacement"]
+        prefix = f".{self._path.name}."
+        return (
+            value["version"] == 1
+            and isinstance(rollback, str)
+            and isinstance(replacement, str)
+            and Path(rollback).name == rollback
+            and Path(replacement).name == replacement
+            and rollback.startswith(prefix + "rollback-")
+            and replacement.startswith(prefix)
+            and replacement.endswith(".tmp")
+        )
+
+    def _clear_replace_state(self) -> None:
+        self._replace_state_path().unlink(missing_ok=True)
+        _fsync_directory(self._path.parent)
+
+    def _rotation_checkpoint(self) -> sqlite3.Row | None:
+        if not self.exists:
+            return None
+        with self._connection(create=False, writable=False) as connection:
+            try:
+                return connection.execute("SELECT * FROM rotation_checkpoint WHERE id = 1").fetchone()
+            except sqlite3.OperationalError:
+                return None
+
+    def _clear_rotation_checkpoint(self) -> None:
+        if not self.exists:
+            return
+        with self._connection(create=False, writable=True) as connection:
+            connection.execute("DELETE FROM rotation_checkpoint WHERE id = 1")
+            connection.commit()
+
+    def _reencrypt_batch(self, target_version: int, batch_size: int, cancellation: Any) -> int:
+        with self._connection(create=False, writable=True) as connection:
+            rows = connection.execute(
+                f"SELECT {SUMMARY_COLUMNS}, input_nonce, input_ciphertext, output_nonce, output_ciphertext, key_version FROM history_records WHERE key_version != ? ORDER BY id LIMIT ?",
+                (target_version, batch_size),
+            ).fetchall()
+            try:
+                for row in rows:
+                    cancellation.raise_if_cancelled()
+                    metadata = self._metadata_from_summary(row)
+                    input_text = self._codec.decrypt(EncryptedField(row["input_nonce"], row["input_ciphertext"]), metadata, row["key_version"], "input")
+                    output_text = self._codec.decrypt(EncryptedField(row["output_nonce"], row["output_ciphertext"]), metadata, row["key_version"], "output")
+                    input_field = self._codec.encrypt(input_text, metadata, target_version, "input")
+                    output_field = self._codec.encrypt(output_text, metadata, target_version, "output")
+                    connection.execute(
+                        "UPDATE history_records SET input_nonce=?, input_ciphertext=?, output_nonce=?, output_ciphertext=?, key_version=? WHERE id=?",
+                        (input_field.nonce, input_field.ciphertext, output_field.nonce, output_field.ciphertext, target_version, row["id"]),
+                    )
+                    connection.execute("UPDATE rotation_checkpoint SET phase='reencrypt', last_record_id=? WHERE id=1", (row["id"],))
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
+        return len(rows)
+
+    def _restore_backup_without_snapshot(self, backup_id: str, cancellation: Any) -> None:
+        selected = self._listed_backup(backup_id)
+        temporary = self._path.with_name(f".{self._path.name}.rotation-rollback-{uuid.uuid4().hex}.tmp")
+        self._copy_database(self._backup_directory() / f"{selected['id']}.sqlite3", temporary, cancellation)
+        self._verify_database(temporary, cancellation)
+        self._replace_database(
+            temporary,
+            cancellation,
+            expected_record_count=selected["record_count"],
+        )
+
+    def _rotation_phase_hook(self, phase: str) -> None:
+        del phase
 
     def _search(
         self,
@@ -591,3 +1173,17 @@ class HistoryRepository:
             }
         )
         return summary
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        return
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)

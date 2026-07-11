@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "history-capability",
+  "description": "Capability for the Reflex history window",
+  "windows": ["history"],
+  "platforms": ["windows"],
+  "permissions": [
+    "allow-runtime-list-plugins",
+    "allow-runtime-plugin-call",
+    "allow-runtime-plugin-cancel",
+    "allow-history-export",
+    "allow-history-admin-operation",
+    "allow-history-operation-cancel",
+    "core:app:allow-register-listener",
+    "core:app:allow-remove-listener",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

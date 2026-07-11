@@ -48,11 +48,36 @@ pub fn authorize_public_plugin_call(
     }
 }
 
+pub fn authorize_history_management(
+    window_label: &str,
+    operation: &str,
+) -> Result<(), &'static str> {
+    if window_label == "history"
+        && matches!(
+            operation,
+            "export" | "delete" | "clear" | "repair" | "restore" | "rotate"
+        )
+    {
+        Ok(())
+    } else {
+        Err(PLUGIN_COMMAND_DENIED_MESSAGE)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{authorize_public_plugin_call, validate_authorized_plugin_call};
+
+    #[test]
+    fn private_history_management_is_bound_to_the_history_window() {
+        for operation in ["export", "delete", "clear", "repair", "restore", "rotate"] {
+            assert!(super::authorize_history_management("history", operation).is_ok());
+            assert!(super::authorize_history_management("main", operation).is_err());
+            assert!(super::authorize_history_management("forged", operation).is_err());
+        }
+    }
 
     #[test]
     fn main_window_has_only_the_minimal_public_plugin_matrix() {
