@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   applyCoreEnvelope,
+  applyCurrentResultRating,
+  applyHistoryReuseIntent,
   applyHostAction,
   applyAdjustDraft,
   applyClipboardError,
@@ -263,6 +265,196 @@ describe("host state", () => {
 
     expect(next).toBe(state);
     expect(next.output).toBe("");
+  });
+
+  it("stores a structured current result and accepts only its save metric", () => {
+    const generating = startGeneration(updateInput(createHostState(), "写一封邮件"), "req-current");
+    const completed = applyCoreEnvelope(generating, {
+      version: 1,
+      request_id: "req-current",
+      event: {
+        type: "done",
+        data: {
+          text: "完成内容",
+          scene: "email",
+          style: "concise",
+          mode: "content",
+          provider: "minimax",
+          model: "MiniMax-M2.7-highspeed",
+          elapsed_ms: 125,
+          history_id: null,
+          save_status: "saving"
+        }
+      }
+    });
+
+    expect(completed.currentResult).toEqual({
+      requestId: "req-current",
+      historyId: null,
+      output: "完成内容",
+      scene: "email",
+      style: "concise",
+      mode: "content",
+      provider: "minimax",
+      model: "MiniMax-M2.7-highspeed",
+      elapsedMs: 125,
+      saveStatus: "saving",
+      rating: null
+    });
+    expect(completed.recentResult).toEqual(completed.currentResult);
+
+    const stale = applyCoreEnvelope(completed, {
+      version: 1,
+      request_id: "old-request",
+      event: { type: "metric", data: { history_id: "history-old", save_status: "saved" } }
+    });
+    expect(stale).toBe(completed);
+
+    const saved = applyCoreEnvelope(completed, {
+      version: 1,
+      request_id: "req-current",
+      event: {
+        type: "metric",
+        data: { history_id: "history-current", save_status: "saved", elapsed_ms: 140 }
+      }
+    });
+    expect(saved.currentResult).toMatchObject({
+      requestId: "req-current",
+      historyId: "history-current",
+      saveStatus: "saved",
+      elapsedMs: 140
+    });
+    expect(saved.recentResult).toEqual(saved.currentResult);
+  });
+
+  it("rates only the currently saved result", () => {
+    const generating = startGeneration(updateInput(createHostState(), "写一封邮件"), "req-rate");
+    const completed = applyCoreEnvelope(generating, {
+      version: 1,
+      request_id: "req-rate",
+      event: { type: "done", data: { text: "完成内容", save_status: "unsaved" } }
+    });
+    expect(applyCurrentResultRating(completed, "history-missing", 5)).toBe(completed);
+
+    const saved = applyCoreEnvelope(completed, {
+      version: 1,
+      request_id: "req-rate",
+      event: { type: "metric", data: { history_id: "history-rate", save_status: "saved" } }
+    });
+    expect(applyCurrentResultRating(saved, "history-old", 5)).toBe(saved);
+    expect(applyCurrentResultRating(saved, "history-rate", 5).currentResult?.rating).toBe(5);
+  });
+
+  it("keeps a completed result when the post-done save tail fails", () => {
+    const generating = startGeneration(updateInput(createHostState(), "写一封邮件"), "req-tail");
+    const completed = applyCoreEnvelope(generating, {
+      version: 1,
+      request_id: "req-tail",
+      event: { type: "done", data: { text: "已完成结果", save_status: "saving" } }
+    });
+    const failedTail = applyCoreEnvelope(completed, {
+      version: 1,
+      request_id: "req-tail",
+      event: {
+        type: "error",
+        data: { code: "runtime_unavailable", message: "运行服务暂不可用" }
+      }
+    });
+
+    expect(failedTail.phase).toBe("completed");
+    expect(failedTail.output).toBe("已完成结果");
+    expect(failedTail.currentResult?.saveStatus).toBe("unsaved");
+  });
+
+  it("consumes only safe history reuse intents outside active generation", () => {
+    const ready = updateInput(createHostState(), "当前输入");
+    expect(applyHistoryReuseIntent(ready, null as never)).toBe(ready);
+    const loadedInput = applyHistoryReuseIntent(ready, {
+      version: 1,
+      sequence: 1,
+      history_id: "history-1",
+      kind: "input",
+      text: "历史原文"
+    });
+    expect(loadedInput.inputText).toBe("历史原文");
+
+    const loadedResult = applyHistoryReuseIntent(ready, {
+      version: 1,
+      sequence: 2,
+      history_id: "history-2",
+      kind: "result",
+      text: "历史结果",
+      scene: "email",
+      style: "detailed",
+      mode: "prompt",
+      provider: "minimax",
+      model: "MiniMax-M2.7-highspeed",
+      elapsed_ms: 321,
+      rating: 4
+    });
+    expect(loadedResult).toMatchObject({ phase: "completed", output: "历史结果" });
+    expect(loadedResult.currentResult).toMatchObject({
+      historyId: "history-2",
+      output: "历史结果",
+      scene: "email",
+      style: "detailed",
+      mode: "prompt",
+      provider: "minimax",
+      model: "MiniMax-M2.7-highspeed",
+      elapsedMs: 321,
+      saveStatus: "saved",
+      rating: 4
+    });
+
+    expect(applyHistoryReuseIntent(ready, {
+      version: 1,
+      sequence: 3,
+      history_id: "../private",
+      kind: "result",
+      text: "伪造结果"
+    })).toBe(ready);
+    expect(applyHistoryReuseIntent(startGeneration(ready, "active"), {
+      version: 1,
+      sequence: 4,
+      history_id: "history-2",
+      kind: "result",
+      text: "迟到结果"
+    }).phase).toBe("analyzing_scene");
+  });
+
+  it("drops history reuse responses older than the latest host sequence", () => {
+    const ready = updateInput(createHostState(), "当前输入");
+    const latest = applyHistoryReuseIntent(ready, {
+      version: 1,
+      sequence: 2,
+      history_id: "history-new",
+      kind: "result",
+      text: "较新结果",
+      scene: "email",
+      style: "balanced",
+      mode: "content",
+      provider: "minimax",
+      model: null,
+      elapsed_ms: 20,
+      rating: null
+    });
+    const stale = applyHistoryReuseIntent(latest, {
+      version: 1,
+      sequence: 1,
+      history_id: "history-old",
+      kind: "result",
+      text: "迟到结果",
+      scene: "general",
+      style: "concise",
+      mode: "content",
+      provider: "minimax",
+      model: null,
+      elapsed_ms: 10,
+      rating: null
+    });
+
+    expect(stale).toBe(latest);
+    expect(stale.output).toBe("较新结果");
   });
 
   it("returns to the executable input state after cancelling a generation", () => {

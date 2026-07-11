@@ -489,6 +489,22 @@ def test_history_policy_is_an_immutable_atomic_snapshot():
     assert HistoryPolicySnapshot(True, False, "none") not in observed
 
 
+def test_history_snapshot_returns_one_matching_state_and_policy():
+    plugin = RecordingPlugin()
+    registry = CapabilityRegistry([(history_descriptor(), plugin)])
+    registry.configure_history_keys({"v1": "11" * 32})
+    registry.configure_history_policy(
+        history_enabled=True,
+        privacy_mode=True,
+        history_redaction="none",
+    )
+
+    state, policy = registry.history_snapshot
+
+    assert state == "private"
+    assert policy == HistoryPolicySnapshot(True, True, "none")
+
+
 def test_plugin_execution_happens_outside_registry_lock():
     entered = threading.Event()
     release = threading.Event()

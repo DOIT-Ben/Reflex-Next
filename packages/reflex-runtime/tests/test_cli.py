@@ -716,6 +716,257 @@ def test_active_optimize_id_silently_rejects_sync_and_async_duplicates():
     assert "duplicate plugin body" not in diagnostics.getvalue()
 
 
+def test_optimize_saves_a_private_history_snapshot_and_reports_save_state(tmp_path):
+    from io import StringIO
+
+    class RecordingHistoryCapability(FixtureHistoryCapability):
+        def __init__(self):
+            self.saved = []
+
+        def invoke(self, operation, payload, services, cancellation):
+            if operation == "save":
+                self.saved.append(dict(payload))
+                return {"id": payload["id"]}
+            return super().invoke(operation, payload, services, cancellation)
+
+    output = StringIO()
+    diagnostics = StringIO()
+    capability = RecordingHistoryCapability()
+    registry = CapabilityRegistry(
+        [(capability.descriptor, capability)], enabled_plugins={"translator"}
+    )
+    registry.configure_history_keys({"v1": "11" * 32})
+    registry.configure_history_policy(
+        history_enabled=True,
+        privacy_mode=False,
+        history_redaction="secrets",
+    )
+    registry.configure_history_path(tmp_path / "history" / "history.sqlite3")
+    runtime = RuntimeContext(
+        stdout=output,
+        stderr=diagnostics,
+        development=True,
+        capability_registry=registry,
+        capability_descriptors=(capability.descriptor,),
+    )
+
+    runtime.handle(
+        parse_command(
+            {
+                "version": 1,
+                "request_id": "history-save-optimize",
+                "type": "optimize",
+                "payload": {
+                    "text": "save this result",
+                    "provider": "mock",
+                    "model": "mock-stream",
+                    "mode": "content",
+                    "style": "balanced",
+                    "scene": None,
+                    "scene_policy": "auto",
+                    "metadata": {"chunks": ["saved output"]},
+                },
+            }
+        )
+    )
+
+    deadline = time.monotonic() + 3
+    while runtime.has_active_tasks() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    envelopes = [json.loads(line) for line in output.getvalue().splitlines()]
+    done = next(item["event"] for item in envelopes if item["event"]["type"] == "done")
+    metric = next(
+        item["event"] for item in envelopes if item["event"]["type"] == "metric"
+    )
+
+    assert len(capability.saved) == 1
+    assert capability.saved[0]["input"] == "save this result"
+    assert capability.saved[0]["output"] == "saved output"
+    assert done["data"]["history_id"] is None
+    assert done["data"]["save_status"] == "saving"
+    assert metric["data"]["history_id"] == capability.saved[0]["id"]
+    assert metric["data"]["save_status"] == "saved"
+
+
+@pytest.mark.parametrize(
+    ("history_enabled", "privacy_mode", "expected_status"),
+    [(False, False, "unsaved"), (True, True, "private")],
+)
+def test_optimize_never_backfills_history_disabled_or_private_at_start(
+    tmp_path, history_enabled, privacy_mode, expected_status
+):
+    from io import StringIO
+
+    class RecordingHistoryCapability(FixtureHistoryCapability):
+        def __init__(self):
+            self.saved = []
+
+        def invoke(self, operation, payload, services, cancellation):
+            if operation == "save":
+                self.saved.append(dict(payload))
+            return super().invoke(operation, payload, services, cancellation)
+
+    output = StringIO()
+    capability = RecordingHistoryCapability()
+    registry = CapabilityRegistry([(capability.descriptor, capability)])
+    registry.configure_history_keys({"v1": "11" * 32})
+    registry.configure_history_policy(
+        history_enabled=history_enabled,
+        privacy_mode=privacy_mode,
+        history_redaction="secrets",
+    )
+    registry.configure_history_path(tmp_path / "history" / "history.sqlite3")
+    runtime = RuntimeContext(
+        stdout=output,
+        development=True,
+        capability_registry=registry,
+        capability_descriptors=(capability.descriptor,),
+    )
+    runtime.handle(
+        parse_command(
+            {
+                "version": 1,
+                "request_id": f"history-policy-{expected_status}",
+                "type": "optimize",
+                "payload": {
+                    "text": "policy snapshot",
+                    "provider": "mock",
+                    "model": "mock-stream",
+                    "metadata": {"chunks": ["policy result"]},
+                },
+            }
+        )
+    )
+    deadline = time.monotonic() + 3
+    while runtime.has_active_tasks() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    events = [json.loads(line)["event"] for line in output.getvalue().splitlines()]
+    done = next(event for event in events if event["type"] == "done")
+    metric = next(event for event in events if event["type"] == "metric")
+    assert capability.saved == []
+    assert done["data"]["save_status"] == expected_status
+    assert metric["data"]["save_status"] == expected_status
+    assert metric["data"]["history_id"] is None
+
+
+def test_history_save_failure_does_not_replace_the_completed_result(tmp_path):
+    from io import StringIO
+
+    class FailingSaveCapability(FixtureHistoryCapability):
+        def invoke(self, operation, payload, services, cancellation):
+            if operation == "save":
+                raise RuntimeError("sensitive fixture body")
+            return super().invoke(operation, payload, services, cancellation)
+
+    output = StringIO()
+    diagnostics = StringIO()
+    capability = FailingSaveCapability()
+    registry = CapabilityRegistry([(capability.descriptor, capability)])
+    registry.configure_history_keys({"v1": "11" * 32})
+    registry.configure_history_policy(
+        history_enabled=True, privacy_mode=False, history_redaction="secrets"
+    )
+    registry.configure_history_path(tmp_path / "history" / "history.sqlite3")
+    runtime = RuntimeContext(
+        stdout=output,
+        stderr=diagnostics,
+        development=True,
+        capability_registry=registry,
+        capability_descriptors=(capability.descriptor,),
+    )
+    runtime.handle(
+        parse_command(
+            {
+                "version": 1,
+                "request_id": "history-save-failure",
+                "type": "optimize",
+                "payload": {
+                    "text": "keep the result",
+                    "provider": "mock",
+                    "model": "mock-stream",
+                    "metadata": {"chunks": ["completed output"]},
+                },
+            }
+        )
+    )
+    deadline = time.monotonic() + 3
+    while runtime.has_active_tasks() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    events = [json.loads(line)["event"] for line in output.getvalue().splitlines()]
+    assert next(event for event in events if event["type"] == "done")["data"]["text"] == "completed output"
+    metric = next(event for event in events if event["type"] == "metric")
+    assert metric["data"]["save_status"] == "unsaved"
+    assert all(event["type"] != "error" for event in events)
+    assert "history_save_failed" in diagnostics.getvalue()
+    assert "sensitive fixture body" not in diagnostics.getvalue()
+
+
+def test_history_policy_is_frozen_at_generation_start(tmp_path):
+    from io import StringIO
+
+    class RecordingHistoryCapability(FixtureHistoryCapability):
+        def __init__(self):
+            self.saved = []
+            self.redaction = None
+
+        def invoke(self, operation, payload, services, cancellation):
+            if operation == "save":
+                self.saved.append(dict(payload))
+                self.redaction = services["history"]["history_redaction"]
+                return {"id": payload["id"]}
+            return super().invoke(operation, payload, services, cancellation)
+
+    output = StringIO()
+    capability = RecordingHistoryCapability()
+    registry = CapabilityRegistry([(capability.descriptor, capability)])
+    registry.configure_history_keys({"v1": "11" * 32})
+    registry.configure_history_policy(
+        history_enabled=True, privacy_mode=False, history_redaction="secrets"
+    )
+    registry.configure_history_path(tmp_path / "history" / "history.sqlite3")
+    runtime = RuntimeContext(
+        stdout=output,
+        development=True,
+        capability_registry=registry,
+        capability_descriptors=(capability.descriptor,),
+    )
+    runtime.handle(
+        parse_command(
+            {
+                "version": 1,
+                "request_id": "history-redaction-frozen",
+                "type": "optimize",
+                "payload": {
+                    "text": "Bearer fixture-input-token",
+                    "provider": "mock",
+                    "model": "mock-stream",
+                    "metadata": {
+                        "delay_ms": 80,
+                        "chunks": ["Bearer fixture-output-token"],
+                    },
+                },
+            }
+        )
+    )
+    deadline = time.monotonic() + 2
+    while '"type": "status"' not in output.getvalue() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    registry.configure_history_policy(
+        history_enabled=True, privacy_mode=True, history_redaction="none"
+    )
+    deadline = time.monotonic() + 3
+    while runtime.has_active_tasks() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert len(capability.saved) == 1
+    assert "fixture-input-token" not in capability.saved[0]["input"]
+    assert "fixture-output-token" not in capability.saved[0]["output"]
+    assert capability.redaction == "secrets"
+
+
 @pytest.mark.parametrize("mode", ["direct", "generator", "generic"])
 def test_plugin_cancellation_emits_exactly_one_cancelled_terminal(mode):
     from io import StringIO

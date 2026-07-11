@@ -80,7 +80,12 @@ export class TauriRuntimeBridge implements CoreBridge {
         ({ payload }) => {
           if (payload.request_id !== requestId) return;
           queue.push(payload.event);
-          if (payload.event.type === "done" || payload.event.type === "error") {
+          if (
+            payload.event.type === "metric" ||
+            payload.event.type === "error" ||
+            (payload.event.type === "status" &&
+              (payload.event.data.phase === "cancelled" || payload.event.data.phase === "error"))
+          ) {
             queue.close();
           }
         }

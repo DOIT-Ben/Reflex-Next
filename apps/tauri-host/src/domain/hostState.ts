@@ -50,6 +50,37 @@ export type RequestSettings = {
 };
 
 export type ClipboardPolicy = "startup" | "manual" | "auto_replace";
+export type ResultSaveStatus = "saving" | "saved" | "unsaved" | "private";
+export type ResultStyle = OptimizeStyle | "precise";
+
+export type CurrentResult = {
+  requestId: string;
+  historyId: string | null;
+  output: string;
+  scene: string | null;
+  style: ResultStyle;
+  mode: OptimizeMode;
+  provider: string | null;
+  model: string | null;
+  elapsedMs: number | null;
+  saveStatus: ResultSaveStatus;
+  rating: number | null;
+};
+
+export type HistoryReuseIntent = {
+  version: 1;
+  sequence: number;
+  history_id: string;
+  kind: "input" | "result";
+  text: string;
+  scene?: string | null;
+  style?: ResultStyle;
+  mode?: OptimizeMode;
+  provider?: string;
+  model?: string | null;
+  elapsed_ms?: number | null;
+  rating?: number | null;
+};
 
 export type HostSettingsDraft = {
   default_provider: string | null;
@@ -80,6 +111,9 @@ export type HostState = {
   providerSummary: string;
   output: string;
   recentOutput: string;
+  currentResult: CurrentResult | null;
+  recentResult: CurrentResult | null;
+  lastHistoryReuseSequence: number;
   inputNotice: string | null;
   errorMessage: string | null;
   errorCode: string | null;
@@ -200,6 +234,9 @@ export function createHostState(): HostState {
     providerSummary: providerLabel(requestDraft),
     output: "",
     recentOutput: "",
+    currentResult: null,
+    recentResult: null,
+    lastHistoryReuseSequence: 0,
     inputNotice: null,
     errorMessage: null,
     errorCode: null,
@@ -305,7 +342,7 @@ export function applyHostAction(state: HostState, action: HostAction): HostState
     if (isActiveGeneration(state.phase)) {
       return state;
     }
-    if (!state.recentOutput.trim()) {
+    if (!state.recentResult?.output.trim()) {
       return {
         ...state,
         overlay: null,
@@ -316,7 +353,8 @@ export function applyHostAction(state: HostState, action: HostAction): HostState
       ...state,
       phase: "completed",
       overlay: null,
-      output: state.recentOutput,
+      output: state.recentResult.output,
+      currentResult: state.recentResult,
       inputNotice: null
     };
   }
@@ -379,6 +417,7 @@ export function startGeneration(state: HostState, requestId: string): HostState 
     overlay: null,
     activeRequestId: requestId,
     output: "",
+    currentResult: null,
     inputNotice: null,
     errorMessage: null,
     errorCode: null,
@@ -395,6 +434,7 @@ export function cancelGeneration(state: HostState): HostState {
     phase: state.inputText.trim() ? "ready" : "empty",
     activeRequestId: null,
     output: "",
+    currentResult: null,
     inputNotice: null,
     errorMessage: null,
     errorCode: null,
@@ -419,6 +459,23 @@ export function retryAfterError(state: HostState): HostState {
 
 export function applyCoreEnvelope(state: HostState, envelope: CoreEventEnvelope): HostState {
   if (state.activeRequestId && envelope.request_id !== state.activeRequestId) {
+    return state;
+  }
+  if (
+    envelope.event.type === "error" &&
+    state.phase === "completed" &&
+    state.currentResult?.requestId === envelope.request_id
+  ) {
+    const currentResult = {
+      ...state.currentResult,
+      saveStatus: state.currentResult.saveStatus === "saving" ? "unsaved" as const : state.currentResult.saveStatus
+    };
+    return { ...state, currentResult, recentResult: currentResult };
+  }
+  if (
+    envelope.event.type === "metric" &&
+    (!state.currentResult || state.currentResult.requestId !== envelope.request_id)
+  ) {
     return state;
   }
   return applyCoreEvent(state, envelope.event);
@@ -499,13 +556,26 @@ function applyCoreEvent(state: HostState, event: CoreEvent): HostState {
   }
   if (event.type === "done") {
     const output = stringFrom(event.data.text, stringFrom(event.data.final_text, state.output));
+    const currentResult = createCurrentResult(state, event.data, output);
     return {
       ...state,
       phase: "completed",
       activeRequestId: null,
       output,
-      recentOutput: output
+      recentOutput: output,
+      currentResult,
+      recentResult: currentResult
     };
+  }
+  if (event.type === "metric") {
+    if (!state.currentResult) return state;
+    const currentResult: CurrentResult = {
+      ...state.currentResult,
+      historyId: stringOrNull(event.data.history_id) ?? state.currentResult.historyId,
+      elapsedMs: integerOrNull(event.data.elapsed_ms) ?? state.currentResult.elapsedMs,
+      saveStatus: saveStatusFrom(event.data.save_status, state.currentResult.saveStatus)
+    };
+    return { ...state, currentResult, recentResult: currentResult };
   }
   if (event.type === "error") {
     return {
@@ -520,6 +590,107 @@ function applyCoreEvent(state: HostState, event: CoreEvent): HostState {
     };
   }
   return state;
+}
+
+export function applyCurrentResultRating(
+  state: HostState,
+  expectedHistoryId: string,
+  rating: number
+): HostState {
+  const current = state.currentResult;
+  if (
+    !current ||
+    current.historyId !== expectedHistoryId ||
+    !Number.isInteger(rating) ||
+    rating < 1 ||
+    rating > 5
+  ) {
+    return state;
+  }
+  const next = { ...current, rating };
+  return { ...state, currentResult: next, recentResult: next };
+}
+
+export function applyHistoryReuseIntent(
+  state: HostState,
+  value: unknown
+): HostState {
+  if (!isRecord(value)) return state;
+  const intent = value as Partial<HistoryReuseIntent>;
+  if (
+    intent.version !== 1 ||
+    !Number.isSafeInteger(intent.sequence) ||
+    (intent.sequence ?? 0) <= state.lastHistoryReuseSequence ||
+    typeof intent.history_id !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(intent.history_id) ||
+    typeof intent.text !== "string" ||
+    !intent.text ||
+    intent.text.length > 1_000_000 ||
+    (intent.kind !== "input" && intent.kind !== "result")
+  ) {
+    return state;
+  }
+  const sequencedState = {
+    ...state,
+    lastHistoryReuseSequence: intent.sequence as number
+  };
+  if (isActiveGeneration(state.phase)) return sequencedState;
+  if (intent.kind === "input") {
+    return updateInput(sequencedState, intent.text);
+  }
+  if (
+    !boundedStringOrNull(intent.scene) ||
+    !isResultStyle(intent.style) ||
+    (intent.mode !== "content" && intent.mode !== "prompt") ||
+    !safeMetadataId(intent.provider) ||
+    !boundedStringOrNull(intent.model) ||
+    !integerOrNullValue(intent.elapsed_ms) ||
+    !ratingOrNull(intent.rating)
+  ) {
+    return state;
+  }
+  const currentResult: CurrentResult = {
+    requestId: `history-reuse-${intent.history_id}`,
+    historyId: intent.history_id,
+    output: intent.text,
+    scene: intent.scene ?? null,
+    style: intent.style,
+    mode: intent.mode,
+    provider: intent.provider,
+    model: intent.model ?? null,
+    elapsedMs: intent.elapsed_ms ?? null,
+    saveStatus: "saved",
+    rating: intent.rating ?? null
+  };
+  return {
+    ...sequencedState,
+    phase: "completed",
+    activeRequestId: null,
+    output: intent.text,
+    recentOutput: intent.text,
+    currentResult,
+    recentResult: currentResult
+  };
+}
+
+function createCurrentResult(
+  state: HostState,
+  data: Record<string, unknown>,
+  output: string
+): CurrentResult {
+  return {
+    requestId: state.activeRequestId ?? "",
+    historyId: stringOrNull(data.history_id),
+    output,
+    scene: stringFrom(data.scene, state.detectedScene ?? "general"),
+    style: styleFrom(data.style, state.requestDraft.style),
+    mode: modeFrom(data.mode, state.requestDraft.mode),
+    provider: stringOrNull(data.provider) ?? state.requestDraft.provider,
+    model: stringOrNull(data.model) ?? state.requestDraft.model,
+    elapsedMs: integerOrNull(data.elapsed_ms),
+    saveStatus: saveStatusFrom(data.save_status, "unsaved"),
+    rating: null
+  };
 }
 
 function isActiveGeneration(phase: HostPhase): boolean {
@@ -573,4 +744,58 @@ function stringFrom(value: unknown, fallback: string): string {
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function integerOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function saveStatusFrom(value: unknown, fallback: ResultSaveStatus): ResultSaveStatus {
+  return value === "saving" || value === "saved" || value === "unsaved" || value === "private"
+    ? value
+    : fallback;
+}
+
+function styleFrom(value: unknown, fallback: ResultStyle): ResultStyle {
+  return isResultStyle(value)
+    ? value
+    : fallback;
+}
+
+function modeFrom(value: unknown, fallback: OptimizeMode): OptimizeMode {
+  return value === "content" || value === "prompt" ? value : fallback;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isResultStyle(value: unknown): value is ResultStyle {
+  return value === "concise" || value === "balanced" || value === "detailed" || value === "creative" || value === "precise";
+}
+
+function safeMetadataId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
+}
+
+function boundedStringOrNull(value: unknown): value is string | null {
+  return value === null || (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    !Array.from(value).some((character) => character < " ")
+  );
+}
+
+function integerOrNullValue(value: unknown): value is number | null {
+  return value === null || (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= 2 ** 31 - 1
+  );
+}
+
+function ratingOrNull(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 5);
 }

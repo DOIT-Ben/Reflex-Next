@@ -433,8 +433,73 @@ pre {
 
 .result-actions {
   display: flex;
+  align-items: center;
   gap: 12px;
   margin-top: 20px;
+}
+
+.more-actions {
+  position: relative;
+}
+
+.more-button {
+  margin-left: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.result-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  display: grid;
+  gap: 4px;
+  width: min(228px, calc(100vw - 36px));
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgb(15 23 42 / 14%);
+}
+
+.result-menu > button,
+.rating-menu button {
+  min-height: 32px;
+  padding: 6px 9px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.result-menu > button:hover,
+.rating-menu button:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.rating-menu {
+  display: grid;
+  gap: 5px;
+  padding: 6px 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rating-menu > div {
+  display: flex;
+  gap: 3px;
+}
+
+.rating-menu button {
+  min-width: 30px;
+  text-align: center;
+}
+
+.result-save-status {
+  display: inline-block;
+  margin-top: 12px;
 }
 
 .error-panel {

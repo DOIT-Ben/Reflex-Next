@@ -128,6 +128,11 @@ class CapabilityRegistry:
         with self._lock:
             return self._history_policy
 
+    @property
+    def history_snapshot(self) -> tuple[str, HistoryPolicySnapshot]:
+        with self._lock:
+            return self._history_state_unlocked(), self._history_policy
+
     def _history_state_unlocked(self) -> str:
         if self._history_unavailable:
             return "unavailable"
@@ -319,6 +324,7 @@ class CapabilityRegistry:
         cancellation: Any,
         *,
         trusted: bool,
+        history_policy: HistoryPolicySnapshot | None = None,
     ) -> Any:
         if trusted is not True:
             raise CapabilityDenied("trusted_call_required")
@@ -330,6 +336,7 @@ class CapabilityRegistry:
             services,
             cancellation,
             channel="internal",
+            history_policy=history_policy,
         )
 
     def _invoke(
@@ -342,6 +349,7 @@ class CapabilityRegistry:
         cancellation: Any,
         *,
         channel: str,
+        history_policy: HistoryPolicySnapshot | None = None,
     ) -> Any:
         owns_maintenance = False
         with self._lock:
@@ -363,9 +371,21 @@ class CapabilityRegistry:
                 plugin_id, frozenset()
             ):
                 raise CapabilityDenied("operation_not_allowed")
-            self._enforce_history_policy_unlocked(descriptor, operation, channel)
             if not isinstance(payload, dict):
                 raise CapabilityDenied("plugin_payload_invalid")
+            if history_policy is not None:
+                if not isinstance(history_policy, HistoryPolicySnapshot) or not (
+                    channel == "internal"
+                    and descriptor.plugin_id == "history-sqlite"
+                    and operation == "save"
+                ):
+                    raise CapabilityDenied("plugin_payload_invalid")
+            self._enforce_history_policy_unlocked(
+                descriptor,
+                operation,
+                channel,
+                history_policy,
+            )
             if descriptor.plugin_id == "history-sqlite":
                 blocked_during_maintenance = HISTORY_MUTATING_ADMIN_OPERATIONS | {"save", "rate"}
                 if self._history_maintenance and (
@@ -378,7 +398,7 @@ class CapabilityRegistry:
                     self._history_reads_blocked = operation == "restore"
                     owns_maintenance = True
             invocation_services = (
-                self._history_services_unlocked(services)
+                self._history_services_unlocked(services, history_policy)
                 if descriptor.plugin_id == "history-sqlite"
                 else services
             )
@@ -390,26 +410,45 @@ class CapabilityRegistry:
                     self._history_maintenance = False
                     self._history_reads_blocked = False
 
-    def _history_services_unlocked(self, services: Any) -> Mapping[str, Any]:
+    def _history_services_unlocked(
+        self,
+        services: Any,
+        policy: HistoryPolicySnapshot | None = None,
+    ) -> Mapping[str, Any]:
         database_path = self._history_database_path
         keys = _PrivateMapping(dict(self._history_keys))
+        policy = policy or self._history_policy
         history = _PrivateMapping(
             {
                 "database_path": database_path,
                 "keys": keys,
                 "active_key_version": self._history_active_key_version,
                 "pending_key_version": self._history_pending_key_version,
-                "history_enabled": self._history_policy.history_enabled,
-                "privacy_mode": self._history_policy.privacy_mode,
-                "history_redaction": self._history_policy.history_redaction,
+                "history_enabled": policy.history_enabled,
+                "privacy_mode": policy.privacy_mode,
+                "history_redaction": policy.history_redaction,
             }
         )
         return _PrivateMapping({"history": history})
 
     def _enforce_history_policy_unlocked(
-        self, descriptor: PluginDescriptor, operation: str, channel: str
+        self,
+        descriptor: PluginDescriptor,
+        operation: str,
+        channel: str,
+        policy: HistoryPolicySnapshot | None = None,
     ) -> None:
         if descriptor.plugin_id != "history-sqlite":
+            return
+        if channel == "internal" and operation == "save" and policy is not None:
+            if self._history_unavailable or not self._history_keys:
+                raise CapabilityDenied("plugin_unavailable")
+            if (
+                not policy.history_enabled
+                or policy.privacy_mode
+                or "storage_write" not in descriptor.permissions
+            ):
+                raise CapabilityDenied("write_permission_denied")
             return
         state = self._history_state_unlocked()
         if state in {"absent", "unavailable"}:

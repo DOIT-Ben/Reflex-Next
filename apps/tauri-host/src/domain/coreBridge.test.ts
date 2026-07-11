@@ -144,6 +144,13 @@ describe("core bridge", () => {
               event: { type: "done", data: { text: "完成" } }
             }
           });
+          listener?.({
+            payload: {
+              version: 1,
+              request_id: "req-tauri",
+              event: { type: "metric", data: { save_status: "saved", history_id: "history-1" } }
+            }
+          });
         });
       },
       listen: async (_eventName: string, handler: (event: TauriEvent<CoreEventEnvelope>) => void) => {
@@ -168,7 +175,8 @@ describe("core bridge", () => {
     ]);
     expect(events).toEqual([
       { type: "status", data: { message: "正在分析场景" } },
-      { type: "done", data: { text: "完成" } }
+      { type: "done", data: { text: "完成" } },
+      { type: "metric", data: { save_status: "saved", history_id: "history-1" } }
     ]);
     expect(unlistenCalled).toBe(true);
   });

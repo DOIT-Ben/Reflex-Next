@@ -1,11 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { CapabilityBridge } from "./domain/capabilityBridge";
   import { createDefaultCoreBridge, DemoCoreBridge } from "./domain/coreBridge";
   import {
     applyAdjustDraft,
     applyClipboardError,
     applyClipboardText,
     applyCoreEnvelope,
+    applyCurrentResultRating,
+    applyHistoryReuseIntent,
     applyHostAction,
     applyPersistedConfig,
     applySceneSelection,
@@ -29,8 +32,10 @@
     updateInput,
     updatePluginSettingsDraft,
     type HostState,
+    type HistoryReuseIntent,
     type HostSettingsDraft,
     type RequestSettings,
+    type ResultStyle,
     type SettingsPluginId
   } from "./domain/hostState";
   import {
@@ -113,6 +118,7 @@
   type SettingsSection = (typeof settingsSections)[number]["id"];
 
   let coreBridge: CoreBridge = new DemoCoreBridge();
+  let capabilityBridge: CapabilityBridge | null = null;
   let hostApi: TauriHostApi | null = null;
   let settingsApi: SettingsApi | null = null;
   let desktopBridge: DesktopBridge | null = null;
@@ -144,15 +150,20 @@
   };
   let toastVisible = false;
   let toastText = "✓ 已复制到剪贴板";
+  let moreActionsOpen = false;
+  let moreActionsButton: HTMLButtonElement | null = null;
+  let resultRatingBusy = false;
 
   onMount(() => {
     let disposed = false;
     let stopListening: (() => void) | null = null;
+    let stopHistoryReuseListening: (() => void) | null = null;
 
     void createTauriHostApi().then(async (host) => {
       if (!host || disposed) return;
 
       hostApi = host;
+      capabilityBridge = new CapabilityBridge(host);
       settingsApi = createSettingsApi(host);
       clipboardReader = createClipboardReader(host);
       clipboardWriter = createClipboardWriter(host);
@@ -176,6 +187,16 @@
           };
         });
 
+      void host
+        .listen<HistoryReuseIntent>("reflex://history-reuse", ({ payload }) => {
+          if (!disposed) state = applyHistoryReuseIntent(state, payload);
+        })
+        .then((unlisten) => {
+          if (disposed) unlisten();
+          else stopHistoryReuseListening = unlisten;
+        })
+        .catch(() => undefined);
+
       void createDefaultCoreBridge(host).then((bridge) => {
         if (!disposed) coreBridge = bridge;
       });
@@ -188,6 +209,7 @@
     return () => {
       disposed = true;
       stopListening?.();
+      stopHistoryReuseListening?.();
       activeRun?.abort();
     };
   });
@@ -390,6 +412,7 @@
 
   async function runOptimization() {
     if (!canGenerate) return;
+    moreActionsOpen = false;
     const requestId = `ui-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const controller = new AbortController();
     activeRun = controller;
@@ -428,6 +451,63 @@
     window.setTimeout(() => {
       state = { ...state, copied: false };
     }, 1400);
+  }
+
+  function toggleMoreActions() {
+    moreActionsOpen = !moreActionsOpen;
+  }
+
+  function closeMoreActions(restoreFocus = false) {
+    moreActionsOpen = false;
+    if (restoreFocus) moreActionsButton?.focus();
+  }
+
+  async function rateCurrentResult(rating: number) {
+    const historyId = state.currentResult?.historyId;
+    if (!historyId || state.currentResult?.saveStatus !== "saved" || resultRatingBusy) return;
+    const bridge = capabilityBridge;
+    if (!bridge) {
+      showToast("评分未保存，请稍后重试。");
+      return;
+    }
+    resultRatingBusy = true;
+    let saved = false;
+    try {
+      for await (const event of bridge.invoke("history-sqlite", "rate", { id: historyId, rating })) {
+        if (event.status === "result") saved = true;
+        if (event.status === "error" || event.status === "cancelled") break;
+      }
+    } catch {
+      saved = false;
+    } finally {
+      resultRatingBusy = false;
+    }
+    if (!saved) {
+      showToast("评分未保存，请稍后重试。");
+      return;
+    }
+    state = applyCurrentResultRating(state, historyId, rating);
+    showToast("评分已保存");
+  }
+
+  function openHistoryWindow() {
+    closeMoreActions();
+    void hostApi?.invoke("show_history_window").catch(() => showToast("历史记录暂时不可用。"));
+  }
+
+  function runFromMoreActions(action: "replace" | "regenerate" | "adjust") {
+    closeMoreActions();
+    if (action === "replace") askReplaceClipboard();
+    else if (action === "regenerate") void runOptimization();
+    else beginAdjust();
+  }
+
+  function saveStatusLabel(): string {
+    const status = state.currentResult?.saveStatus ?? "unsaved";
+    if (status === "saved") return "已保存到本机";
+    if (status === "private") return "隐私模式";
+    if (status === "saving") return "正在保存";
+    return "未保存";
   }
 
   function askReplaceClipboard() {
@@ -544,6 +624,11 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (moreActionsOpen && event.key === "Escape") {
+      event.preventDefault();
+      closeMoreActions(true);
+      return;
+    }
     const action = resolveHostShortcut(state, {
       key: event.key,
       ctrlKey: event.ctrlKey,
@@ -579,7 +664,8 @@
     return modes.find((item) => item.id === value)?.label ?? "内容优化";
   }
 
-  function styleLabel(value: OptimizeStyle): string {
+  function styleLabel(value: ResultStyle): string {
+    if (value === "precise") return "精准";
     return styles.find((item) => item.id === value)?.label ?? "平衡";
   }
 
@@ -683,17 +769,46 @@
       <section class="complete-view" aria-label="优化完成">
         <div class="badge">当前方案</div>
         <h1>优化完成</h1>
-        <p class="subline">{sceneLabel(state.detectedScene ?? state.requestDraft.scene)} · {styleLabel(state.requestDraft.style)} · 约 {state.output.length} 字</p>
+        <p class="subline">{sceneLabel(state.currentResult?.scene ?? null)} · {styleLabel(state.currentResult?.style ?? state.requestDraft.style)} · 约 {state.output.length} 字</p>
         <article class="result-card">
           <pre>{state.output}</pre>
         </article>
         <div class="result-actions">
           <button class="primary small" on:click={copyResult}>复制结果</button>
-          <button class="outline" on:click={askReplaceClipboard}>替换剪贴板</button>
-          <button class="outline" on:click={runOptimization}>重新生成</button>
-          <button class="outline" on:click={beginAdjust}>调整</button>
+          <div class="more-actions">
+            <button
+              class="icon-button more-button"
+              aria-label="更多操作"
+              aria-expanded={moreActionsOpen}
+              bind:this={moreActionsButton}
+              on:click={toggleMoreActions}
+            >⋯</button>
+            {#if moreActionsOpen}
+              <div class="result-menu" role="menu" aria-label="结果操作">
+                <button role="menuitem" on:click={() => runFromMoreActions("replace")}>替换剪贴板</button>
+                <button role="menuitem" on:click={() => runFromMoreActions("regenerate")}>重新生成</button>
+                <button role="menuitem" on:click={() => runFromMoreActions("adjust")}>调整</button>
+                <button role="menuitem" disabled>翻译</button>
+                <button role="menuitem" disabled>Markdown 预览</button>
+                <div class="rating-menu" aria-label="评分">
+                  <span>评分</span>
+                  <div>
+                    {#each [1, 2, 3, 4, 5] as score}
+                      <button
+                        aria-label={`评分 ${score}`}
+                        aria-pressed={state.currentResult?.rating === score}
+                        disabled={state.currentResult?.saveStatus !== "saved" || resultRatingBusy}
+                        on:click={() => rateCurrentResult(score)}
+                      >{score}</button>
+                    {/each}
+                  </div>
+                </div>
+                <button role="menuitem" on:click={openHistoryWindow}>查看历史</button>
+              </div>
+            {/if}
+          </div>
         </div>
-        <p class="recent">最近一次结果</p>
+        <p class="recent result-save-status" role="status" aria-live="polite">{saveStatusLabel()}</p>
         {#if toastVisible}
           <div class="toast">{toastText}</div>
         {/if}

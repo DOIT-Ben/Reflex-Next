@@ -7,14 +7,18 @@ import os
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Iterable
-from dataclasses import fields
+from dataclasses import dataclass, fields
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
 from reflex_core import (
     CancellationToken,
+    Event,
     EventEnvelope,
+    EventType,
     OperationCancelled,
     OptimizeRequest,
     StatusPhase,
@@ -23,9 +27,9 @@ from reflex_core.events import error_event, status_event
 from reflex_core.scene.detectors import RuleSceneDetector
 from reflex_core.template import TemplatePackResolver
 from reflex_core.usecases import OptimizeUseCase
-from reflex_core.safety import redact_sensitive
+from reflex_core.safety import redact_for_history, redact_sensitive
 
-from .capability_registry import CapabilityDenied, CapabilityRegistry
+from .capability_registry import CapabilityDenied, CapabilityRegistry, HistoryPolicySnapshot
 from .mock_provider import MockProvider
 from .plugin_manager import PluginManager
 from .plugin_contracts import (
@@ -38,6 +42,24 @@ from .protocol import CommandEnvelope, ProtocolError
 from .provider_errors import ProviderRuntimeError, provider_unconfigured
 from .provider_registry import ProviderRegistry
 from .task_registry import DuplicateRequestId, TaskRegistry
+
+
+@dataclass(frozen=True, repr=False)
+class _HistorySaveContext:
+    history_id: str | None
+    created_at: str
+    input_text: str
+    mode: str
+    style: str
+    save_status: str
+    policy: HistoryPolicySnapshot
+
+
+@dataclass(frozen=True)
+class _HistorySaveResult:
+    history_id: str | None
+    save_status: str
+    elapsed_ms: int
 
 
 def _safe_plugin_error_code(error: BaseException) -> str | None:
@@ -394,16 +416,30 @@ class RuntimeContext:
         try:
             request = self._request_from_payload(command.payload)
             provider = self._resolve_provider(request)
+            started_at = time.monotonic()
+            history = self._start_history_save(request)
             use_case = OptimizeUseCase(
                 scene_detector=self._scene_detector,
                 template_resolver=self._template_resolver,
                 provider=provider,
             )
+            history_result: _HistorySaveResult | None = None
             for envelope in use_case.optimize(
                 request,
                 request_id=command.request_id,
                 cancellation=token,
             ):
+                if envelope.event.type is EventType.DONE:
+                    self.emit(self._history_done_envelope(envelope, history, started_at))
+                    history_result = self._save_history_result(
+                        envelope,
+                        history,
+                        started_at,
+                        token,
+                    )
+                    continue
+                if envelope.event.type is EventType.METRIC:
+                    envelope = self._history_metric_envelope(envelope, history_result)
                 self.emit(envelope)
         except ProviderRuntimeError as error:
             self.emit_provider_error(command.request_id, error)
@@ -418,6 +454,122 @@ class RuntimeContext:
                 thread = self._threads.get(command.request_id)
                 if thread is threading.current_thread():
                     self._threads.pop(command.request_id, None)
+
+    def _start_history_save(self, request: OptimizeRequest) -> _HistorySaveContext:
+        history_state, policy = self._capabilities.history_snapshot
+        save_status = "private" if history_state == "private" else "unsaved"
+        history_id = None
+        input_text = ""
+        if history_state == "writable":
+            history_id = f"history-{uuid.uuid4().hex}"
+            input_text = redact_for_history(request.text, policy.history_redaction)
+            save_status = "saving"
+        return _HistorySaveContext(
+            history_id=history_id,
+            created_at=datetime.now(timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
+            input_text=input_text,
+            mode=request.mode,
+            style=request.style,
+            save_status=save_status,
+            policy=policy,
+        )
+
+    def _history_done_envelope(
+        self,
+        envelope: EventEnvelope,
+        history: _HistorySaveContext,
+        started_at: float,
+    ) -> EventEnvelope:
+        data = dict(envelope.event.data)
+        data.update(
+            {
+                "elapsed_ms": self._elapsed_ms(started_at),
+                "history_id": None,
+                "save_status": history.save_status,
+            }
+        )
+        return EventEnvelope(envelope.request_id, Event(EventType.DONE, data))
+
+    def _save_history_result(
+        self,
+        envelope: EventEnvelope,
+        history: _HistorySaveContext,
+        started_at: float,
+        token: CancellationToken,
+    ) -> _HistorySaveResult:
+        elapsed_ms = self._elapsed_ms(started_at)
+        if history.history_id is None:
+            return _HistorySaveResult(None, history.save_status, elapsed_ms)
+
+        data = envelope.event.data
+        provider = data.get("provider")
+        if not isinstance(provider, str) or not provider:
+            return _HistorySaveResult(None, "unsaved", elapsed_ms)
+
+        payload = {
+            "id": history.history_id,
+            "created_at": history.created_at,
+            "input": history.input_text,
+            "output": redact_for_history(
+                str(data.get("text", "")), history.policy.history_redaction
+            ),
+            "mode": history.mode,
+            "style": history.style,
+            "scene": data.get("scene") if isinstance(data.get("scene"), str) else None,
+            "provider": provider,
+            "model": data.get("model") if isinstance(data.get("model"), str) else None,
+            "elapsed_ms": elapsed_ms,
+            "status": "completed",
+            "tags": [],
+        }
+        try:
+            result = self._capabilities.invoke_internal(
+                "history-sqlite",
+                "save",
+                payload,
+                self._services,
+                token,
+                trusted=True,
+                history_policy=history.policy,
+            )
+        except Exception:
+            self.diagnostic(
+                f"history_save_failed request_id={envelope.request_id} category=history_save_failed"
+            )
+            return _HistorySaveResult(None, "unsaved", elapsed_ms)
+        else:
+            if isinstance(result, dict) and result.get("id") == history.history_id:
+                return _HistorySaveResult(history.history_id, "saved", elapsed_ms)
+            self.diagnostic(
+                f"history_save_failed request_id={envelope.request_id} category=invalid_result"
+            )
+            return _HistorySaveResult(None, "unsaved", elapsed_ms)
+
+    @staticmethod
+    def _history_metric_envelope(
+        envelope: EventEnvelope,
+        result: _HistorySaveResult | None,
+    ) -> EventEnvelope:
+        if result is None:
+            return envelope
+        data = dict(envelope.event.data)
+        data.update(
+            {
+                "elapsed_ms": result.elapsed_ms,
+                "history_id": result.history_id,
+                "save_status": result.save_status,
+            }
+        )
+        return EventEnvelope(envelope.request_id, Event(EventType.METRIC, data))
+
+    @staticmethod
+    def _elapsed_ms(started_at: float) -> int:
+        return min(
+            2**31 - 1,
+            max(0, round((time.monotonic() - started_at) * 1000)),
+        )
 
     def _run_plugin_call(
         self,

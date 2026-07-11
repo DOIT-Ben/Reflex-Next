@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -336,8 +336,13 @@ pub(crate) struct HistoryReuseIntent {
 }
 
 const HISTORY_REUSE_EVENT: &str = "reflex://history-reuse";
+static HISTORY_REUSE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-fn history_reuse_payload(intent: &HistoryReuseIntent, detail: &Value) -> Result<Value, String> {
+fn history_reuse_payload(
+    intent: &HistoryReuseIntent,
+    detail: &Value,
+    sequence: u64,
+) -> Result<Value, String> {
     if !crate::window::reuse_intent_is_valid(&intent.kind, &intent.history_id) {
         return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
     }
@@ -358,9 +363,91 @@ fn history_reuse_payload(intent: &HistoryReuseIntent, detail: &Value) -> Result<
         .and_then(Value::as_str)
         .filter(|text| !text.is_empty())
         .ok_or_else(|| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
-    Ok(
-        serde_json::json!({ "version": 1, "history_id": intent.history_id, "kind": intent.kind, "text": text }),
-    )
+    if intent.kind == "input" {
+        return Ok(
+            serde_json::json!({ "version": 1, "sequence": sequence, "history_id": intent.history_id, "kind": intent.kind, "text": text }),
+        );
+    }
+
+    let optional_text = |key: &str| -> Result<Value, String> {
+        match record.get(key) {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::String(value))
+                if !value.is_empty()
+                    && value.chars().count() <= 128
+                    && !value.chars().any(|character| character < ' ') =>
+            {
+                Ok(Value::String(value.clone()))
+            }
+            _ => Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
+        }
+    };
+    let scene = optional_text("scene")?;
+    let model = optional_text("model")?;
+    let style = record
+        .get("style")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            matches!(
+                *value,
+                "concise" | "balanced" | "detailed" | "creative" | "precise"
+            )
+        })
+        .ok_or_else(|| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    let mode = record
+        .get("mode")
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "content" | "prompt"))
+        .ok_or_else(|| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    let provider = record
+        .get("provider")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    byte.is_ascii_alphanumeric()
+                        || (index > 0 && matches!(byte, b'.' | b'_' | b'-'))
+                })
+        })
+        .ok_or_else(|| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    let elapsed_ms = match record.get("elapsed_ms") {
+        Some(Value::Null) => Value::Null,
+        Some(value)
+            if value
+                .as_u64()
+                .is_some_and(|number| number <= i32::MAX as u64) =>
+        {
+            value.clone()
+        }
+        _ => return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
+    };
+    let rating = match record.get("rating") {
+        Some(Value::Null) => Value::Null,
+        Some(value)
+            if value
+                .as_u64()
+                .is_some_and(|number| (1..=5).contains(&number)) =>
+        {
+            value.clone()
+        }
+        _ => return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
+    };
+
+    Ok(serde_json::json!({
+        "version": 1,
+        "sequence": sequence,
+        "history_id": intent.history_id,
+        "kind": intent.kind,
+        "text": text,
+        "scene": scene,
+        "style": style,
+        "mode": mode,
+        "provider": provider,
+        "model": model,
+        "elapsed_ms": elapsed_ms,
+        "rating": rating
+    }))
 }
 
 #[tauri::command]
@@ -377,6 +464,7 @@ pub async fn history_reuse_intent(
     {
         return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
     }
+    let reuse_sequence = HISTORY_REUSE_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
     let history_path = app
         .path()
         .app_data_dir()
@@ -409,7 +497,7 @@ pub async fn history_reuse_intent(
         HistoryAdminOutcome::Completed(response) => response.data,
         HistoryAdminOutcome::Cancelled => return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
     };
-    let payload = history_reuse_payload(&intent, &detail)?;
+    let payload = history_reuse_payload(&intent, &detail, reuse_sequence)?;
     app.emit_to("main", HISTORY_REUSE_EVENT, payload)
         .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())
 }
@@ -1868,20 +1956,53 @@ mod tests {
             kind: "input".to_string(),
             history_id: "history-1".to_string(),
         };
-        let detail = json!({ "record": { "id": "history-1", "input": "plain input", "output": "plain output", "script": "ignored" } });
+        let detail = json!({ "record": {
+            "id": "history-1",
+            "input": "plain input",
+            "output": "plain output",
+            "scene": "email",
+            "style": "detailed",
+            "mode": "prompt",
+            "provider": "minimax",
+            "model": "MiniMax-M2.7-highspeed",
+            "elapsed_ms": 321,
+            "rating": 4,
+            "script": "ignored"
+        } });
         assert_eq!(
-            super::history_reuse_payload(&input, &detail).unwrap(),
-            json!({ "version": 1, "history_id": "history-1", "kind": "input", "text": "plain input" })
+            super::history_reuse_payload(&input, &detail, 1).unwrap(),
+            json!({ "version": 1, "sequence": 1, "history_id": "history-1", "kind": "input", "text": "plain input" })
+        );
+        let result = super::HistoryReuseIntent {
+            kind: "result".to_string(),
+            history_id: "history-1".to_string(),
+        };
+        assert_eq!(
+            super::history_reuse_payload(&result, &detail, 2).unwrap(),
+            json!({
+                "version": 1,
+                "sequence": 2,
+                "history_id": "history-1",
+                "kind": "result",
+                "text": "plain output",
+                "scene": "email",
+                "style": "detailed",
+                "mode": "prompt",
+                "provider": "minimax",
+                "model": "MiniMax-M2.7-highspeed",
+                "elapsed_ms": 321,
+                "rating": 4
+            })
         );
         let wrong = super::HistoryReuseIntent {
             kind: "result".to_string(),
             history_id: "other".to_string(),
         };
-        assert!(super::history_reuse_payload(&wrong, &detail).is_err());
+        assert!(super::history_reuse_payload(&wrong, &detail, 2).is_err());
         let forged = super::HistoryReuseIntent {
             kind: "script".to_string(),
             history_id: "history-1".to_string(),
         };
-        assert!(super::history_reuse_payload(&forged, &detail).is_err());
+        assert!(super::history_reuse_payload(&forged, &detail, 3).is_err());
     }
 }

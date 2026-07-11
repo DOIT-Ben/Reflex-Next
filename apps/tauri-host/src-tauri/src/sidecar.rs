@@ -1496,7 +1496,7 @@ pub fn parse_sidecar_event(raw: &str) -> Result<ParsedSidecarEvent, &'static str
         if !event.get("data").is_some_and(Value::is_object) {
             return Err(RUNTIME_UNAVAILABLE_MESSAGE);
         }
-        let terminal = matches!(event_type, "done" | "error")
+        let terminal = matches!(event_type, "metric" | "error")
             || (event_type == "status"
                 && matches!(
                     event["data"].get("phase").and_then(Value::as_str),
@@ -1996,6 +1996,21 @@ mod tests {
                 "event": { "type": "chunk", "data": { "text": "片段" } }
             })
         );
+    }
+
+    #[test]
+    fn keeps_core_route_open_for_history_save_metric_after_done() {
+        let done = parse_sidecar_event(
+            r#"{"version":1,"request_id":"req-1","event":{"type":"done","data":{}}}"#,
+        )
+        .unwrap();
+        let metric = parse_sidecar_event(
+            r#"{"version":1,"request_id":"req-1","event":{"type":"metric","data":{"save_status":"saved"}}}"#,
+        )
+        .unwrap();
+
+        assert!(!done.terminal);
+        assert!(metric.terminal);
     }
 
     #[test]
