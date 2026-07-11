@@ -116,6 +116,17 @@
     type BatchFormat
   } from "./domain/batchState";
   import {
+    createTemplateDraft,
+    filterTemplates,
+    readCustomTemplates,
+    removeCustomTemplate,
+    renderTemplate,
+    saveCustomTemplate,
+    templateVariables,
+    type PromptTemplate,
+    type TemplateDraft
+  } from "./domain/templateLibrary";
+  import {
     listSceneOptions,
     type OptimizeMode,
     type OptimizeStyle,
@@ -204,6 +215,17 @@
   let batch = createBatchState();
   let batchRun: AbortController | null = null;
   let batchCloseButton: HTMLButtonElement | null = null;
+  let customTemplates: PromptTemplate[] = [];
+  let templateDraft: TemplateDraft = createTemplateDraft();
+  let selectedTemplateId: string | null = null;
+  let templateQuery = "";
+  let templateCategory: string | null = null;
+  let templateValues: Record<string, string> = {};
+  let templateNotice: string | null = null;
+  let templateBusy = false;
+  let templateCloseButton: HTMLButtonElement | null = null;
+  let templateCategories: string[] = [];
+  let visibleTemplates: PromptTemplate[] = [];
   let persistedConfig: AppConfig | null = null;
   let secretInput = "";
   let secretStatus: SecretStatus = {
@@ -304,6 +326,8 @@
   $: translatorEnabled = persistedConfig?.enabled_plugins.includes("translator") ?? true;
   $: markdownPreviewEnabled = persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
   $: batchRunnerEnabled = persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
+  $: templateCategories = [...new Set(customTemplates.map((template) => template.category))].sort((left, right) => left.localeCompare(right, "zh-CN"));
+  $: visibleTemplates = filterTemplates(customTemplates, templateQuery, templateCategory);
 
   function setInput(value: string) {
     state = updateInput(state, value);
@@ -410,6 +434,7 @@
     try {
       config = await settingsApi.loadConfig();
       persistedConfig = config;
+      customTemplates = readCustomTemplates(config.custom_templates);
       state = applyPersistedConfig(state, config);
       settingsDraft = settingsDraftFromConfig(config);
     } catch {
@@ -718,6 +743,86 @@
     batchRun = null;
     batch = closeBatch(batch);
     if (restoreFocus) window.setTimeout(() => moreActionsButton?.focus());
+  }
+
+  function openTemplateManager() {
+    closeMoreActions();
+    if (batch.phase !== "closed") closeBatchView();
+    selectedTemplateId = null;
+    templateDraft = createTemplateDraft();
+    templateValues = {};
+    templateNotice = null;
+    state = { ...state, overlay: "template_manager" };
+    window.setTimeout(() => templateCloseButton?.focus());
+  }
+
+  function closeTemplateManager(restoreFocus = false) {
+    state = { ...state, overlay: null };
+    templateNotice = null;
+    if (restoreFocus) window.setTimeout(() => moreActionsButton?.focus());
+  }
+
+  function selectTemplate(template: PromptTemplate) {
+    selectedTemplateId = template.id;
+    templateDraft = createTemplateDraft(template);
+    templateValues = Object.fromEntries(templateVariables(template.content).map((name) => [name, ""]));
+    templateNotice = null;
+  }
+
+  async function saveTemplate() {
+    if (templateBusy || !persistedConfig || !settingsApi) {
+      templateNotice = "模板暂时无法保存，请重试。";
+      return;
+    }
+    const next = saveCustomTemplate(customTemplates, templateDraft, selectedTemplateId ?? undefined);
+    if (!next) {
+      templateNotice = "请填写名称、分类和模板内容。";
+      return;
+    }
+    templateBusy = true;
+    try {
+      const saved = await settingsApi.saveConfig({ ...persistedConfig, custom_templates: next });
+      persistedConfig = saved;
+      customTemplates = readCustomTemplates(saved.custom_templates);
+      const selected = customTemplates.find((template) => template.id === (selectedTemplateId ?? next.at(-1)?.id));
+      if (selected) selectTemplate(selected);
+      templateNotice = "模板已保存。";
+    } catch {
+      templateNotice = "模板暂时无法保存，请重试。";
+    } finally {
+      templateBusy = false;
+    }
+  }
+
+  async function deleteTemplate() {
+    if (!selectedTemplateId || templateBusy || !persistedConfig || !settingsApi) return;
+    if (!window.confirm("删除当前模板？")) return;
+    templateBusy = true;
+    try {
+      const next = removeCustomTemplate(customTemplates, selectedTemplateId);
+      const saved = await settingsApi.saveConfig({ ...persistedConfig, custom_templates: next });
+      persistedConfig = saved;
+      customTemplates = readCustomTemplates(saved.custom_templates);
+      selectedTemplateId = null;
+      templateDraft = createTemplateDraft();
+      templateValues = {};
+      templateNotice = "模板已删除。";
+    } catch {
+      templateNotice = "模板暂时无法删除，请重试。";
+    } finally {
+      templateBusy = false;
+    }
+  }
+
+  function applyTemplate() {
+    const rendered = renderTemplate(templateDraft.content, templateValues);
+    if (!rendered) {
+      templateNotice = "请填写全部变量后再应用。";
+      return;
+    }
+    state = updateInput(state, rendered);
+    closeTemplateManager();
+    showToast("模板已应用到输入区");
   }
 
   async function parseBatchSource() {
@@ -1029,6 +1134,13 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (state.overlay === "template_manager") {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeTemplateManager(true);
+      }
+      return;
+    }
     if (batch.phase !== "closed") {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -1220,6 +1332,7 @@
                 <button role="menuitem" on:click={() => runFromMoreActions("replace")}>替换剪贴板</button>
                 <button role="menuitem" on:click={() => runFromMoreActions("regenerate")}>重新生成</button>
                 <button role="menuitem" on:click={() => runFromMoreActions("adjust")}>调整</button>
+                <button role="menuitem" on:click={openTemplateManager}>模板管理</button>
                 <button
                   role="menuitem"
                   disabled={!translatorEnabled || !state.currentResult?.output}
@@ -1305,6 +1418,7 @@
         <div class="summary-row">
           <span>{summary}</span>
           <div>
+            <button on:click={openTemplateManager}>模板</button>
             <button disabled={!batchRunnerEnabled} on:click={openBatchView}>批量处理</button>
             <button on:click={beginAdjust}>调整</button>
           </div>
@@ -1315,6 +1429,56 @@
         </button>
 
       </section>
+    {/if}
+
+    {#if state.overlay === "template_manager"}
+      <div class="template-layer" role="presentation">
+        <div class="template-dialog" role="dialog" aria-modal="true" aria-label="模板管理">
+          <div class="template-head">
+            <div><h2>模板管理</h2><p>自定义模板仅保存在本机配置中。</p></div>
+            <button class="icon-button" aria-label="关闭模板管理" bind:this={templateCloseButton} on:click={() => closeTemplateManager(true)}>×</button>
+          </div>
+          <div class="template-layout">
+            <aside class="template-list">
+              <input aria-label="搜索模板" bind:value={templateQuery} placeholder="搜索名称、分类或标签" />
+              <select aria-label="模板分类" bind:value={templateCategory}>
+                <option value={null}>全部分类</option>
+                {#each templateCategories as category}<option value={category}>{category}</option>{/each}
+              </select>
+              <button class="outline" type="button" on:click={() => { selectedTemplateId = null; templateDraft = createTemplateDraft(); templateValues = {}; templateNotice = null; }}>新建模板</button>
+              <div class="template-list-items">
+                {#each visibleTemplates as template}
+                  <button class:active={selectedTemplateId === template.id} type="button" on:click={() => selectTemplate(template)}>
+                    <strong>{template.name}</strong><span>{template.category}{template.tags.length ? ` · ${template.tags.join("、")}` : ""}</span>
+                  </button>
+                {:else}<p>还没有符合条件的模板。</p>{/each}
+              </div>
+            </aside>
+            <section class="template-editor">
+              <div class="template-fields">
+                <label><span>名称</span><input bind:value={templateDraft.name} disabled={templateBusy} /></label>
+                <label><span>分类</span><input bind:value={templateDraft.category} disabled={templateBusy} /></label>
+                <label class="wide"><span>标签（用逗号分隔）</span><input value={templateDraft.tags.join(", ")} disabled={templateBusy} on:input={(event) => templateDraft = { ...templateDraft, tags: event.currentTarget.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean) }} /></label>
+                <label class="wide"><span>说明</span><input bind:value={templateDraft.description} disabled={templateBusy} /></label>
+                <label class="wide"><span>模板内容</span><textarea bind:value={templateDraft.content} disabled={templateBusy} placeholder={"使用 {变量名} 插入需要填写的内容"}></textarea></label>
+              </div>
+              {#if templateVariables(templateDraft.content).length}
+                <div class="template-variables">
+                  <h3>填写变量</h3>
+                  {#each templateVariables(templateDraft.content) as variable}
+                    <label><span>{variable}</span><input value={templateValues[variable] ?? ""} on:input={(event) => templateValues = { ...templateValues, [variable]: event.currentTarget.value }} /></label>
+                  {/each}
+                </div>
+              {/if}
+              <p class="template-notice" aria-live="polite">{templateNotice ?? ""}</p>
+              <div class="template-footer">
+                <button class="outline danger" type="button" disabled={!selectedTemplateId || templateBusy} on:click={deleteTemplate}>删除</button>
+                <span></span><button class="outline" type="button" disabled={templateBusy} on:click={saveTemplate}>保存模板</button><button class="primary small" type="button" on:click={applyTemplate}>应用到输入区</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
     {/if}
 
     {#if batch.phase !== "closed"}

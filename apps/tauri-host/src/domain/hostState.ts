@@ -24,7 +24,7 @@ export type HostPhase =
   | "cancelled"
   | "error";
 
-export type Overlay = null | "clipboard_confirm" | "settings" | "plugin_manager";
+export type Overlay = null | "clipboard_confirm" | "settings" | "plugin_manager" | "template_manager";
 
 export type HostShortcutAction =
   | "none"
