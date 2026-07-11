@@ -12,6 +12,7 @@ import {
 } from "./reflexSession";
 import type { AppConfig } from "./settingsApi";
 import type { HostAction } from "./desktopBridge";
+import { providerName } from "./providerCatalog";
 
 export type HostPhase =
   | "empty"
@@ -758,8 +759,7 @@ function providerLabel(settings: RequestSettings): string {
 }
 
 export function providerDisplayName(provider: string | null): string {
-  if (!provider) return "未配置";
-  return provider.toLowerCase() === "minimax" ? "MiniMax" : provider;
+  return providerName(provider);
 }
 
 function phaseFromStatus(value: unknown, fallback: HostPhase): HostPhase {

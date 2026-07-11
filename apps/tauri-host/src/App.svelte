@@ -126,6 +126,7 @@
     type PromptTemplate,
     type TemplateDraft
   } from "./domain/templateLibrary";
+  import { providerCatalog, providerModels } from "./domain/providerCatalog";
   import {
     listSceneOptions,
     type OptimizeMode,
@@ -328,6 +329,8 @@
   $: batchRunnerEnabled = persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
   $: templateCategories = [...new Set(customTemplates.map((template) => template.category))].sort((left, right) => left.localeCompare(right, "zh-CN"));
   $: visibleTemplates = filterTemplates(customTemplates, templateQuery, templateCategory);
+  $: settingsProviderModels = providerModels(settingsDraft.default_provider);
+  $: draftProviderModels = providerModels(draft.provider);
 
   function setInput(value: string) {
     state = updateInput(state, value);
@@ -513,6 +516,16 @@
       secretInput = "";
       secretBusy = false;
     }
+  }
+
+  async function selectSettingsProvider(provider: string) {
+    const models = providerModels(provider);
+    settingsDraft = { ...settingsDraft, default_provider: provider, default_model: models[0].id };
+    secretInput = "";
+    secretNotice = null;
+    if (!settingsApi) return;
+    try { secretStatus = await settingsApi.getProviderSecretStatus(provider); }
+    catch { secretStatus = { providerId: provider, configured: false, maskedTail: null }; }
   }
 
   function showToast(message: string) {
@@ -1279,7 +1292,7 @@
           <label class="setting-row">
             <span>模型</span>
             <select bind:value={draft.model}>
-              <option value="MiniMax-M2.7-highspeed">MiniMax / M2.7 高速版</option>
+              {#each draftProviderModels as model}<option value={model.id}>{model.label}</option>{/each}
             </select>
           </label>
 
@@ -1815,14 +1828,14 @@
                 <div class="settings-grid">
                   <label>
                     <span>默认 Provider</span>
-                    <select bind:value={settingsDraft.default_provider} disabled={settingsBusy}>
-                      <option value="minimax">MiniMax</option>
+                    <select value={settingsDraft.default_provider ?? "minimax"} disabled={settingsBusy} on:change={(event) => selectSettingsProvider(event.currentTarget.value)}>
+                      {#each providerCatalog as provider}<option value={provider.id}>{provider.label}</option>{/each}
                     </select>
                   </label>
                   <label>
                     <span>默认模型</span>
                     <select bind:value={settingsDraft.default_model} disabled={settingsBusy}>
-                      <option value="MiniMax-M2.7-highspeed">M2.7 高速版</option>
+                      {#each settingsProviderModels as model}<option value={model.id}>{model.label}</option>{/each}
                     </select>
                   </label>
                 </div>
