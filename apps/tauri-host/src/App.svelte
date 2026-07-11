@@ -92,6 +92,30 @@
     type MarkdownPreviewMode
   } from "./domain/markdownPreviewState";
   import {
+    batchCanExport,
+    batchCompletedCount,
+    batchProcessedCount,
+    beginBatchParse,
+    beginBatchRun,
+    cancelBatch,
+    closeBatch,
+    completeBatchItem,
+    completeBatchParse,
+    createBatchState,
+    failBatchItem,
+    failBatchParse,
+    finalizeBatchRun,
+    openBatch,
+    runBatchWorkerPool,
+    setBatchConcurrency,
+    setBatchFormat,
+    setBatchScene,
+    setBatchSourceText,
+    setBatchStyle,
+    startBatchItem,
+    type BatchFormat
+  } from "./domain/batchState";
+  import {
     listSceneOptions,
     type OptimizeMode,
     type OptimizeStyle,
@@ -154,6 +178,10 @@
     { id: "source", label: "源码" },
     { id: "preview", label: "预览" }
   ];
+  const batchFormats: Array<{ id: BatchFormat; label: string }> = [
+    { id: "txt", label: "TXT 每行一条" },
+    { id: "csv", label: "CSV prompt 列" }
+  ];
 
   let coreBridge: CoreBridge = new DemoCoreBridge();
   let capabilityBridge: CapabilityBridge | null = null;
@@ -173,6 +201,9 @@
   let markdownPreview = createMarkdownPreviewState();
   let markdownPreviewRun: AbortController | null = null;
   let markdownPreviewCloseButton: HTMLButtonElement | null = null;
+  let batch = createBatchState();
+  let batchRun: AbortController | null = null;
+  let batchCloseButton: HTMLButtonElement | null = null;
   let persistedConfig: AppConfig | null = null;
   let secretInput = "";
   let secretStatus: SecretStatus = {
@@ -258,6 +289,7 @@
       activeRun?.abort();
       translationRun?.abort();
       markdownPreviewRun?.abort();
+      batchRun?.abort();
     };
   });
 
@@ -271,6 +303,7 @@
   $: canGenerate = state.canGenerate && !isGenerating(state.phase);
   $: translatorEnabled = persistedConfig?.enabled_plugins.includes("translator") ?? true;
   $: markdownPreviewEnabled = persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
+  $: batchRunnerEnabled = persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
 
   function setInput(value: string) {
     state = updateInput(state, value);
@@ -671,6 +704,160 @@
     if (restoreFocus) window.setTimeout(() => moreActionsButton?.focus());
   }
 
+  function openBatchView() {
+    if (!batchRunnerEnabled) return;
+    closeMoreActions();
+    if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
+    if (translation.phase !== "closed") closeTranslationView();
+    batch = openBatch(batch);
+    window.setTimeout(() => batchCloseButton?.focus());
+  }
+
+  function closeBatchView(restoreFocus = false) {
+    batchRun?.abort();
+    batchRun = null;
+    batch = closeBatch(batch);
+    if (restoreFocus) window.setTimeout(() => moreActionsButton?.focus());
+  }
+
+  async function parseBatchSource() {
+    const started = beginBatchParse(batch);
+    if (!started) return;
+    const bridge = capabilityBridge;
+    batch = started.state;
+    if (!bridge) {
+      batch = failBatchParse(batch, started.request, "批处理暂时不可用，请重试。");
+      return;
+    }
+    try {
+      for await (const event of bridge.invoke(
+        "batch-runner",
+        "parse",
+        { format: batch.format, content: batch.sourceText },
+        { timeoutMs: 20_000 }
+      )) {
+        if (batch.request !== started.request) return;
+        if (event.status === "result") {
+          batch = completeBatchParse(batch, started.request, event.data);
+        } else if (event.status === "error" || event.status === "cancelled") {
+          batch = failBatchParse(batch, started.request, "导入内容格式不正确，请检查后重试。");
+        }
+      }
+    } catch {
+      batch = failBatchParse(batch, started.request, "批处理暂时不可用，请重试。");
+    }
+  }
+
+  async function runBatch() {
+    const started = beginBatchRun(batch);
+    if (!started) return;
+    const controller = new AbortController();
+    batchRun = controller;
+    batch = started.state;
+    const run = started.request;
+    const items = batch.items;
+    const language = persistedConfig?.language === "en-US" ? "en-US" : "zh-CN";
+
+    await runBatchWorkerPool(items, batch.concurrency, controller.signal, async (item) => {
+      if (controller.signal.aborted || batch.request !== run) return;
+      batch = startBatchItem(batch, run, item.id);
+      let output = "";
+      try {
+        const request = {
+          text: item.prompt,
+          mode: state.requestDraft.mode,
+          style: batch.style,
+          scene: batch.scene,
+          scene_policy: batch.scene ? "manual" as const : "auto" as const,
+          provider: state.requestDraft.provider,
+          model: state.requestDraft.model,
+          stream: true,
+          metadata: { host: "tauri" as const, surface: "quick-panel" as const, language }
+        };
+        for await (const event of coreBridge.optimize(request, { signal: controller.signal })) {
+          if (controller.signal.aborted || batch.request !== run) return;
+          if (event.type === "chunk") output += batchEventText(event.data);
+          if (event.type === "done") {
+            const completed = batchEventText(event.data);
+            if (completed) output = completed;
+          }
+          if (event.type === "error") {
+            batch = failBatchItem(batch, run, item.id, "此条处理失败，请稍后重试。");
+            return;
+          }
+        }
+        if (!controller.signal.aborted && batch.request === run) {
+          batch = completeBatchItem(batch, run, item.id, output);
+        }
+      } catch {
+        if (!controller.signal.aborted && batch.request === run) {
+          batch = failBatchItem(batch, run, item.id, "此条处理失败，请稍后重试。");
+        }
+      }
+    });
+
+    if (batchRun === controller) batchRun = null;
+    if (!controller.signal.aborted) batch = finalizeBatchRun(batch, run);
+  }
+
+  function cancelBatchRun() {
+    batchRun?.abort();
+    batchRun = null;
+    batch = cancelBatch(batch);
+  }
+
+  async function exportBatch() {
+    if (!batchCanExport(batch)) return;
+    const bridge = capabilityBridge;
+    if (!bridge) {
+      showToast("导出暂时不可用，请重试。");
+      return;
+    }
+    let content = "";
+    try {
+      for await (const event of bridge.invoke(
+        "batch-runner",
+        "export",
+        {
+          format: batch.format,
+          items: batch.items.map(({ id, prompt, result, status }) => ({ id, prompt, result, status }))
+        },
+        { timeoutMs: 20_000 }
+      )) {
+        if (event.status === "result" && typeof event.data.content === "string") content = event.data.content;
+        if (event.status === "error" || event.status === "cancelled") break;
+      }
+    } catch {
+      content = "";
+    }
+    if (!content) {
+      showToast("导出暂时不可用，请重试。");
+      return;
+    }
+    downloadBatchContent(content, batch.format);
+    showToast("批处理结果已导出");
+  }
+
+  function batchEventText(data: Record<string, unknown>): string {
+    for (const key of ["text", "output", "result"]) {
+      if (typeof data[key] === "string") return data[key].replace(/\u0000/g, "").replace(/\r\n?/g, "\n");
+    }
+    return "";
+  }
+
+  function downloadBatchContent(content: string, format: BatchFormat) {
+    const type = format === "csv" ? "text/csv;charset=utf-8" : "text/plain;charset=utf-8";
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `reflex-batch-results.${format}`;
+    anchor.style.display = "none";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
   function toggleMoreActions() {
     moreActionsOpen = !moreActionsOpen;
   }
@@ -842,6 +1029,13 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (batch.phase !== "closed") {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeBatchView(true);
+      }
+      return;
+    }
     if (markdownPreview.phase !== "closed") {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -1036,6 +1230,7 @@
                   disabled={!markdownPreviewEnabled || !state.currentResult?.output}
                   on:click={openMarkdownPreviewView}
                 >Markdown 预览</button>
+                <button role="menuitem" disabled={!batchRunnerEnabled} on:click={openBatchView}>批量处理</button>
                 <div class="rating-menu" aria-label="评分">
                   <span>评分</span>
                   <div>
@@ -1109,7 +1304,10 @@
 
         <div class="summary-row">
           <span>{summary}</span>
-          <button on:click={beginAdjust}>调整</button>
+          <div>
+            <button disabled={!batchRunnerEnabled} on:click={openBatchView}>批量处理</button>
+            <button on:click={beginAdjust}>调整</button>
+          </div>
         </div>
 
         <button class="generate-button" disabled={!canGenerate} on:click={runOptimization}>
@@ -1117,6 +1315,130 @@
         </button>
 
       </section>
+    {/if}
+
+    {#if batch.phase !== "closed"}
+      <div class="batch-layer" role="presentation">
+        <div class="batch-dialog" role="dialog" aria-modal="true" aria-label="批量处理">
+          <div class="batch-head">
+            <div>
+              <h2>批量处理</h2>
+              <p>最多导入 200 条提示词，结果在本机导出。</p>
+            </div>
+            <button class="icon-button" aria-label="关闭批量处理" bind:this={batchCloseButton} on:click={() => closeBatchView(true)}>×</button>
+          </div>
+
+          <div class="batch-controls">
+            <div class="batch-format" role="group" aria-label="导入格式">
+              {#each batchFormats as item}
+                <button
+                  type="button"
+                  class:active={batch.format === item.id}
+                  aria-pressed={batch.format === item.id}
+                  disabled={batch.phase === "parsing" || batch.phase === "running"}
+                  on:click={() => batch = setBatchFormat(batch, item.id)}
+                >{item.label}</button>
+              {/each}
+            </div>
+            <label>
+              <span>处理风格</span>
+              <select
+                value={batch.style}
+                disabled={batch.phase === "running"}
+                on:change={(event) => batch = setBatchStyle(batch, event.currentTarget.value as OptimizeStyle)}
+              >
+                {#each styles as item}
+                  <option value={item.id}>{item.label}</option>
+                {/each}
+              </select>
+            </label>
+            <label>
+              <span>场景</span>
+              <select
+                value={batch.scene ?? ""}
+                disabled={batch.phase === "running"}
+                on:change={(event) => batch = setBatchScene(batch, event.currentTarget.value)}
+              >
+                <option value="">自动识别</option>
+                {#each scenes as scene}
+                  <option value={scene.id}>{scene.label}</option>
+                {/each}
+              </select>
+            </label>
+            <label>
+              <span>并发数</span>
+              <select
+                value={batch.concurrency}
+                disabled={batch.phase === "running"}
+                on:change={(event) => batch = setBatchConcurrency(batch, Number(event.currentTarget.value))}
+              >
+                {#each [1, 2, 3, 4] as value}
+                  <option value={value}>{value}</option>
+                {/each}
+              </select>
+            </label>
+          </div>
+
+          <label class="batch-source">
+            <span>{batch.format === "csv" ? "粘贴 CSV，需包含 prompt 或 提示词 列" : "粘贴文本，每行一条提示词"}</span>
+            <textarea
+              aria-label="批量输入内容"
+              value={batch.sourceText}
+              disabled={batch.phase === "parsing" || batch.phase === "running"}
+              on:input={(event) => batch = setBatchSourceText(batch, event.currentTarget.value)}
+              placeholder={batch.format === "csv" ? "prompt\n写一封商务邮件" : "写一封商务邮件\n解释什么是机器学习"}
+            ></textarea>
+          </label>
+
+          <div class="batch-action-row">
+            <button class="outline" type="button" disabled={batch.phase === "parsing" || batch.phase === "running" || !batch.sourceText.trim()} on:click={parseBatchSource}>
+              {batch.phase === "parsing" ? "正在解析" : "解析内容"}
+            </button>
+            <p aria-live="polite">
+              {#if batch.phase === "running"}
+                正在处理 {batchProcessedCount(batch)}/{batch.items.length}，已完成 {batchCompletedCount(batch)} 条
+              {:else if batch.phase === "completed"}
+                已完成 {batchCompletedCount(batch)}/{batch.items.length} 条
+              {:else if batch.phase === "cancelled"}
+                已停止，已完成 {batchCompletedCount(batch)} 条
+              {:else if batch.error}
+                <span class="error">{batch.error}</span>
+              {:else if batch.items.length}
+                已解析 {batch.items.length} 条提示词
+              {:else}
+                等待导入内容
+              {/if}
+            </p>
+          </div>
+
+          <div class="batch-list" aria-label="批处理列表">
+            {#if batch.items.length}
+              {#each batch.items as item}
+                <article class:completed={item.status === "completed"} class:failed={item.status === "failed"} class:running={item.status === "running"} class="batch-item">
+                  <span class="batch-item-id">{item.id}</span>
+                  <div>
+                    <strong>{item.prompt}</strong>
+                    {#if item.result}<p>{item.result}</p>{/if}
+                    {#if item.error}<p class="error">{item.error}</p>{/if}
+                  </div>
+                  <span class="batch-status">{item.status === "pending" ? "等待" : item.status === "running" ? "处理中" : item.status === "completed" ? "已完成" : item.status === "cancelled" ? "已停止" : "失败"}</span>
+                </article>
+              {/each}
+            {:else}
+              <p class="batch-empty">解析后将在这里显示待处理的提示词。</p>
+            {/if}
+          </div>
+
+          <div class="batch-footer">
+            {#if batch.phase === "running"}
+              <button class="outline" type="button" on:click={cancelBatchRun}>停止</button>
+            {:else}
+              <button class="outline" type="button" disabled={!batchCanExport(batch)} on:click={exportBatch}>导出结果</button>
+              <button class="primary small" type="button" disabled={!batch.items.length} on:click={runBatch}>开始处理</button>
+            {/if}
+          </div>
+        </div>
+      </div>
     {/if}
 
     {#if translation.phase !== "closed"}
