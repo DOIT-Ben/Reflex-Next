@@ -32,11 +32,20 @@ from .plugin_contracts import (
     CapabilityListEnvelope,
     PluginDescriptor,
     PluginEventEnvelope,
+    is_safe_id,
 )
 from .protocol import CommandEnvelope, ProtocolError
 from .provider_errors import ProviderRuntimeError, provider_unconfigured
 from .provider_registry import ProviderRegistry
 from .task_registry import DuplicateRequestId, TaskRegistry
+
+
+def _safe_plugin_error_code(error: BaseException) -> str | None:
+    try:
+        code = getattr(error, "code", None)
+    except Exception:
+        return None
+    return code if is_safe_id(code) else None
 
 
 class RuntimeContext:
@@ -149,6 +158,9 @@ class RuntimeContext:
             if command.type == "configure_history_policy":
                 self.configure_history_policy(command)
                 return True
+            if command.type == "configure_history_path":
+                self.configure_history_path(command)
+                return True
             raise ProtocolError("unsupported command type")
         finally:
             self._tasks.cleanup(command.request_id, token)
@@ -220,6 +232,16 @@ class RuntimeContext:
             return
         self.emit_status(command.request_id, StatusPhase.COMPLETED, "history_policy_configured")
 
+    def configure_history_path(self, command: CommandEnvelope) -> None:
+        try:
+            self._capabilities.configure_history_path(
+                Path(command.payload["database_path"])
+            )
+        except CapabilityDenied as error:
+            self.emit_error(command.request_id, error.code, "History path failed.")
+            return
+        self.emit_status(command.request_id, StatusPhase.COMPLETED, "history_path_configured")
+
     def start_optimize(self, command: CommandEnvelope) -> None:
         try:
             token = self._tasks.register(command.request_id)
@@ -234,7 +256,7 @@ class RuntimeContext:
                 daemon=True,
             )
             self._start_thread(command.request_id, token, thread)
-        except Exception as exc:
+        except Exception:
             self._tasks.cleanup(command.request_id, token)
             self.emit_error(
                 command.request_id,
@@ -243,7 +265,7 @@ class RuntimeContext:
                 action="retry",
             )
             self.diagnostic(
-                f"thread_start_failed request_id={command.request_id} category={type(exc).__name__}"
+                f"thread_start_failed request_id={command.request_id} category=thread_start_failed"
             )
 
     def start_plugin_call(self, command: CommandEnvelope, *, admin: bool) -> None:
@@ -259,11 +281,11 @@ class RuntimeContext:
                 daemon=True,
             )
             self._start_thread(command.request_id, token, thread)
-        except Exception as exc:
+        except Exception:
             self._tasks.cleanup(command.request_id, token)
             self.emit_plugin_error(command, "thread_start_failed")
             self.diagnostic(
-                f"thread_start_failed request_id={command.request_id} category={type(exc).__name__}"
+                f"thread_start_failed request_id={command.request_id} category=thread_start_failed"
             )
 
     def _start_thread(
@@ -385,10 +407,10 @@ class RuntimeContext:
                 self.emit(envelope)
         except ProviderRuntimeError as error:
             self.emit_provider_error(command.request_id, error)
-        except Exception as exc:
+        except Exception:
             self.emit_error(command.request_id, "runtime_error", "Runtime request failed.", action="retry")
             self.diagnostic(
-                f"runtime_error request_id={command.request_id} category={type(exc).__name__}"
+                f"runtime_error request_id={command.request_id} category=untrusted_provider_exception"
             )
         finally:
             self._tasks.cleanup(command.request_id, token)
@@ -432,10 +454,12 @@ class RuntimeContext:
             if token.is_cancelled:
                 self._emit_plugin_status(command, "cancelled", {})
             else:
-                self.emit_plugin_error(command, "plugin_failed")
-                self.diagnostic(
-                    f"plugin_failed request_id={command.request_id} category={type(exc).__name__}"
-                )
+                code = _safe_plugin_error_code(exc)
+                self.emit_plugin_error(command, code or "plugin_failed")
+                if code is None:
+                    self.diagnostic(
+                        f"plugin_failed request_id={command.request_id} category=untrusted_plugin_exception"
+                    )
         finally:
             self._tasks.cleanup(command.request_id, token)
             with self._lock:

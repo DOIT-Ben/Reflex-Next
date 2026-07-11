@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 RUNTIME_PROTOCOL_VERSION = 1
@@ -18,6 +19,7 @@ COMMAND_TYPES = frozenset(
         "configure_plugin",
         "configure_history_keys",
         "configure_history_policy",
+        "configure_history_path",
         "plugin_admin_call",
     }
 )
@@ -41,6 +43,7 @@ CONFIGURE_HISTORY_KEYS_FIELDS = frozenset({"keys"})
 CONFIGURE_HISTORY_POLICY_FIELDS = frozenset(
     {"history_enabled", "privacy_mode", "history_redaction"}
 )
+CONFIGURE_HISTORY_PATH_FIELDS = frozenset({"database_path"})
 EMPTY_PAYLOAD_COMMANDS = frozenset({"cancel", "ping", "shutdown", "list_plugins"})
 BUILTIN_CAPABILITY_IDS = frozenset(
     {"history-sqlite", "translator", "markdown-preview"}
@@ -48,7 +51,14 @@ BUILTIN_CAPABILITY_IDS = frozenset(
 PRIVATE_FIELD_NAMES = frozenset(
     {"key", "keys", "path", "admin", "private", "secret", "token"}
 )
-SENSITIVE_COMMANDS = frozenset({"configure_provider", "configure_history_keys"})
+SENSITIVE_COMMANDS = frozenset(
+    {
+        "configure_provider",
+        "configure_history_keys",
+        "configure_history_policy",
+        "configure_history_path",
+    }
+)
 COMMAND_ENVELOPE_FIELDS = frozenset({"version", "request_id", "type", "payload"})
 PUBLIC_PLUGIN_OPERATIONS = {
     "history-sqlite": frozenset({"list", "detail", "rate", "backups", "scan"}),
@@ -113,6 +123,8 @@ def parse_command(value: Any) -> CommandEnvelope:
         _validate_history_keys(payload)
     elif command_type == "configure_history_policy":
         _validate_history_policy(payload)
+    elif command_type == "configure_history_path":
+        _validate_history_path(payload)
     return CommandEnvelope(
         version=RUNTIME_PROTOCOL_VERSION,
         request_id=request_id.strip(),
@@ -193,6 +205,21 @@ def _validate_history_policy(payload: dict[str, Any]) -> None:
         raise ProtocolError(message)
 
 
+def _validate_history_path(payload: dict[str, Any]) -> None:
+    message = "invalid history path command"
+    _require_fields(payload, CONFIGURE_HISTORY_PATH_FIELDS, message)
+    database_path = payload.get("database_path")
+    if not isinstance(database_path, str) or len(database_path) > 4096:
+        raise ProtocolError(message)
+    path = Path(database_path)
+    if (
+        not path.is_absolute()
+        or path.name != "history.sqlite3"
+        or path.parent.name != "history"
+        or any(part in {".", ".."} for part in path.parts)
+        or any(ord(character) < 32 for character in database_path)
+    ):
+        raise ProtocolError(message)
 def _require_fields(
     payload: dict[str, Any], expected: frozenset[str], message: str
 ) -> None:

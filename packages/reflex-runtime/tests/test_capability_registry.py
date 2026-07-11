@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
 import threading
 
 import pytest
@@ -502,6 +503,105 @@ def test_plugin_execution_happens_outside_registry_lock():
     worker.join(timeout=2)
 
     assert not worker.is_alive()
+
+
+def test_history_plugin_receives_only_a_private_immutable_policy_and_key_snapshot():
+    plugin = RecordingPlugin()
+    registry = CapabilityRegistry([(history_descriptor(), plugin)])
+    registry.configure_history_path(Path("D:/private/history/history.sqlite3"))
+    registry.configure_history_keys({"v1": "11" * 32})
+    registry.configure_history_policy(
+        history_enabled=True,
+        privacy_mode=False,
+        history_redaction="secrets",
+    )
+    services = {
+        "history_database_path": Path("D:/private/history.sqlite3"),
+        "public_value": "must-not-be-forwarded",
+    }
+
+    registry.invoke_public(
+        "history-sqlite",
+        "list",
+        {},
+        services,
+        CancellationToken(),
+    )
+
+    forwarded = plugin.calls[-1][2]
+    assert set(forwarded) == {"history"}
+    assert forwarded["history"]["database_path"] == Path(
+        "D:/private/history/history.sqlite3"
+    )
+    assert forwarded["history"]["keys"] == {"v1": "11" * 32}
+    assert forwarded["history"]["history_enabled"] is True
+    assert forwarded["history"]["privacy_mode"] is False
+    assert forwarded["history"]["history_redaction"] == "secrets"
+    assert forwarded is not services
+    rendered = " ".join(
+        (
+            repr(forwarded),
+            repr(forwarded["history"]),
+            repr(forwarded["history"]["keys"]),
+        )
+    )
+    assert "11" * 32 not in rendered
+    assert "D:/private/history.sqlite3" not in rendered.replace("\\", "/")
+    assert "redacted" in rendered.casefold()
+    with pytest.raises(TypeError):
+        forwarded["history"]["privacy_mode"] = True
+    with pytest.raises(TypeError):
+        forwarded["history"]["keys"]["v2"] = "22" * 32
+
+
+def test_history_path_is_stored_privately_and_cannot_be_overridden_by_call_services():
+    plugin = RecordingPlugin()
+    registry = CapabilityRegistry([(history_descriptor(), plugin)])
+    configured_path = Path("D:/AppData/Reflex Next/history/history.sqlite3")
+    registry.configure_history_path(configured_path)
+    registry.configure_history_keys({"v1": "11" * 32})
+
+    registry.invoke_public(
+        "history-sqlite",
+        "list",
+        {},
+        {"history_database_path": Path("D:/forged/history/history.sqlite3")},
+        CancellationToken(),
+    )
+
+    forwarded = plugin.calls[-1][2]
+    assert forwarded["history"]["database_path"] == configured_path
+    assert "history.sqlite3" not in repr(forwarded)
+
+
+def test_history_save_is_rejected_before_plugin_when_policy_is_disabled_or_private():
+    plugin = RecordingPlugin()
+    registry = CapabilityRegistry([(history_descriptor(), plugin)])
+    registry.configure_history_keys({"v1": "11" * 32})
+
+    for privacy_mode in (False, True):
+        registry.configure_history_policy(
+            history_enabled=not privacy_mode,
+            privacy_mode=privacy_mode,
+            history_redaction="secrets",
+        )
+        if not privacy_mode:
+            registry.configure_history_policy(
+                history_enabled=False,
+                privacy_mode=False,
+                history_redaction="secrets",
+            )
+        with pytest.raises(CapabilityDenied) as caught:
+            registry.invoke_internal(
+                "history-sqlite",
+                "save",
+                {},
+                {"history_database_path": Path("D:/private/history.sqlite3")},
+                CancellationToken(),
+                trusted=True,
+            )
+        assert caught.value.code == "write_permission_denied"
+    assert plugin.calls == []
 
 
 @pytest.mark.parametrize(

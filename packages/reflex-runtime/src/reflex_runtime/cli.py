@@ -146,7 +146,7 @@ def main(fd_adapter: OsFdAdapter | None = None) -> int:
                 runtime.diagnostic(
                     f"protocol_error request_id={request_id}: {exc}"
                 )
-            except Exception as exc:
+            except Exception:
                 request_id = _safe_request_id(line)
                 runtime.emit_error(
                     request_id,
@@ -155,7 +155,7 @@ def main(fd_adapter: OsFdAdapter | None = None) -> int:
                     action="retry",
                 )
                 runtime.diagnostic(
-                    f"runtime_error request_id={request_id} category={type(exc).__name__}"
+                    f"runtime_error request_id={request_id} category=runtime_exception"
                 )
         return 0
     finally:

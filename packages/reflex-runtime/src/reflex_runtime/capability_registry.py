@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 from threading import RLock
+from collections.abc import Iterator, Mapping
 from typing import Any, Iterable
 
 from .plugin_contracts import PluginDescriptor, is_safe_id
@@ -36,6 +38,26 @@ class HistoryPolicySnapshot:
     history_redaction: str
 
 
+class _PrivateMapping(Mapping[str, Any]):
+    def __init__(self, values: dict[str, Any]) -> None:
+        self._values = dict(values)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __repr__(self) -> str:
+        return "<redacted private mapping>"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Mapping) and dict(self._values) == dict(other)
+
+
 class CapabilityDenied(RuntimeError):
     def __init__(self, code: str) -> None:
         if not is_safe_id(code):
@@ -64,6 +86,7 @@ class CapabilityRegistry:
         self._history_unavailable = bool(history_unavailable)
         self._history_keys: dict[str, str] = {}
         self._history_policy = HistoryPolicySnapshot(False, False, "secrets")
+        self._history_database_path: Path | None = None
 
     @staticmethod
     def _validated_plugins(
@@ -134,6 +157,18 @@ class CapabilityRegistry:
             raise CapabilityDenied("history_keys_invalid")
         with self._lock:
             self._history_keys = dict(keys)
+
+    def configure_history_path(self, database_path: Path) -> None:
+        if (
+            not isinstance(database_path, Path)
+            or not database_path.is_absolute()
+            or database_path.name != "history.sqlite3"
+            or database_path.parent.name != "history"
+            or any(part in {".", ".."} for part in database_path.parts)
+        ):
+            raise CapabilityDenied("history_path_invalid")
+        with self._lock:
+            self._history_database_path = database_path
 
     def configure_history_policy(
         self,
@@ -303,7 +338,26 @@ class CapabilityRegistry:
             self._enforce_history_policy_unlocked(descriptor, operation, channel)
             if not isinstance(payload, dict):
                 raise CapabilityDenied("plugin_payload_invalid")
-        return instance.invoke(operation, payload, services, cancellation)
+            invocation_services = (
+                self._history_services_unlocked(services)
+                if descriptor.plugin_id == "history-sqlite"
+                else services
+            )
+        return instance.invoke(operation, payload, invocation_services, cancellation)
+
+    def _history_services_unlocked(self, services: Any) -> Mapping[str, Any]:
+        database_path = self._history_database_path
+        keys = _PrivateMapping(dict(self._history_keys))
+        history = _PrivateMapping(
+            {
+                "database_path": database_path,
+                "keys": keys,
+                "history_enabled": self._history_policy.history_enabled,
+                "privacy_mode": self._history_policy.privacy_mode,
+                "history_redaction": self._history_policy.history_redaction,
+            }
+        )
+        return _PrivateMapping({"history": history})
 
     def _enforce_history_policy_unlocked(
         self, descriptor: PluginDescriptor, operation: str, channel: str

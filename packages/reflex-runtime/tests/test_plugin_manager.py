@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from reflex_runtime.plugin_contracts import PluginDescriptor
-from reflex_runtime.plugin_manager import PluginManager
+from reflex_runtime.plugin_manager import BUILTIN_CAPABILITY_DESCRIPTORS, PluginManager
 
 
 @dataclass
@@ -48,10 +48,15 @@ def capability_descriptor(
     public_operations: tuple[str, ...] | None = None,
     permissions: tuple[str, ...] = (),
 ):
+    display_names = {
+        "history-sqlite": "History",
+        "translator": "Translator",
+        "markdown-preview": "Markdown Preview",
+    }
     return PluginDescriptor(
         plugin_id=plugin_id,
-        display_name=plugin_id,
-        version="fixture-1",
+        display_name=display_names.get(plugin_id, plugin_id),
+        version="1",
         kind=kind,
         permissions=permissions,
         operations=operations,
@@ -392,6 +397,70 @@ def test_conforming_history_plugin_loads_with_the_canonical_operation_contract()
     )
     assert descriptor.operations == HISTORY_OPERATIONS
     assert descriptor.public_operations == HISTORY_PUBLIC_OPERATIONS
+    assert descriptor.permissions == ("storage_read", "storage_write")
+
+
+def test_independent_history_descriptor_is_normalized_to_runtime_builtin_contract():
+    class ForeignDescriptor:
+        plugin_id = "history-sqlite"
+        display_name = "History"
+        version = "1"
+        kind = "storage"
+        permissions = ("storage_read", "storage_write")
+        operations = HISTORY_OPERATIONS
+        public_operations = HISTORY_PUBLIC_OPERATIONS
+
+    class ForeignHistory:
+        descriptor = ForeignDescriptor()
+
+        def invoke(self, operation, payload, services, cancellation):
+            return None
+
+    history = ForeignHistory()
+    manager = PluginManager(
+        capability_entry_points_loader=lambda group: [
+            FakeEntryPoint("history-sqlite", history)
+        ]
+        if group == "reflex.storage"
+        else [],
+    )
+
+    result = manager.discover_capabilities()
+
+    descriptor = next(
+        item for item in result.descriptors if item.plugin_id == "history-sqlite"
+    )
+    assert descriptor == BUILTIN_CAPABILITY_DESCRIPTORS["history-sqlite"]
+    assert result.plugins["history-sqlite"] is history
+
+
+def test_history_descriptor_with_noncanonical_display_or_version_is_rejected():
+    class ForeignDescriptor:
+        plugin_id = "history-sqlite"
+        display_name = "Alternate History"
+        version = "fixture-1"
+        kind = "storage"
+        permissions = ("storage_read", "storage_write")
+        operations = HISTORY_OPERATIONS
+        public_operations = HISTORY_PUBLIC_OPERATIONS
+
+    history = FakeCapability(capability_descriptor("translator", "transformer", ("translate",)))
+    history.descriptor = ForeignDescriptor()
+    manager = PluginManager(
+        capability_entry_points_loader=lambda group: [
+            FakeEntryPoint("history-sqlite", history)
+        ]
+        if group == "reflex.storage"
+        else [],
+    )
+
+    result = manager.discover_capabilities()
+
+    descriptor = next(
+        item for item in result.descriptors if item.plugin_id == "history-sqlite"
+    )
+    assert "history-sqlite" not in result.plugins
+    assert descriptor.state == "unavailable"
 
 
 def test_history_plugin_with_legacy_operation_alias_is_rejected():

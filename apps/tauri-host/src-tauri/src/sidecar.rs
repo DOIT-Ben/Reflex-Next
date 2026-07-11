@@ -278,7 +278,8 @@ impl ResponseContract {
             | CommandKind::ConfigureProvider
             | CommandKind::ConfigurePlugin
             | CommandKind::ConfigureHistoryKeys
-            | CommandKind::ConfigureHistoryPolicy => Some(Self::Core),
+            | CommandKind::ConfigureHistoryPolicy
+            | CommandKind::ConfigureHistoryPath => Some(Self::Core),
         }
     }
 
@@ -1015,6 +1016,7 @@ fn is_private_command(kind: crate::runtime_commands::CommandKind) -> bool {
             | CommandKind::ConfigurePlugin
             | CommandKind::ConfigureHistoryKeys
             | CommandKind::ConfigureHistoryPolicy
+            | CommandKind::ConfigureHistoryPath
             | CommandKind::PluginAdminCall
     )
 }
@@ -1027,6 +1029,7 @@ fn expected_private_status(kind: crate::runtime_commands::CommandKind) -> Option
         CommandKind::ConfigurePlugin => Some("plugin_configured"),
         CommandKind::ConfigureHistoryKeys => Some("history_keys_configured"),
         CommandKind::ConfigureHistoryPolicy => Some("history_policy_configured"),
+        CommandKind::ConfigureHistoryPath => Some("history_path_configured"),
         _ => None,
     }
 }
@@ -1557,7 +1560,11 @@ mod tests {
 
     use serde_json::{json, Value};
 
-    use crate::runtime_commands::{configure_provider_command, CommandKind, ValidatedCommand};
+    use crate::runtime_commands::{
+        configure_history_keys_command, configure_history_path_command,
+        configure_history_policy_command, configure_provider_command, CommandKind,
+        ValidatedCommand,
+    };
 
     use super::{
         build_launch_spec, parse_event_envelope, parse_sidecar_event, resolve_runtime_paths_from,
@@ -2234,6 +2241,71 @@ mod tests {
                 "optimize"
             ]
         );
+        release.store(true, Ordering::Release);
+    }
+
+    #[test]
+    fn empty_history_keys_complete_private_handshakes_and_do_not_block_optimize() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
+        let process = FakeProcess::with_stdout_reader(
+            writes.clone(),
+            Box::new(WriteGatedReader::new(
+                writes.clone(),
+                release.clone(),
+                vec![
+                    (
+                        1,
+                        core_status("history-path-empty", "history_path_configured"),
+                    ),
+                    (
+                        2,
+                        core_status("history-keys-empty", "history_keys_configured"),
+                    ),
+                    (
+                        3,
+                        core_status("history-policy-empty", "history_policy_configured"),
+                    ),
+                ],
+            )),
+        );
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![process]),
+            Arc::new(NamedRecordingEmitter(events.clone())),
+        );
+        let history_path = std::env::temp_dir().join("history").join("history.sqlite3");
+        let path = ValidatedCommand {
+            request_id: "history-path-empty".to_string(),
+            ..configure_history_path_command(&history_path).unwrap()
+        };
+        let keys = ValidatedCommand {
+            request_id: "history-keys-empty".to_string(),
+            ..configure_history_keys_command(Default::default()).unwrap()
+        };
+        let policy = ValidatedCommand {
+            request_id: "history-policy-empty".to_string(),
+            ..configure_history_policy_command(true, false, "secrets").unwrap()
+        };
+
+        let result = sidecar.send_sequence(vec![
+            path,
+            keys,
+            policy,
+            optimize_command("optimize-empty-history-keys"),
+        ]);
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(
+            written_command_types(&writes),
+            [
+                "configure_history_path",
+                "configure_history_keys",
+                "configure_history_policy",
+                "optimize",
+            ]
+        );
+        assert!(events.lock().unwrap().is_empty());
         release.store(true, Ordering::Release);
     }
 

@@ -39,6 +39,7 @@ BUILTIN_CAPABILITY_DESCRIPTORS = {
         display_name="History",
         version="1",
         kind="storage",
+        # Keep read/write capabilities distinct: registry write gates depend on these names.
         permissions=("storage_read", "storage_write"),
         operations=(
             "save",
@@ -266,19 +267,25 @@ def _validate_capability(
     builtin: PluginDescriptor,
 ) -> PluginDescriptor:
     descriptor = getattr(instance, "descriptor", None)
-    if not isinstance(descriptor, PluginDescriptor):
+    canonical_fields = (
+        "plugin_id",
+        "display_name",
+        "version",
+        "kind",
+        "permissions",
+        "operations",
+        "public_operations",
+    )
+    if descriptor is None or any(
+        getattr(descriptor, field, None) != getattr(builtin, field)
+        for field in canonical_fields
+    ):
         raise ValueError("plugin unavailable")
-    if descriptor.plugin_id != expected_id or descriptor.kind != builtin.kind:
-        raise ValueError("plugin unavailable")
-    if descriptor.operations != builtin.operations:
-        raise ValueError("plugin unavailable")
-    if descriptor.public_operations != builtin.public_operations:
-        raise ValueError("plugin unavailable")
-    if descriptor.permissions != builtin.permissions:
+    if descriptor.plugin_id != expected_id:
         raise ValueError("plugin unavailable")
     if not callable(getattr(instance, "invoke", None)):
         raise ValueError("plugin unavailable")
-    return descriptor
+    return builtin
 
 
 @dataclass(frozen=True)

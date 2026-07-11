@@ -1,14 +1,16 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::config_store::{AppConfig, ConfigStore};
 use crate::desktop::{DesktopState, DesktopStatus};
 use crate::history_key_store::HistoryKeyStore;
 use crate::runtime_commands::{
-    configure_history_keys_command, configure_history_policy_command, configure_plugin_command,
-    configure_provider_command, validate_command, CommandKind, ValidatedCommand,
+    configure_history_keys_command, configure_history_path_command,
+    configure_history_policy_command, configure_plugin_command, configure_provider_command,
+    validate_command, CommandKind, ValidatedCommand,
 };
 use crate::secret_store::{CredentialBackend, SecretStatus, SecretStore};
 use crate::sidecar::{EventEmitter, RuntimeController};
@@ -149,6 +151,7 @@ pub async fn delete_provider_secret(
 
 #[tauri::command]
 pub async fn runtime_optimize(
+    app: AppHandle,
     state: State<'_, TauriRuntimeState>,
     config_store: State<'_, ConfigStore>,
     secret_store: State<'_, SecretStore>,
@@ -156,11 +159,17 @@ pub async fn runtime_optimize(
     command: Value,
 ) -> Result<(), String> {
     let command = validate_command(command, CommandKind::Optimize).map_err(str::to_string)?;
+    let history_path = app
+        .path()
+        .app_data_dir()
+        .map(|path| history_database_path(&path))
+        .map_err(|_| "应用数据目录不可用。".to_string())?;
     send_configured_optimize(
         &state.runtime,
         &config_store,
         &secret_store,
         &history_key_store,
+        &history_path,
         command,
     )
 }
@@ -184,12 +193,29 @@ pub async fn runtime_list_plugins(
 
 #[tauri::command]
 pub async fn runtime_plugin_call(
+    app: AppHandle,
     window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
+    config_store: State<'_, ConfigStore>,
+    history_key_store: State<'_, HistoryKeyStore>,
     command: Value,
 ) -> Result<(), String> {
     let command = crate::plugin_commands::validate_authorized_plugin_call(window.label(), command)
         .map_err(str::to_string)?;
+    if command.payload.get("plugin_id").and_then(Value::as_str) == Some("history-sqlite") {
+        let history_path = app
+            .path()
+            .app_data_dir()
+            .map(|path| history_database_path(&path))
+            .map_err(|_| "应用数据目录不可用。".to_string())?;
+        return send_configured_plugin_call(
+            state.runtime(),
+            &config_store,
+            &history_key_store,
+            &history_path,
+            command,
+        );
+    }
     state.runtime().send(command).map_err(str::to_string)
 }
 
@@ -215,6 +241,7 @@ fn send_configured_optimize<B, H>(
     config_store: &ConfigStore,
     secret_store: &SecretStore<B>,
     history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
     command: ValidatedCommand,
 ) -> Result<(), String>
 where
@@ -227,6 +254,7 @@ where
             config_store,
             secret_store,
             history_key_store,
+            history_path,
             command,
         )? {
             Some(commands) => runtime
@@ -239,10 +267,53 @@ where
     })
 }
 
+fn send_configured_plugin_call<H>(
+    runtime: &RuntimeController,
+    config_store: &ConfigStore,
+    history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
+    command: ValidatedCommand,
+) -> Result<(), String>
+where
+    H: CredentialBackend,
+{
+    runtime.with_lifecycle(|runtime, _generation| {
+        let commands = build_configured_plugin_call_sequence(
+            config_store,
+            history_key_store,
+            history_path,
+            command,
+        )?;
+        runtime
+            .send_sequence_unlocked(commands)
+            .map_err(str::to_string)
+    })
+}
+
+fn build_configured_plugin_call_sequence<H>(
+    config_store: &ConfigStore,
+    history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
+    command: ValidatedCommand,
+) -> Result<Vec<ValidatedCommand>, String>
+where
+    H: CredentialBackend,
+{
+    if command.payload.get("plugin_id").and_then(Value::as_str) != Some("history-sqlite") {
+        return Ok(vec![command]);
+    }
+    let persisted = config_store.load().map_err(|error| error.to_string())?;
+    let mut commands =
+        build_history_config_sequence(&persisted, history_key_store, history_path, false)?;
+    commands.push(command);
+    Ok(commands)
+}
+
 fn build_configured_optimize_sequence<B, H>(
     config_store: &ConfigStore,
     secret_store: &SecretStore<B>,
     history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
     command: ValidatedCommand,
 ) -> Result<Option<Vec<ValidatedCommand>>, String>
 where
@@ -258,7 +329,7 @@ where
         .unwrap_or(&persisted.provider)
         .trim()
         .to_ascii_lowercase();
-    let mut commands = Vec::with_capacity(6);
+    let mut commands = Vec::with_capacity(7);
     if provider_id != "mock" {
         let secret = secret_store
             .read(&provider_id)
@@ -292,24 +363,44 @@ where
             .any(|configured| configured == plugin_id);
         commands.push(configure_plugin_command(plugin_id, enabled).map_err(str::to_string)?);
     }
-    let history_keys = if persisted.history_enabled {
-        history_key_store
-            .active_keys()
-            .map_err(|error| error.to_string())?
-    } else {
-        std::collections::BTreeMap::new()
+    commands.extend(build_history_config_sequence(
+        &persisted,
+        history_key_store,
+        history_path,
+        true,
+    )?);
+    commands.push(command);
+    Ok(Some(commands))
+}
+
+fn build_history_config_sequence<H>(
+    persisted: &AppConfig,
+    history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
+    allow_backend_failure: bool,
+) -> Result<Vec<ValidatedCommand>, String>
+where
+    H: CredentialBackend,
+{
+    let history_keys = match history_key_store.active_keys() {
+        Ok(keys) => keys,
+        Err(_error) if allow_backend_failure => std::collections::BTreeMap::new(),
+        Err(error) => return Err(error.to_string()),
     };
-    commands.push(configure_history_keys_command(history_keys).map_err(str::to_string)?);
-    commands.push(
+    Ok(vec![
+        configure_history_path_command(history_path).map_err(str::to_string)?,
+        configure_history_keys_command(history_keys).map_err(str::to_string)?,
         configure_history_policy_command(
             persisted.history_enabled,
             persisted.privacy_mode,
             &persisted.history_redaction,
         )
         .map_err(str::to_string)?,
-    );
-    commands.push(command);
-    Ok(Some(commands))
+    ])
+}
+
+pub(crate) fn history_database_path(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join("history").join("history.sqlite3")
 }
 
 fn with_prepared_history_transition<B, T>(
@@ -338,7 +429,7 @@ mod tests {
     use serde_json::json;
 
     use crate::config_store::{AppConfig, ConfigStore};
-    use crate::history_key_store::HistoryKeyStore;
+    use crate::history_key_store::{HistoryKeyStore, HISTORY_KEY_STORE_ERROR_MESSAGE};
     use crate::runtime_commands::{CommandKind, ValidatedCommand};
     use crate::secret_store::{CredentialBackend, SecretStore};
     use crate::sidecar::{EventEmitter, RuntimeController};
@@ -438,11 +529,13 @@ mod tests {
         };
 
         let history_key_store = HistoryKeyStore::new(EmptyCredentialBackend);
+        let history_path = super::history_database_path(&directory);
         super::send_configured_optimize(
             &runtime,
             &config_store,
             &secret_store,
             &history_key_store,
+            &history_path,
             command,
         )
         .unwrap();
@@ -491,6 +584,7 @@ mod tests {
             &config_store,
             &secret_store,
             &history_store,
+            &super::history_database_path(&directory),
             command,
         )
         .unwrap()
@@ -505,6 +599,7 @@ mod tests {
                 CommandKind::ConfigureProvider,
                 CommandKind::ConfigurePlugin,
                 CommandKind::ConfigurePlugin,
+                CommandKind::ConfigureHistoryPath,
                 CommandKind::ConfigureHistoryKeys,
                 CommandKind::ConfigureHistoryPolicy,
                 CommandKind::Optimize,
@@ -524,10 +619,17 @@ mod tests {
                 "enabled": false
             })
         );
-        assert!(sequence[3].payload["keys"]["v1"].is_string());
-        assert_eq!(sequence[4].payload["history_enabled"], true);
-        assert_eq!(sequence[4].payload["privacy_mode"], true);
-        assert_eq!(sequence[4].payload["history_redaction"], "none");
+        assert_eq!(sequence[3].kind, CommandKind::ConfigureHistoryPath);
+        assert_eq!(
+            sequence[3].payload["database_path"],
+            super::history_database_path(&directory)
+                .to_string_lossy()
+                .as_ref()
+        );
+        assert!(sequence[4].payload["keys"]["v1"].is_string());
+        assert_eq!(sequence[5].payload["history_enabled"], true);
+        assert_eq!(sequence[5].payload["privacy_mode"], true);
+        assert_eq!(sequence[5].payload["history_redaction"], "none");
         assert!(!sequence.iter().any(|command| {
             command
                 .payload
@@ -540,7 +642,143 @@ mod tests {
     }
 
     #[test]
-    fn disabled_history_injects_safe_empty_state_without_creating_a_key() {
+    fn fresh_history_calls_sync_private_path_keys_and_policy_before_the_public_call() {
+        let directory = std::env::temp_dir().join(format!(
+            "reflex-next-command-history-cold-start-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        let config_store = ConfigStore::new(PathBuf::from(&directory));
+        let mut config = AppConfig::default();
+        config.privacy_mode = true;
+        config_store.save(&config).unwrap();
+        let backend = MemoryCredentialBackend::default();
+        let history_store = HistoryKeyStore::new(backend);
+        history_store.ensure_active().unwrap();
+        let history_path = super::history_database_path(&directory);
+
+        for operation in ["list", "detail", "rate"] {
+            let command = ValidatedCommand {
+                request_id: format!("history-cold-{operation}"),
+                kind: CommandKind::PluginCall,
+                payload: json!({
+                    "plugin_id": "history-sqlite",
+                    "operation": operation,
+                    "input": {}
+                }),
+            };
+
+            let sequence = super::build_configured_plugin_call_sequence(
+                &config_store,
+                &history_store,
+                &history_path,
+                command,
+            )
+            .unwrap();
+
+            assert_eq!(
+                sequence
+                    .iter()
+                    .map(|command| command.kind)
+                    .collect::<Vec<_>>(),
+                [
+                    CommandKind::ConfigureHistoryPath,
+                    CommandKind::ConfigureHistoryKeys,
+                    CommandKind::ConfigureHistoryPolicy,
+                    CommandKind::PluginCall,
+                ]
+            );
+            assert_eq!(
+                sequence[0].payload["database_path"],
+                history_path.to_string_lossy().as_ref()
+            );
+            assert!(sequence[1].payload["keys"]["v1"].is_string());
+            assert_eq!(sequence[2].payload["history_enabled"], false);
+            assert_eq!(sequence[2].payload["privacy_mode"], true);
+            assert_eq!(sequence[3].payload["operation"], operation);
+        }
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn history_call_backend_failure_is_safe_and_produces_no_public_sequence() {
+        let directory = std::env::temp_dir().join(format!(
+            "reflex-next-command-history-call-failure-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        let config_store = ConfigStore::new(PathBuf::from(&directory));
+        let history_store = HistoryKeyStore::new(FailingCredentialBackend);
+        let command = ValidatedCommand {
+            request_id: "history-call-failure".to_string(),
+            kind: CommandKind::PluginCall,
+            payload: json!({
+                "plugin_id": "history-sqlite",
+                "operation": "list",
+                "input": {}
+            }),
+        };
+
+        let error = super::build_configured_plugin_call_sequence(
+            &config_store,
+            &history_store,
+            &super::history_database_path(&directory),
+            command,
+        )
+        .unwrap_err();
+
+        assert_eq!(error, HISTORY_KEY_STORE_ERROR_MESSAGE);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ordinary_plugin_calls_do_not_read_history_keys_or_add_history_configuration() {
+        let directory = std::env::temp_dir().join(format!(
+            "reflex-next-command-ordinary-plugin-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        let config_store = ConfigStore::new(PathBuf::from(&directory));
+        let history_store = HistoryKeyStore::new(FailingCredentialBackend);
+
+        for plugin_id in ["translator", "markdown-preview"] {
+            let command = ValidatedCommand {
+                request_id: format!("ordinary-{plugin_id}"),
+                kind: CommandKind::PluginCall,
+                payload: json!({
+                    "plugin_id": plugin_id,
+                    "operation": if plugin_id == "translator" { "translate" } else { "render" },
+                    "input": {}
+                }),
+            };
+            let sequence = super::build_configured_plugin_call_sequence(
+                &config_store,
+                &history_store,
+                &super::history_database_path(&directory),
+                command.clone(),
+            )
+            .unwrap();
+
+            assert_eq!(sequence, [command]);
+        }
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn app_data_history_path_is_fixed_and_does_not_create_storage() {
+        let app_data = std::env::temp_dir().join(format!(
+            "reflex-next-app-data-history-{}",
+            std::process::id()
+        ));
+
+        let path = super::history_database_path(&app_data);
+
+        assert_eq!(path, app_data.join("history").join("history.sqlite3"));
+        assert!(!app_data.exists());
+    }
+
+    #[test]
+    fn disabled_history_preserves_existing_keys_for_read_only_management() {
         let directory = std::env::temp_dir().join(format!(
             "reflex-next-command-disabled-history-{}",
             std::process::id()
@@ -553,6 +791,7 @@ mod tests {
             .save("minimax", "history-fixture-provider-key")
             .unwrap();
         let history_store = HistoryKeyStore::new(backend);
+        history_store.ensure_active().unwrap();
         let command = ValidatedCommand {
             request_id: "req-disabled-history".to_string(),
             kind: CommandKind::Optimize,
@@ -563,20 +802,21 @@ mod tests {
             &config_store,
             &secret_store,
             &history_store,
+            &super::history_database_path(&directory),
             command,
         )
         .unwrap()
         .unwrap();
 
-        assert_eq!(sequence[3].kind, CommandKind::ConfigureHistoryKeys);
-        assert_eq!(sequence[3].payload["keys"], json!({}));
-        assert_eq!(sequence[4].payload["history_enabled"], false);
-        assert!(!history_store.status().unwrap().configured);
+        assert_eq!(sequence[4].kind, CommandKind::ConfigureHistoryKeys);
+        assert!(sequence[4].payload["keys"]["v1"].is_string());
+        assert_eq!(sequence[5].payload["history_enabled"], false);
+        assert!(history_store.status().unwrap().configured);
         let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]
-    fn disabled_history_does_not_touch_a_failing_history_backend() {
+    fn disabled_history_backend_failure_falls_back_to_empty_keys_and_keeps_optimize() {
         let directory = std::env::temp_dir().join(format!(
             "reflex-next-command-disabled-history-failure-{}",
             std::process::id()
@@ -599,13 +839,58 @@ mod tests {
             &config_store,
             &secret_store,
             &history_store,
+            &super::history_database_path(&directory),
             command,
         )
         .unwrap()
         .unwrap();
 
-        assert_eq!(sequence[3].payload["keys"], json!({}));
-        assert_eq!(sequence[4].payload["history_enabled"], false);
+        assert_eq!(sequence[4].payload["keys"], json!({}));
+        assert_eq!(sequence[5].payload["history_enabled"], false);
+        assert_eq!(sequence.last().unwrap().kind, CommandKind::Optimize);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn enabled_history_backend_failure_falls_back_to_empty_keys_and_keeps_optimize() {
+        let directory = std::env::temp_dir().join(format!(
+            "reflex-next-command-enabled-history-failure-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        let config_store = ConfigStore::new(PathBuf::from(&directory));
+        let mut config = AppConfig::default();
+        config.history_enabled = true;
+        config_store.save(&config).unwrap();
+        let provider_backend = MemoryCredentialBackend::default();
+        let secret_store = SecretStore::new(provider_backend);
+        secret_store
+            .save("minimax", "history-fixture-provider-key")
+            .unwrap();
+        let history_store = HistoryKeyStore::new(FailingCredentialBackend);
+        let command = ValidatedCommand {
+            request_id: "req-enabled-history-failure".to_string(),
+            kind: CommandKind::Optimize,
+            payload: json!({ "text": "待优化内容", "provider": "minimax" }),
+        };
+
+        let sequence = super::build_configured_optimize_sequence(
+            &config_store,
+            &secret_store,
+            &history_store,
+            &super::history_database_path(&directory),
+            command,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(sequence[0].kind, CommandKind::ConfigureProvider);
+        assert_eq!(sequence[3].kind, CommandKind::ConfigureHistoryPath);
+        assert_eq!(sequence[4].kind, CommandKind::ConfigureHistoryKeys);
+        assert_eq!(sequence[4].payload["keys"], json!({}));
+        assert_eq!(sequence[5].kind, CommandKind::ConfigureHistoryPolicy);
+        assert_eq!(sequence[5].payload["history_enabled"], true);
+        assert_eq!(sequence.last().unwrap().kind, CommandKind::Optimize);
         let _ = std::fs::remove_dir_all(directory);
     }
 

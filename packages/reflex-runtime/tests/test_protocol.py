@@ -86,6 +86,10 @@ def test_parse_private_provider_configuration_command():
                 "history_redaction": "secrets",
             },
         ),
+        (
+            "configure_history_path",
+            {"database_path": "D:\\AppData\\Reflex Next\\history\\history.sqlite3"},
+        ),
     ],
 )
 def test_parse_runtime_capability_commands(command_type, payload):
@@ -130,6 +134,44 @@ def test_history_key_command_repr_and_str_do_not_expose_private_payload():
     assert private_value not in repr(parsed)
     assert private_value not in str(parsed)
     assert "payload=<redacted>" in repr(parsed)
+
+
+@pytest.mark.parametrize("command_type", ["configure_history_path", "configure_history_policy"])
+def test_private_history_path_and_policy_repr_and_str_hide_the_payload(command_type):
+    payload = (
+        {"database_path": "D:\\AppData\\Reflex Next\\history\\history.sqlite3"}
+        if command_type == "configure_history_path"
+        else {
+            "history_enabled": True,
+            "privacy_mode": False,
+            "history_redaction": "none",
+        }
+    )
+    parsed = parse_command(command(command_type, payload))
+
+    rendered = f"{parsed!r} {parsed!s}"
+
+    assert repr(payload) not in rendered
+    assert "history.sqlite3" not in rendered
+    assert "history_enabled" not in rendered
+    assert "payload=<redacted>" in repr(parsed)
+
+
+@pytest.mark.parametrize(
+    "database_path",
+    [
+        "history/history.sqlite3",
+        "D:\\AppData\\Reflex Next\\history.sqlite3",
+        "D:\\AppData\\Reflex Next\\other\\history.sqlite3",
+        "D:\\AppData\\Reflex Next\\history\\other.sqlite3",
+        "",
+    ],
+)
+def test_history_path_requires_an_absolute_fixed_history_database_path(database_path):
+    with pytest.raises(ProtocolError):
+        parse_command(
+            command("configure_history_path", {"database_path": database_path})
+        )
 
 
 @pytest.mark.parametrize(

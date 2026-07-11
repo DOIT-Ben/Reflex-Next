@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from reflex_core import OperationCancelled
+from reflex_core import CancellationToken, OperationCancelled
+import reflex_runtime.cli as runtime_cli
 from reflex_runtime.capability_registry import CapabilityRegistry
 from reflex_runtime.cli import OsFdAdapter, _ProtocolStreams, _isolate_process_output
 from reflex_runtime.context import RuntimeContext
@@ -226,6 +227,44 @@ class CancellingFixtureCapability(FixtureCapability):
         yield {"status": "chunk", "data": {"text": "first"}}
         cancellation.cancel()
         cancellation.raise_if_cancelled()
+
+
+_MISSING_CODE = object()
+
+
+def _unreadable_dynamic_failure(class_marker, private_body, code=_MISSING_CODE):
+    def refuse_str(self):
+        raise AssertionError("Runtime must not stringify plugin exceptions")
+
+    def refuse_repr(self):
+        raise AssertionError("Runtime must not repr plugin exceptions")
+
+    attributes = {
+        "__str__": refuse_str,
+        "__repr__": refuse_repr,
+    }
+    if code is not _MISSING_CODE:
+        attributes["code"] = code
+    error_type = type(f"Private{class_marker}", (RuntimeError,), attributes)
+    error = error_type()
+    error.private_body = private_body
+    return error
+
+
+class FailingHistoryCapability(FixtureHistoryCapability):
+    def __init__(self, error):
+        self.error = error
+
+    def invoke(self, operation, payload, services, cancellation):
+        raise self.error
+
+
+class FailingFixtureCapability(FixtureCapability):
+    def __init__(self, error):
+        self.error = error
+
+    def invoke(self, operation, payload, services, cancellation):
+        raise self.error
 
 
 def _runtime_with_capability(capability, output, **kwargs):
@@ -715,18 +754,24 @@ def test_thread_start_failure_rolls_back_request_id_and_close_skips_join(
 ):
     from io import StringIO
 
+    private_marker = "ThreadStartSensitiveMarker"
+    private_body = "thread-start-private-body"
+    failure = _unreadable_dynamic_failure(private_marker, private_body)
+
     class FailingThread:
         def start(self):
-            raise RuntimeError("fixture thread start failure")
+            raise failure
 
         def join(self, timeout=None):
             raise AssertionError("unstarted thread must not be joined")
 
     output = StringIO()
+    diagnostics = StringIO()
     capability = FixtureCapability()
     runtime = _runtime_with_capability(
         capability,
         output,
+        stderr=diagnostics,
         thread_factory=lambda **kwargs: FailingThread(),
     )
     payload = (
@@ -766,6 +811,11 @@ def test_thread_start_failure_rolls_back_request_id_and_close_skips_join(
         event.get("event", {}).get("data", {}).get("message") == "pong"
         for event in events
     )
+    assert diagnostics.getvalue() == (
+        "thread_start_failed request_id=start-failed category=thread_start_failed\n"
+    )
+    assert private_marker not in diagnostics.getvalue()
+    assert private_body not in diagnostics.getvalue()
 
 
 def test_runtime_plugin_call_uses_independent_plugin_event_contract():
@@ -808,6 +858,187 @@ def test_runtime_plugin_call_uses_independent_plugin_event_contract():
     assert events[-1]["data"] == {"text": "FIXTURE"}
     assert all(event["type"] == "plugin_event" for event in events)
     assert all("event" not in event for event in events)
+
+
+@pytest.mark.parametrize(
+    ("operation", "error_code"),
+    [
+        ("scan", "history_operation_unavailable"),
+        ("rate", "history_storage_busy"),
+        ("detail", "history_not_found"),
+    ],
+)
+def test_runtime_forwards_only_safe_structured_history_plugin_error_codes(
+    operation, error_code
+):
+    from io import StringIO
+
+    private_body = f"private-{operation}-exception-body"
+    private_payload = f"private-{operation}-payload"
+    output = StringIO()
+    diagnostics = StringIO()
+    capability = FailingHistoryCapability(
+        _unreadable_dynamic_failure(
+            f"Structured{operation.title()}Marker", private_body, error_code
+        )
+    )
+    registry = CapabilityRegistry([(capability.descriptor, capability)])
+    registry.configure_history_keys({"v1": "11" * 32})
+    runtime = RuntimeContext(
+        stdout=output,
+        stderr=diagnostics,
+        development=False,
+        capability_registry=registry,
+        capability_descriptors=(capability.descriptor,),
+    )
+
+    runtime.handle(
+        parse_command(
+            {
+                "version": 1,
+                "request_id": f"history-error-{operation}",
+                "type": "plugin_call",
+                "payload": {
+                    "plugin_id": "history-sqlite",
+                    "operation": operation,
+                    "input": {"text": private_payload},
+                },
+            }
+        )
+    )
+    deadline = time.monotonic() + 2
+    while runtime.has_active_tasks() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    visible = f"{output.getvalue()}\n{diagnostics.getvalue()}"
+
+    assert [event["status"] for event in events] == ["started", "error"]
+    assert events[-1]["code"] == error_code
+    assert private_body not in visible
+    assert private_payload not in visible
+
+
+@pytest.mark.parametrize(
+    "code",
+    [_MISSING_CODE, "unsafe error code", "x" * 65],
+    ids=["missing", "invalid-characters", "too-long"],
+)
+def test_runtime_falls_back_for_untrusted_plugin_errors_without_reading_content(code):
+    from io import StringIO
+
+    private_body = "private-plugin-exception-body"
+    private_payload = "private-plugin-payload"
+    private_marker = "PluginSensitiveMarker"
+    output = StringIO()
+    diagnostics = StringIO()
+    capability = FailingFixtureCapability(
+        _unreadable_dynamic_failure(private_marker, private_body, code)
+    )
+    runtime = _runtime_with_capability(
+        capability, output, stderr=diagnostics, services={"fixture_service": True}
+    )
+
+    runtime.handle(
+        parse_command(
+            {
+                "version": 1,
+                "request_id": "untrusted-plugin-error",
+                "type": "plugin_call",
+                "payload": {
+                    "plugin_id": "translator",
+                    "operation": "translate",
+                    "input": {"text": private_payload},
+                },
+            }
+        )
+    )
+    deadline = time.monotonic() + 2
+    while runtime.has_active_tasks() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    visible = f"{output.getvalue()}\n{diagnostics.getvalue()}"
+
+    assert [event["status"] for event in events] == ["started", "error"]
+    assert events[-1]["code"] == "plugin_failed"
+    assert diagnostics.getvalue() == (
+        "plugin_failed request_id=untrusted-plugin-error "
+        "category=untrusted_plugin_exception\n"
+    )
+    assert private_marker not in visible
+    assert private_body not in visible
+    assert private_payload not in visible
+
+
+def test_provider_fallback_diagnostic_uses_only_a_fixed_category():
+    from io import StringIO
+
+    private_marker = "ProviderSensitiveMarker"
+    private_body = "provider-private-body"
+    output = StringIO()
+    diagnostics = StringIO()
+    runtime = RuntimeContext(
+        stdout=output,
+        stderr=diagnostics,
+        development=False,
+    )
+    failure = _unreadable_dynamic_failure(private_marker, private_body)
+
+    def fail_provider_resolution(_request):
+        raise failure
+
+    runtime._resolve_provider = fail_provider_resolution
+    runtime.handle(parse_command(optimize_command("provider-fallback", "fixture")))
+    deadline = time.monotonic() + 2
+    while runtime.has_active_tasks() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    visible = f"{output.getvalue()}\n{diagnostics.getvalue()}"
+
+    assert json.loads(output.getvalue().splitlines()[-1])["event"]["data"]["code"] == "runtime_error"
+    assert diagnostics.getvalue() == (
+        "runtime_error request_id=provider-fallback "
+        "category=untrusted_provider_exception\n"
+    )
+    assert private_marker not in visible
+    assert private_body not in visible
+
+
+def test_cli_generic_fallback_diagnostic_uses_only_a_fixed_category(monkeypatch):
+    from io import StringIO
+
+    private_marker = "CliSensitiveMarker"
+    private_body = "cli-private-body"
+    failure = _unreadable_dynamic_failure(private_marker, private_body)
+
+    class FixtureStreams:
+        def __init__(self):
+            self.protocol = StringIO()
+            self.diagnostic = StringIO()
+
+        def close(self):
+            return None
+
+    streams = FixtureStreams()
+    monkeypatch.setattr(runtime_cli, "_isolate_process_output", lambda _adapter: streams)
+    monkeypatch.setattr(RuntimeContext, "handle", lambda self, command: (_ for _ in ()).throw(failure))
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        StringIO(
+            json.dumps(
+                {"version": 1, "request_id": "cli-fallback", "type": "ping", "payload": {}}
+            )
+            + "\n"
+        ),
+    )
+
+    assert runtime_cli.main(object()) == 0
+    visible = f"{streams.protocol.getvalue()}\n{streams.diagnostic.getvalue()}"
+
+    assert streams.diagnostic.getvalue() == (
+        "runtime_error request_id=cli-fallback category=runtime_exception\n"
+    )
+    assert private_marker not in visible
+    assert private_body not in visible
 
 
 def test_runtime_wraps_streamed_plugin_statuses_in_its_own_envelopes():
@@ -977,6 +1208,99 @@ def test_context_list_tracks_loaded_history_policy_state_changes():
 
     assert listed["state"] == "private"
     assert "error_code" not in listed
+
+
+def test_context_configures_private_history_path_without_touching_filesystem(tmp_path):
+    from io import StringIO
+
+    output = StringIO()
+    observed = {}
+
+    class RecordingHistory(FixtureHistoryCapability):
+        def invoke(self, operation, payload, services, cancellation):
+            observed["services"] = services
+            return super().invoke(operation, payload, services, cancellation)
+
+    plugin = RecordingHistory()
+    descriptor = plugin.descriptor
+    registry = CapabilityRegistry([(descriptor, plugin)])
+    runtime = RuntimeContext(
+        stdout=output,
+        stderr=StringIO(),
+        development=False,
+        capability_registry=registry,
+        capability_descriptors=(descriptor,),
+    )
+    database_path = tmp_path / "app-data" / "history" / "history.sqlite3"
+
+    runtime.handle(
+        parse_command(
+            {
+                "version": 1,
+                "request_id": "history-path-private",
+                "type": "configure_history_path",
+                "payload": {"database_path": str(database_path)},
+            }
+        )
+    )
+    registry.configure_history_keys({"v1": "11" * 32})
+    registry.invoke_public(
+        "history-sqlite", "list", {}, {}, CancellationToken()
+    )
+
+    assert observed["services"]["history"]["database_path"] == database_path
+    assert not database_path.parent.exists()
+    event = json.loads(output.getvalue().splitlines()[-1])
+    assert event["event"]["data"]["message"] == "history_path_configured"
+    assert str(database_path) not in output.getvalue()
+
+
+def test_disabled_history_with_keys_is_listed_as_read_only():
+    from io import StringIO
+
+    output = StringIO()
+    plugin = FixtureHistoryCapability()
+    descriptor = plugin.descriptor
+    registry = CapabilityRegistry(
+        [(descriptor, plugin)], known_descriptors=(descriptor,)
+    )
+    runtime = RuntimeContext(
+        stdout=output,
+        stderr=StringIO(),
+        development=False,
+        capability_registry=registry,
+        capability_descriptors=(descriptor,),
+    )
+    for request_id, command_type, payload in (
+        (
+            "disabled-history-keys",
+            "configure_history_keys",
+            {"keys": {"v1": "11" * 32}},
+        ),
+        (
+            "disabled-history-policy",
+            "configure_history_policy",
+            {
+                "history_enabled": False,
+                "privacy_mode": False,
+                "history_redaction": "secrets",
+            },
+        ),
+        ("disabled-history-list", "list_plugins", {}),
+    ):
+        runtime.handle(
+            parse_command(
+                {
+                    "version": 1,
+                    "request_id": request_id,
+                    "type": command_type,
+                    "payload": payload,
+                }
+            )
+        )
+
+    listed = json.loads(output.getvalue().splitlines()[-1])["plugins"][0]
+    assert listed["state"] == "read_only"
 
 
 def test_plugin_import_print_dunder_stdout_and_fd_write_do_not_pollute_protocol():

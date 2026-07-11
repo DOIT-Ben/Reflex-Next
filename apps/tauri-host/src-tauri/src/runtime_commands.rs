@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::{Component, Path};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
@@ -19,6 +20,7 @@ pub enum CommandKind {
     ConfigurePlugin,
     ConfigureHistoryKeys,
     ConfigureHistoryPolicy,
+    ConfigureHistoryPath,
     PluginAdminCall,
 }
 
@@ -35,6 +37,7 @@ impl CommandKind {
             Self::ConfigurePlugin => "configure_plugin",
             Self::ConfigureHistoryKeys => "configure_history_keys",
             Self::ConfigureHistoryPolicy => "configure_history_policy",
+            Self::ConfigureHistoryPath => "configure_history_path",
             Self::PluginAdminCall => "plugin_admin_call",
         }
     }
@@ -51,6 +54,7 @@ impl CommandKind {
             "configure_plugin" => Some(Self::ConfigurePlugin),
             "configure_history_keys" => Some(Self::ConfigureHistoryKeys),
             "configure_history_policy" => Some(Self::ConfigureHistoryPolicy),
+            "configure_history_path" => Some(Self::ConfigureHistoryPath),
             "plugin_admin_call" => Some(Self::PluginAdminCall),
             _ => None,
         }
@@ -163,6 +167,29 @@ pub(crate) fn configure_history_policy_command(
             PRIVATE_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ),
         kind: CommandKind::ConfigureHistoryPolicy,
+        payload,
+    })
+}
+
+pub(crate) fn configure_history_path_command(
+    database_path: &Path,
+) -> Result<ValidatedCommand, &'static str> {
+    let Some(database_path) = database_path.to_str() else {
+        return Err(COMMAND_INVALID_MESSAGE);
+    };
+    if !is_history_database_path(database_path) {
+        return Err(COMMAND_INVALID_MESSAGE);
+    }
+    let payload = serde_json::json!({ "database_path": database_path });
+    if !validate_payload(CommandKind::ConfigureHistoryPath, &payload) {
+        return Err(COMMAND_INVALID_MESSAGE);
+    }
+    Ok(ValidatedCommand {
+        request_id: format!(
+            "host-history-path-{}",
+            PRIVATE_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ),
+        kind: CommandKind::ConfigureHistoryPath,
         payload,
     })
 }
@@ -282,6 +309,13 @@ fn validate_payload(kind: CommandKind, payload: &Value) -> bool {
                     Some("secrets" | "none")
                 )
         }
+        CommandKind::ConfigureHistoryPath => {
+            has_exact_fields(payload, &["database_path"])
+                && payload
+                    .get("database_path")
+                    .and_then(Value::as_str)
+                    .is_some_and(is_history_database_path)
+        }
     }
 }
 
@@ -324,6 +358,20 @@ fn validate_plugin_call(payload: &serde_json::Map<String, Value>, public: bool) 
 
 fn has_exact_fields(payload: &serde_json::Map<String, Value>, fields: &[&str]) -> bool {
     payload.len() == fields.len() && fields.iter().all(|field| payload.contains_key(*field))
+}
+
+fn is_history_database_path(value: &str) -> bool {
+    let path = Path::new(value);
+    path.is_absolute()
+        && path.file_name().and_then(|name| name.to_str()) == Some("history.sqlite3")
+        && path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            == Some("history")
+        && path
+            .components()
+            .all(|component| !matches!(component, Component::CurDir | Component::ParentDir))
 }
 
 fn contains_private_field(value: &Value) -> bool {
@@ -481,6 +529,37 @@ mod tests {
     }
 
     #[test]
+    fn builds_private_fixed_history_path_without_debug_leakage_or_io() {
+        let root = std::env::temp_dir().join(format!(
+            "reflex-next-history-path-builder-{}",
+            std::process::id()
+        ));
+        let path = root.join("history").join("history.sqlite3");
+
+        let command = super::configure_history_path_command(&path).unwrap();
+
+        assert_eq!(command.kind, CommandKind::ConfigureHistoryPath);
+        assert_eq!(
+            command.payload["database_path"],
+            path.to_string_lossy().as_ref()
+        );
+        assert!(!format!("{command:?}").contains(path.to_string_lossy().as_ref()));
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn history_path_builder_rejects_relative_or_noncanonical_paths() {
+        for path in [
+            std::path::Path::new("history/history.sqlite3"),
+            std::path::Path::new("D:/app-data/history.sqlite3"),
+            std::path::Path::new("D:/app-data/other/history.sqlite3"),
+            std::path::Path::new("D:/app-data/history/other.sqlite3"),
+        ] {
+            assert!(super::configure_history_path_command(path).is_err());
+        }
+    }
+
+    #[test]
     fn private_history_command_builders_reject_unsafe_payload_values() {
         let mut invalid_keys = BTreeMap::new();
         invalid_keys.insert("v0".to_string(), "11".repeat(32));
@@ -516,6 +595,7 @@ mod tests {
                 CommandKind::ConfigureHistoryPolicy,
                 "configure_history_policy",
             ),
+            (CommandKind::ConfigureHistoryPath, "configure_history_path"),
             (CommandKind::PluginAdminCall, "plugin_admin_call"),
         ];
 
@@ -657,6 +737,7 @@ mod tests {
             CommandKind::ConfigurePlugin,
             CommandKind::ConfigureHistoryKeys,
             CommandKind::ConfigureHistoryPolicy,
+            CommandKind::ConfigureHistoryPath,
             CommandKind::PluginAdminCall,
         ] {
             let command = ValidatedCommand {
