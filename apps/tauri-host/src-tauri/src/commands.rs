@@ -11,8 +11,6 @@ use crate::runtime_commands::{
 use crate::secret_store::{CredentialBackend, SecretStatus, SecretStore};
 use crate::sidecar::{EventEmitter, RuntimeController};
 
-const CORE_EVENT_NAME: &str = "reflex://core-event";
-
 pub struct TauriRuntimeState {
     runtime: RuntimeController,
 }
@@ -27,6 +25,10 @@ impl TauriRuntimeState {
     pub fn shutdown(&self) {
         self.runtime.shutdown();
     }
+
+    pub(crate) fn runtime(&self) -> &RuntimeController {
+        &self.runtime
+    }
 }
 
 struct TauriEventEmitter {
@@ -34,8 +36,8 @@ struct TauriEventEmitter {
 }
 
 impl EventEmitter for TauriEventEmitter {
-    fn emit(&self, payload: Value) {
-        let _ = self.app.emit(CORE_EVENT_NAME, payload);
+    fn emit(&self, event_name: &str, payload: Value) {
+        let _ = self.app.emit(event_name, payload);
     }
 }
 
@@ -112,11 +114,11 @@ pub async fn save_provider_secret(
     provider_id: String,
     secret: String,
 ) -> Result<SecretStatus, String> {
-    let status = state
-        .save(&provider_id, &secret)
-        .map_err(|error| error.to_string())?;
-    runtime_state.runtime.shutdown();
-    Ok(status)
+    runtime_state.runtime.replace_provider_credentials(|| {
+        state
+            .save(&provider_id, &secret)
+            .map_err(|error| error.to_string())
+    })
 }
 
 #[tauri::command]
@@ -125,11 +127,11 @@ pub async fn delete_provider_secret(
     runtime_state: State<'_, TauriRuntimeState>,
     provider_id: String,
 ) -> Result<SecretStatus, String> {
-    let status = state
-        .delete(&provider_id)
-        .map_err(|error| error.to_string())?;
-    runtime_state.runtime.shutdown();
-    Ok(status)
+    runtime_state.runtime.replace_provider_credentials(|| {
+        state
+            .delete(&provider_id)
+            .map_err(|error| error.to_string())
+    })
 }
 
 #[tauri::command]
@@ -151,6 +153,34 @@ pub async fn runtime_cancel(
     forward_runtime_command(&state.runtime, command, CommandKind::Cancel)
 }
 
+#[tauri::command]
+pub async fn runtime_list_plugins(
+    state: State<'_, TauriRuntimeState>,
+    command: Value,
+) -> Result<(), String> {
+    let command = validate_command(command, CommandKind::ListPlugins).map_err(str::to_string)?;
+    state.runtime().send(command).map_err(str::to_string)
+}
+
+#[tauri::command]
+pub async fn runtime_plugin_call(
+    window: tauri::WebviewWindow,
+    state: State<'_, TauriRuntimeState>,
+    command: Value,
+) -> Result<(), String> {
+    let command = crate::plugin_commands::validate_authorized_plugin_call(window.label(), command)
+        .map_err(str::to_string)?;
+    state.runtime().send(command).map_err(str::to_string)
+}
+
+#[tauri::command]
+pub async fn runtime_plugin_cancel(
+    state: State<'_, TauriRuntimeState>,
+    command: Value,
+) -> Result<(), String> {
+    forward_runtime_command(state.runtime(), command, CommandKind::Cancel)
+}
+
 fn forward_runtime_command(
     runtime: &RuntimeController,
     command: Value,
@@ -169,6 +199,20 @@ fn send_configured_optimize<B>(
 where
     B: CredentialBackend,
 {
+    runtime.with_lifecycle(|runtime, _generation| {
+        send_configured_optimize_locked(runtime, config_store, secret_store, command)
+    })
+}
+
+fn send_configured_optimize_locked<B>(
+    runtime: &RuntimeController,
+    config_store: &ConfigStore,
+    secret_store: &SecretStore<B>,
+    command: ValidatedCommand,
+) -> Result<(), String>
+where
+    B: CredentialBackend,
+{
     let persisted = config_store.load().map_err(|error| error.to_string())?;
     let provider_id = command
         .payload
@@ -179,15 +223,16 @@ where
         .trim()
         .to_ascii_lowercase();
     if provider_id == "mock" {
-        return runtime.send(command).map_err(str::to_string);
+        return runtime.send_unlocked(command).map_err(str::to_string);
     }
 
     let secret = secret_store
         .read(&provider_id)
         .map_err(|error| error.to_string())?;
     let Some(secret) = secret else {
-        runtime.emit_provider_unconfigured(&command.request_id);
-        return Ok(());
+        return runtime
+            .emit_provider_unconfigured_unlocked(&command.request_id)
+            .map_err(str::to_string);
     };
     let model = command
         .payload
@@ -206,7 +251,7 @@ where
     )
     .map_err(str::to_string)?;
     runtime
-        .send_sequence(vec![configure, command])
+        .send_sequence_unlocked(vec![configure, command])
         .map_err(str::to_string)
 }
 
@@ -241,7 +286,7 @@ mod tests {
     struct RecordingEmitter(Arc<Mutex<Vec<serde_json::Value>>>);
 
     impl EventEmitter for RecordingEmitter {
-        fn emit(&self, payload: serde_json::Value) {
+        fn emit(&self, _event_name: &str, payload: serde_json::Value) {
             self.0.lock().unwrap().push(payload);
         }
     }

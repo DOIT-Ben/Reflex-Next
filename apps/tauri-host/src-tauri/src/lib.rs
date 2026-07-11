@@ -2,6 +2,7 @@ mod clipboard;
 mod commands;
 mod config_store;
 mod desktop;
+mod plugin_commands;
 mod runtime_commands;
 mod secret_store;
 mod sidecar;
@@ -52,7 +53,10 @@ pub fn run() {
             commands::delete_provider_secret,
             commands::runtime_available,
             commands::runtime_optimize,
-            commands::runtime_cancel
+            commands::runtime_cancel,
+            commands::runtime_list_plugins,
+            commands::runtime_plugin_call,
+            commands::runtime_plugin_cancel
         ])
         .build(tauri::generate_context!())
         .expect("error while building Reflex host");
@@ -95,9 +99,20 @@ mod tests {
             "allow-provider-secret-status",
             "allow-save-provider-secret",
             "allow-delete-provider-secret",
+            "allow-runtime-list-plugins",
+            "allow-runtime-plugin-call",
+            "allow-runtime-plugin-cancel",
         ] {
             assert!(permissions.contains(&permission), "missing {permission}");
         }
         assert!(!permissions.contains(&"allow-configure-provider"));
+        for permission in [
+            "allow-configure-plugin",
+            "allow-configure-history-keys",
+            "allow-configure-history-policy",
+            "allow-plugin-admin-call",
+        ] {
+            assert!(!permissions.contains(&permission));
+        }
     }
 }
