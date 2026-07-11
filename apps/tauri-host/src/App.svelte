@@ -83,6 +83,15 @@
     type TranslationTarget
   } from "./domain/translationState";
   import {
+    closeMarkdownPreview,
+    completeMarkdownPreview,
+    createMarkdownPreviewState,
+    failMarkdownPreview,
+    openMarkdownPreview,
+    selectMarkdownPreviewMode,
+    type MarkdownPreviewMode
+  } from "./domain/markdownPreviewState";
+  import {
     listSceneOptions,
     type OptimizeMode,
     type OptimizeStyle,
@@ -138,6 +147,11 @@
     { id: "zh", label: "中文" },
     { id: "en", label: "English" }
   ];
+  const markdownPreviewModes: Array<{ id: MarkdownPreviewMode; label: string }> = [
+    { id: "split", label: "分栏" },
+    { id: "source", label: "源码" },
+    { id: "preview", label: "预览" }
+  ];
 
   let coreBridge: CoreBridge = new DemoCoreBridge();
   let capabilityBridge: CapabilityBridge | null = null;
@@ -154,6 +168,9 @@
   let translation = createTranslationState();
   let translationSourceResult: CurrentResult | null = null;
   let translationCloseButton: HTMLButtonElement | null = null;
+  let markdownPreview = createMarkdownPreviewState();
+  let markdownPreviewRun: AbortController | null = null;
+  let markdownPreviewCloseButton: HTMLButtonElement | null = null;
   let persistedConfig: AppConfig | null = null;
   let secretInput = "";
   let secretStatus: SecretStatus = {
@@ -238,6 +255,7 @@
       stopHistoryReuseListening?.();
       activeRun?.abort();
       translationRun?.abort();
+      markdownPreviewRun?.abort();
     };
   });
 
@@ -250,6 +268,7 @@
   $: inputCount = `${state.inputText.trim().length} 字`;
   $: canGenerate = state.canGenerate && !isGenerating(state.phase);
   $: translatorEnabled = persistedConfig?.enabled_plugins.includes("translator") ?? true;
+  $: markdownPreviewEnabled = persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
 
   function setInput(value: string) {
     state = updateInput(state, value);
@@ -275,6 +294,7 @@
   }
 
   function handleHostAction(action: HostAction) {
+    if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
     if (translation.phase !== "closed") closeTranslationView();
     if (action === "settings") {
       beginSettings();
@@ -284,6 +304,7 @@
   }
 
   function beginAdjust() {
+    if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
     if (translation.phase !== "closed") closeTranslationView();
     state = openAdjust(state);
     draft = { ...(state.adjustDraft ?? state.requestDraft) };
@@ -299,6 +320,7 @@
   }
 
   function beginSettings() {
+    if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
     if (translation.phase !== "closed") closeTranslationView();
     state = openSettings(state);
     settingsDraft = { ...(state.settingsDraft ?? settingsDraft) };
@@ -594,6 +616,59 @@
     showToast("已设为当前结果");
   }
 
+  function openMarkdownPreviewView() {
+    const source = state.currentResult?.output;
+    if (!source?.trim() || !markdownPreviewEnabled) return;
+    closeMoreActions();
+    markdownPreview = openMarkdownPreview(markdownPreview, source);
+    if (markdownPreview.phase !== "closed") {
+      window.setTimeout(() => markdownPreviewCloseButton?.focus());
+      void runMarkdownPreview();
+    }
+  }
+
+  async function runMarkdownPreview() {
+    if (markdownPreview.phase === "closed") return;
+    markdownPreviewRun?.abort();
+    const request = markdownPreview.request;
+    const controller = new AbortController();
+    markdownPreviewRun = controller;
+    const bridge = capabilityBridge;
+    if (!bridge) {
+      markdownPreview = failMarkdownPreview(markdownPreview, request);
+      markdownPreviewRun = null;
+      return;
+    }
+    try {
+      for await (const event of bridge.invoke(
+        "markdown-preview",
+        "preview",
+        { text: markdownPreview.sourceText },
+        { signal: controller.signal, timeoutMs: 20_000 }
+      )) {
+        if (controller.signal.aborted || markdownPreviewRun !== controller) return;
+        if (event.status === "result") {
+          markdownPreview = completeMarkdownPreview(markdownPreview, request, event.data);
+        } else if (event.status === "error" || event.status === "cancelled") {
+          markdownPreview = failMarkdownPreview(markdownPreview, request);
+        }
+      }
+    } catch {
+      if (markdownPreviewRun === controller && !controller.signal.aborted) {
+        markdownPreview = failMarkdownPreview(markdownPreview, request);
+      }
+    } finally {
+      if (markdownPreviewRun === controller) markdownPreviewRun = null;
+    }
+  }
+
+  function closeMarkdownPreviewView(restoreFocus = false) {
+    markdownPreviewRun?.abort();
+    markdownPreviewRun = null;
+    markdownPreview = closeMarkdownPreview(markdownPreview);
+    if (restoreFocus) window.setTimeout(() => moreActionsButton?.focus());
+  }
+
   function toggleMoreActions() {
     moreActionsOpen = !moreActionsOpen;
   }
@@ -765,6 +840,13 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (markdownPreview.phase !== "closed") {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeMarkdownPreviewView(true);
+      }
+      return;
+    }
     if (translation.phase !== "closed") {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -947,7 +1029,11 @@
                   disabled={!translatorEnabled || !state.currentResult?.output}
                   on:click={openTranslationView}
                 >翻译</button>
-                <button role="menuitem" disabled>Markdown 预览</button>
+                <button
+                  role="menuitem"
+                  disabled={!markdownPreviewEnabled || !state.currentResult?.output}
+                  on:click={openMarkdownPreviewView}
+                >Markdown 预览</button>
                 <div class="rating-menu" aria-label="评分">
                   <span>评分</span>
                   <div>
@@ -1097,6 +1183,57 @@
               <button class="outline" type="button" on:click={copyTranslation}>复制译文</button>
               <button class="primary small" type="button" on:click={useTranslationAsCurrentResult}>作为当前结果</button>
             {/if}
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if markdownPreview.phase !== "closed"}
+      <div class="markdown-layer" role="presentation">
+        <div class="markdown-dialog" role="dialog" aria-modal="true" aria-label="Markdown 预览">
+          <div class="markdown-head">
+            <h2>Markdown 预览</h2>
+            <button
+              class="icon-button"
+              aria-label="关闭 Markdown 预览"
+              bind:this={markdownPreviewCloseButton}
+              on:click={() => closeMarkdownPreviewView(true)}
+            >×</button>
+          </div>
+          <div class="markdown-toolbar">
+            <div class="markdown-segments" role="group" aria-label="预览方式">
+              {#each markdownPreviewModes as item}
+                <button
+                  type="button"
+                  class:active={markdownPreview.mode === item.id}
+                  aria-pressed={markdownPreview.mode === item.id}
+                  on:click={() => markdownPreview = selectMarkdownPreviewMode(markdownPreview, item.id)}
+                >{item.label}</button>
+              {/each}
+            </div>
+            <button class="outline" type="button" on:click={() => writeClipboardValue(markdownPreview.sourceText, "✓ 源码已复制")}>复制源码</button>
+          </div>
+          <div class:source-only={markdownPreview.mode === "source"} class:preview-only={markdownPreview.mode === "preview"} class="markdown-content">
+            <section class="markdown-source" aria-label="Markdown 源码">
+              <h3>源码</h3>
+              <pre>{markdownPreview.sourceText}</pre>
+            </section>
+            <section class="markdown-rendered" aria-label="渲染预览" aria-live="polite">
+              <h3>预览</h3>
+              {#if markdownPreview.phase === "loading"}
+                <p class="markdown-message">正在渲染…</p>
+              {:else if markdownPreview.phase === "error"}
+                <p class="markdown-message error">{markdownPreview.error}</p>
+              {:else}
+                <article>{@html markdownPreview.html}</article>
+              {/if}
+            </section>
+          </div>
+          <div class="markdown-footer">
+            {#if markdownPreview.phase === "error"}
+              <button class="outline" type="button" on:click={runMarkdownPreview}>重试</button>
+            {/if}
+            <button class="primary small" type="button" on:click={() => closeMarkdownPreviewView(true)}>关闭</button>
           </div>
         </div>
       </div>

@@ -24,6 +24,7 @@ def test_capability_plugins_are_only_explicit_local_builtin_extras():
     assert config["project"]["dependencies"] == ["httpx>=0.28,<0.29"]
     assert config["project"]["optional-dependencies"]["builtins"] == [
         "reflex-history-sqlite",
+        "reflex-markdown-preview",
         "reflex-translator",
     ]
     assert config["tool"]["uv"]["sources"]["reflex-history-sqlite"] == {
@@ -32,6 +33,10 @@ def test_capability_plugins_are_only_explicit_local_builtin_extras():
     }
     assert config["tool"]["uv"]["sources"]["reflex-translator"] == {
         "path": "../../plugins/translator",
+        "editable": True,
+    }
+    assert config["tool"]["uv"]["sources"]["reflex-markdown-preview"] == {
+        "path": "../../plugins/markdown-preview",
         "editable": True,
     }
 
@@ -88,6 +93,26 @@ def test_installed_builtin_translator_discovers_with_provider_gateway_permission
         item for item in result.descriptors if item.plugin_id == "translator"
     )
     assert descriptor.permissions == ("network-via-provider",)
+    assert descriptor.state == "available"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_installed_markdown_preview_discovers_without_permissions_or_filesystem_effects(
+    tmp_path, monkeypatch
+):
+    if importlib.util.find_spec("reflex_markdown_preview") is None:
+        pytest.skip("builtins extra is not installed in this environment")
+    monkeypatch.chdir(tmp_path)
+
+    manager = PluginManager(enabled_plugins={"markdown-preview"})
+    result = manager.discover_capabilities()
+
+    assert "markdown-preview" in result.plugins
+    descriptor = next(
+        item for item in result.descriptors if item.plugin_id == "markdown-preview"
+    )
+    assert descriptor.permissions == ()
+    assert descriptor.public_operations == ("preview",)
     assert descriptor.state == "available"
     assert list(tmp_path.iterdir()) == []
 

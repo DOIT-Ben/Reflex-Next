@@ -652,6 +652,196 @@ pre {
   font-size: 12px;
 }
 
+.markdown-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(28 29 32 / 30%);
+}
+
+.markdown-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  height: min(520px, calc(100vh - 24px));
+  min-height: 0;
+  padding: 18px;
+  overflow: hidden;
+  background: #f6f7f9;
+  border: 1px solid #dfe2e8;
+  border-radius: 8px;
+  box-shadow: 0 22px 72px rgb(28 29 32 / 20%);
+}
+
+.markdown-head,
+.markdown-toolbar,
+.markdown-footer {
+  display: flex;
+  align-items: center;
+}
+
+.markdown-head,
+.markdown-toolbar {
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.markdown-head h2,
+.markdown-content h3 {
+  margin: 0;
+  color: var(--text);
+  letter-spacing: 0;
+}
+
+.markdown-head h2 {
+  font-size: 20px;
+}
+
+.markdown-toolbar {
+  margin-top: 14px;
+}
+
+.markdown-segments {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(64px, 1fr));
+  gap: 4px;
+  padding: 3px;
+  background: #e9ebef;
+  border-radius: 8px;
+}
+
+.markdown-segments button {
+  min-height: 30px;
+  padding: 0 12px;
+  color: #61656d;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.markdown-segments button.active {
+  color: #3946a0;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(28 29 32 / 10%);
+}
+
+.markdown-content {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: 1;
+  min-height: 0;
+  margin-top: 14px;
+  border-top: 1px solid #dfe2e8;
+  border-bottom: 1px solid #dfe2e8;
+}
+
+.markdown-content.source-only,
+.markdown-content.preview-only {
+  grid-template-columns: 1fr;
+}
+
+.markdown-content.source-only .markdown-rendered,
+.markdown-content.preview-only .markdown-source {
+  display: none;
+}
+
+.markdown-source,
+.markdown-rendered {
+  min-width: 0;
+  padding: 14px 16px 14px 0;
+  overflow: auto;
+}
+
+.markdown-rendered {
+  padding-right: 0;
+  padding-left: 16px;
+  border-left: 1px solid #dfe2e8;
+}
+
+.markdown-content.preview-only .markdown-rendered {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.markdown-content h3 {
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.markdown-source pre,
+.markdown-rendered pre {
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.markdown-rendered article {
+  color: #2d3036;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.markdown-rendered article > :first-child {
+  margin-top: 0;
+}
+
+.markdown-rendered h1,
+.markdown-rendered h2,
+.markdown-rendered h3,
+.markdown-rendered h4,
+.markdown-rendered h5,
+.markdown-rendered h6 {
+  margin: 18px 0 9px;
+  font-size: 15px;
+}
+
+.markdown-rendered table {
+  display: block;
+  max-width: 100%;
+  overflow: auto;
+  border-collapse: collapse;
+}
+
+.markdown-rendered th,
+.markdown-rendered td {
+  padding: 6px 9px;
+  border: 1px solid #dfe2e8;
+}
+
+.markdown-rendered blockquote {
+  margin-left: 0;
+  padding-left: 12px;
+  color: var(--muted);
+  border-left: 3px solid #b8bec9;
+}
+
+.markdown-rendered a {
+  color: #3946a0;
+  text-decoration: underline;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.markdown-message {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.markdown-message.error {
+  color: #b42318;
+}
+
+.markdown-footer {
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 14px;
+}
+
 .error-panel {
   display: grid;
   gap: 12px;
@@ -1199,6 +1389,15 @@ pre {
     height: calc(100vh - 20px);
     padding: 14px;
   }
+
+  .markdown-layer {
+    padding: 10px;
+  }
+
+  .markdown-dialog {
+    height: calc(100vh - 20px);
+    padding: 14px;
+  }
 }
 
 @media (max-width: 520px) {
@@ -1233,6 +1432,25 @@ pre {
   .settings-grid,
   .api-key-row {
     grid-template-columns: 1fr;
+  }
+
+  .markdown-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .markdown-content {
+    grid-template-columns: 1fr;
+  }
+
+  .markdown-source,
+  .markdown-rendered {
+    padding: 12px 0;
+  }
+
+  .markdown-rendered {
+    border-top: 1px solid #dfe2e8;
+    border-left: 0;
   }
 }
 

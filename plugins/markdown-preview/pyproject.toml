@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reflex-markdown-preview"
+version = "0.1.0"
+description = "Sanitized Markdown preview plugin for Reflex Next."
+requires-python = ">=3.11"
+dependencies = [
+  "bleach>=6.2,<7",
+  "markdown>=3.8,<4",
+  "reflex-core",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.entry-points."reflex.commands"]
+markdown-preview = "reflex_markdown_preview:plugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "../../packages/reflex-core/src"]
+
+[tool.uv.sources]
+reflex-core = { path = "../../packages/reflex-core", editable = true }
