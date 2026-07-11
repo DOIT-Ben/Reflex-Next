@@ -31,9 +31,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
-            history_export::cleanup_pending_export(
-                &history_export::pending_export_journal(&app_data_dir),
-            )
+            history_export::cleanup_pending_export(&history_export::pending_export_journal(
+                &app_data_dir,
+            ))
             .map_err(std::io::Error::other)?;
             let config_store = config_store::ConfigStore::new(app.path().app_config_dir()?);
             let config = config_store.load().unwrap_or_default();
@@ -55,6 +55,7 @@ pub fn run() {
             commands::write_clipboard_text,
             commands::show_main_window,
             commands::hide_main_window,
+            commands::show_history_window,
             commands::desktop_status,
             commands::load_app_config,
             commands::save_app_config,
@@ -69,7 +70,8 @@ pub fn run() {
             commands::runtime_plugin_cancel,
             commands::history_export,
             commands::history_admin_operation,
-            commands::history_operation_cancel
+            commands::history_operation_cancel,
+            commands::history_reuse_intent
         ])
         .build(tauri::generate_context!())
         .expect("error while building Reflex host");
@@ -115,6 +117,7 @@ mod tests {
             "allow-runtime-list-plugins",
             "allow-runtime-plugin-call",
             "allow-runtime-plugin-cancel",
+            "allow-show-history-window",
         ] {
             assert!(permissions.contains(&permission), "missing {permission}");
         }
@@ -147,6 +150,7 @@ mod tests {
             assert!(permissions.contains(&permission));
         }
         for forbidden in [
+            "allow-show-history-window",
             "allow-configure-history-keys",
             "allow-configure-history-policy",
             "allow-plugin-admin-call",
@@ -160,5 +164,14 @@ mod tests {
             config["app"]["security"]["capabilities"],
             serde_json::json!(["main-capability", "history-capability"])
         );
+        let csp = config["app"]["security"]["csp"].as_str().unwrap();
+        for directive in [
+            "object-src 'none'",
+            "frame-src 'none'",
+            "form-action 'none'",
+        ] {
+            assert!(csp.contains(directive));
+        }
+        assert!(!csp.contains("https://"));
     }
 }

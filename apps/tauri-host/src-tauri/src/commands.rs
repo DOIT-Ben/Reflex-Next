@@ -141,6 +141,11 @@ pub async fn hide_main_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn show_history_window(app: AppHandle) -> Result<(), String> {
+    crate::window::show_history_window(&app).map_err(str::to_string)
+}
+
+#[tauri::command]
 pub async fn runtime_available() -> bool {
     runtime_available_value()
 }
@@ -299,6 +304,91 @@ pub async fn runtime_plugin_cancel(
 }
 
 const HISTORY_OPERATION_ERROR_MESSAGE: &str = "历史操作失败，请重试。";
+
+#[derive(serde::Deserialize)]
+pub(crate) struct HistoryReuseIntent {
+    kind: String,
+    history_id: String,
+}
+
+const HISTORY_REUSE_EVENT: &str = "reflex://history-reuse";
+
+fn history_reuse_payload(intent: &HistoryReuseIntent, detail: &Value) -> Result<Value, String> {
+    if !crate::window::reuse_intent_is_valid(&intent.kind, &intent.history_id) {
+        return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
+    }
+    let record = detail
+        .get("record")
+        .and_then(Value::as_object)
+        .ok_or_else(|| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    if record.get("id").and_then(Value::as_str) != Some(intent.history_id.as_str()) {
+        return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
+    }
+    let key = if intent.kind == "input" {
+        "input"
+    } else {
+        "output"
+    };
+    let text = record
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+        .ok_or_else(|| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    Ok(
+        serde_json::json!({ "version": 1, "history_id": intent.history_id, "kind": intent.kind, "text": text }),
+    )
+}
+
+#[tauri::command]
+pub async fn history_reuse_intent(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, TauriRuntimeState>,
+    config_store: State<'_, ConfigStore>,
+    history_key_store: State<'_, HistoryKeyStore>,
+    intent: HistoryReuseIntent,
+) -> Result<(), String> {
+    if window.label() != "history"
+        || !crate::window::reuse_intent_is_valid(&intent.kind, &intent.history_id)
+    {
+        return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
+    }
+    let history_path = app
+        .path()
+        .app_data_dir()
+        .map(|path| history_database_path(&path))
+        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    let request_id = format!(
+        "history-reuse-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?
+            .as_nanos()
+    );
+    let detail_command = ValidatedCommand {
+        request_id,
+        kind: CommandKind::PluginCall,
+        payload: serde_json::json!({ "plugin_id": "history-sqlite", "operation": "detail", "input": { "id": intent.history_id } }),
+    };
+    let stream = state.runtime().with_lifecycle(|runtime, _| {
+        let persisted = config_store
+            .load()
+            .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+        let mut sequence =
+            build_history_config_sequence(&persisted, &history_key_store, &history_path, false)?;
+        sequence.push(detail_command);
+        runtime
+            .send_private_sequence_unlocked(sequence)
+            .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())
+    })?;
+    let detail = match collect_history_admin(stream, &HistoryOperationControl::new(), false)? {
+        HistoryAdminOutcome::Completed(response) => response.data,
+        HistoryAdminOutcome::Cancelled => return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
+    };
+    let payload = history_reuse_payload(&intent, &detail)?;
+    app.emit_to("main", HISTORY_REUSE_EVENT, payload)
+        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())
+}
 
 #[tauri::command]
 pub async fn history_export(
@@ -554,11 +644,9 @@ where
         "export",
         input,
     )?;
-    let mut writer = crate::history_export::AtomicExportWriter::new_registered(
-        target,
-        export_journal,
-    )
-    .map_err(str::to_string)?;
+    let mut writer =
+        crate::history_export::AtomicExportWriter::new_registered(target, export_journal)
+            .map_err(str::to_string)?;
     loop {
         if control.is_cancelled() {
             stream.cancel();
@@ -693,11 +781,9 @@ where
             control,
             false,
         )? {
-            HistoryAdminOutcome::Completed(response) => Ok(response
-                .data
-                .get("resumed")
-                .and_then(Value::as_bool)
-                == Some(true)),
+            HistoryAdminOutcome::Completed(response) => {
+                Ok(response.data.get("resumed").and_then(Value::as_bool) == Some(true))
+            }
             HistoryAdminOutcome::Cancelled => Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
         }
     })? {
@@ -1572,10 +1658,8 @@ mod tests {
         store.ensure_active().unwrap();
         store.begin_rotation().unwrap();
 
-        let resolved = super::resolve_rotation_prepare(Ok(
-            super::HistoryAdminOutcome::Cancelled,
-        ))
-        .unwrap();
+        let resolved =
+            super::resolve_rotation_prepare(Ok(super::HistoryAdminOutcome::Cancelled)).unwrap();
 
         assert!(resolved.is_none());
         assert_eq!(store.status().unwrap().active_version, Some(1));
@@ -1717,5 +1801,28 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!*persisted.lock().unwrap());
+    }
+
+    #[test]
+    fn reuse_payload_binds_the_detail_id_and_selects_only_the_requested_plain_text() {
+        let input = super::HistoryReuseIntent {
+            kind: "input".to_string(),
+            history_id: "history-1".to_string(),
+        };
+        let detail = json!({ "record": { "id": "history-1", "input": "plain input", "output": "plain output", "script": "ignored" } });
+        assert_eq!(
+            super::history_reuse_payload(&input, &detail).unwrap(),
+            json!({ "version": 1, "history_id": "history-1", "kind": "input", "text": "plain input" })
+        );
+        let wrong = super::HistoryReuseIntent {
+            kind: "result".to_string(),
+            history_id: "other".to_string(),
+        };
+        assert!(super::history_reuse_payload(&wrong, &detail).is_err());
+        let forged = super::HistoryReuseIntent {
+            kind: "script".to_string(),
+            history_id: "history-1".to_string(),
+        };
+        assert!(super::history_reuse_payload(&forged, &detail).is_err());
     }
 }

@@ -28,7 +28,8 @@
       }
     ],
     "security": {
-      "capabilities": ["main-capability", "history-capability"]
+      "capabilities": ["main-capability", "history-capability"],
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"
     }
   },
   "bundle": {

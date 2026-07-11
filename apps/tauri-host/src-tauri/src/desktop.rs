@@ -7,7 +7,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{App, AppHandle, Emitter, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
-use crate::window::show_main_window;
+use crate::window::{show_history_window, show_main_window};
 
 pub const HOTKEY_UNAVAILABLE_MESSAGE: &str = "快捷键不可用，请更换组合后重试。";
 pub const HOST_ACTION_EVENT: &str = "reflex://host-action";
@@ -16,6 +16,7 @@ pub const HOST_ACTION_EVENT: &str = "reflex://host-action";
 pub enum HostAction {
     Open,
     Recent,
+    History,
     Plugins,
     Settings,
     Quit,
@@ -26,6 +27,7 @@ impl HostAction {
         match self {
             Self::Open => "open",
             Self::Recent => "recent",
+            Self::History => "history",
             Self::Plugins => "plugins",
             Self::Settings => "settings",
             Self::Quit => "quit",
@@ -232,10 +234,11 @@ struct HostActionPayload {
 pub fn setup_tray(app: &mut App) -> tauri::Result<()> {
     let open = menu_item(app, HostAction::Open, "打开 Reflex")?;
     let recent = menu_item(app, HostAction::Recent, "最近结果")?;
+    let history = menu_item(app, HostAction::History, "历史记录")?;
     let plugins = menu_item(app, HostAction::Plugins, "插件")?;
     let settings = menu_item(app, HostAction::Settings, "设置")?;
     let quit = menu_item(app, HostAction::Quit, "退出")?;
-    let menu = Menu::with_items(app, &[&open, &recent, &plugins, &settings, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &recent, &history, &plugins, &settings, &quit])?;
 
     let mut builder = TrayIconBuilder::with_id("reflex-main")
         .menu(&menu)
@@ -244,6 +247,7 @@ pub fn setup_tray(app: &mut App) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => dispatch_host_action(app, HostAction::Open),
             "recent" => dispatch_host_action(app, HostAction::Recent),
+            "history" => dispatch_host_action(app, HostAction::History),
             "plugins" => dispatch_host_action(app, HostAction::Plugins),
             "settings" => dispatch_host_action(app, HostAction::Settings),
             "quit" => dispatch_host_action(app, HostAction::Quit),
@@ -275,6 +279,10 @@ fn menu_item(app: &App, action: HostAction, label: &str) -> tauri::Result<MenuIt
 fn dispatch_host_action(app: &AppHandle, action: HostAction) {
     if action == HostAction::Quit {
         app.exit(0);
+        return;
+    }
+    if action == HostAction::History {
+        let _ = show_history_window(app);
         return;
     }
     let _ = show_main_window(app);
@@ -367,6 +375,7 @@ mod tests {
         assert_eq!(HostAction::Plugins.as_str(), "plugins");
         assert_eq!(HostAction::Settings.as_str(), "settings");
         assert_eq!(HostAction::Quit.as_str(), "quit");
+        assert_eq!(HostAction::History.as_str(), "history");
     }
 
     #[test]

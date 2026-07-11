@@ -983,3 +983,26 @@ pre {
     grid-template-columns: 1fr;
   }
 }
+
+.history-shell { display: grid; grid-template-rows: 60px 58px auto minmax(0, 1fr); height: 100vh; min-width: 760px; background: var(--window); }
+.history-head, .history-actions, .detail-actions { display: flex; align-items: center; gap: 10px; }
+.history-head { justify-content: space-between; padding: 0 22px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.history-head span { margin-left: 10px; color: var(--muted); font-size: 13px; }
+.history-actions button, .detail-actions button, .history-tools button, .more { min-height: 32px; padding: 0 12px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.history-tools { display: grid; grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(120px, 1fr)) auto; align-items: center; gap: 10px; min-width: 0; padding: 10px 22px; overflow: hidden; border-bottom: 1px solid var(--line); }
+.history-tools input, .history-tools select { width: 100%; min-width: 0; }
+.history-tools input { height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); outline: none; }
+.history-tools button { white-space: nowrap; }
+.history-notice { grid-row: 3; margin: 0; padding: 8px 22px; color: #b45309; font-size: 12px; border-bottom: 1px solid var(--line); }
+.history-workspace { display: grid; grid-row: 4; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); min-height: 0; }
+.history-list { overflow: auto; border-right: 1px solid var(--line); }
+.history-row { display: grid; width: 100%; gap: 4px; padding: 13px 16px; text-align: left; background: transparent; border-bottom: 1px solid var(--line); }
+.history-row.active { background: var(--accent-soft); }
+.history-row time { color: var(--text); font-size: 13px; font-weight: 650; }
+.history-row span, .history-row small { color: var(--muted); font-size: 12px; }
+.history-detail { min-width: 0; padding: 18px; overflow: auto; }
+.history-detail pre { white-space: pre-wrap; word-break: break-word; font-size: 13px; }
+.history-detail h2 { margin: 20px 0 8px; font-size: 14px; }
+.history-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin: 0; }
+.history-fields div { display: grid; gap: 3px; }.history-fields dt { color: var(--muted); font-size: 12px; }.history-fields dd { margin: 0; color: var(--text); font-size: 13px; }
+.history-state { padding: 22px; color: var(--muted); font-size: 13px; }.history-state.error { color: var(--danger); }.more { margin: 12px; }.detail-actions { flex-wrap: wrap; margin-bottom: 14px; }.detail-actions button:last-child { margin-left: auto; color: var(--danger); }

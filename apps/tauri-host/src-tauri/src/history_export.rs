@@ -200,7 +200,9 @@ fn write_pending_export(journal: &Path, temporary: &Path) -> Result<(), &'static
             .write_all(&body)
             .map_err(|_| HISTORY_EXPORT_ERROR_MESSAGE)?;
         stream.flush().map_err(|_| HISTORY_EXPORT_ERROR_MESSAGE)?;
-        stream.sync_all().map_err(|_| HISTORY_EXPORT_ERROR_MESSAGE)?;
+        stream
+            .sync_all()
+            .map_err(|_| HISTORY_EXPORT_ERROR_MESSAGE)?;
         drop(stream);
         fs::rename(&staging, journal).map_err(|_| HISTORY_EXPORT_ERROR_MESSAGE)?;
         sync_parent(journal)
@@ -263,10 +265,7 @@ fn temporary_path(target: &Path) -> Result<PathBuf, &'static str> {
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or(HISTORY_EXPORT_ERROR_MESSAGE)?;
-    Ok(parent.join(format!(
-        ".reflex-history-export-{}.tmp",
-        random_suffix()?
-    )))
+    Ok(parent.join(format!(".reflex-history-export-{}.tmp", random_suffix()?)))
 }
 
 fn random_suffix() -> Result<String, &'static str> {
@@ -288,9 +287,7 @@ fn valid_temporary_path(path: &Path) -> bool {
     else {
         return false;
     };
-    path.is_absolute()
-        && suffix.len() == 16
-        && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+    path.is_absolute() && suffix.len() == 16 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn open_private_temporary(path: &Path) -> Result<File, &'static str> {
@@ -310,9 +307,7 @@ fn open_private_temporary(path: &Path) -> Result<File, &'static str> {
         options.share_mode(0);
         options.attributes(FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_TEMPORARY);
     }
-    options
-        .open(path)
-        .map_err(|_| HISTORY_EXPORT_ERROR_MESSAGE)
+    options.open(path).map_err(|_| HISTORY_EXPORT_ERROR_MESSAGE)
 }
 
 #[cfg(windows)]
@@ -376,8 +371,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        cleanup_pending_export, validate_export_request, write_selected_export,
-        AtomicExportWriter, ExportFormat, ExportOutcome,
+        cleanup_pending_export, validate_export_request, write_selected_export, AtomicExportWriter,
+        ExportFormat, ExportOutcome,
     };
 
     #[test]
@@ -476,7 +471,10 @@ mod tests {
             fs::read_dir(&root)
                 .unwrap()
                 .filter_map(Result::ok)
-                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".reflex-history-export-"))
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".reflex-history-export-"))
                 .count(),
             1
         );
@@ -489,7 +487,10 @@ mod tests {
             fs::read_dir(&root)
                 .unwrap()
                 .filter_map(Result::ok)
-                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".reflex-history-export-"))
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".reflex-history-export-"))
                 .count(),
             0
         );

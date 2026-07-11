@@ -546,12 +546,16 @@ where
         let command_count = commands.len();
         let mut generation = expected_generation.cloned();
         for (index, command) in commands.into_iter().enumerate() {
-            if command.kind == crate::runtime_commands::CommandKind::PluginAdminCall {
+            if matches!(
+                command.kind,
+                crate::runtime_commands::CommandKind::PluginAdminCall
+                    | crate::runtime_commands::CommandKind::PluginCall
+            ) {
                 if index + 1 != command_count {
                     return Err(RUNTIME_UNAVAILABLE_MESSAGE);
                 }
                 return self
-                    .send_private_for_generation(command, generation.as_ref())
+                    .send_private_routed(command, generation.as_ref())
                     .map(|(stream, _)| stream);
             }
             if let Some(expected_message) = expected_private_status(command.kind) {
@@ -583,6 +587,14 @@ where
         {
             return Err(RUNTIME_UNAVAILABLE_MESSAGE);
         }
+        self.send_private_routed(command, expected_generation)
+    }
+
+    fn send_private_routed(
+        &self,
+        command: ValidatedCommand,
+        expected_generation: Option<&ActiveRequests>,
+    ) -> Result<(PrivateEventStream, ActiveRequests), &'static str> {
         let request_id = command.request_id.clone();
         let (sender, receiver) = mpsc::channel();
         let active_requests = self.send_routed_with_generation(
@@ -919,6 +931,13 @@ impl RuntimeController {
             .lifecycle
             .lock()
             .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+        self.get_or_start_sidecar()?.send_private_sequence(commands)
+    }
+
+    pub(crate) fn send_private_sequence_unlocked(
+        &self,
+        commands: Vec<ValidatedCommand>,
+    ) -> Result<PrivateEventStream, &'static str> {
         self.get_or_start_sidecar()?.send_private_sequence(commands)
     }
 

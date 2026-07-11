@@ -1,6 +1,11 @@
-use tauri::{AppHandle, Manager, PhysicalPosition, Runtime};
+use tauri::{
+    webview::NewWindowResponse, AppHandle, Manager, PhysicalPosition, Runtime, Url, WebviewUrl,
+    WebviewWindowBuilder,
+};
 
 const MIN_VISIBLE_EDGE: i64 = 64;
+pub const HISTORY_WINDOW_LABEL: &str = "history";
+const HISTORY_WINDOW_TITLE: &str = "Reflex - 历史记录";
 pub const WINDOW_UNAVAILABLE_MESSAGE: &str = "窗口暂时无法打开，请从托盘重试。";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +80,44 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static s
     window.set_focus().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)
 }
 
+pub fn history_window_url() -> &'static str {
+    "index.html?view=history"
+}
+
+pub fn show_history_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static str> {
+    if let Some(window) = app.get_webview_window(HISTORY_WINDOW_LABEL) {
+        recover_window_position_for(&window);
+        if window.is_minimized().unwrap_or(false) {
+            let _ = window.unminimize();
+        }
+        window.show().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)?;
+        return window.set_focus().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE);
+    }
+
+    WebviewWindowBuilder::new(
+        app,
+        HISTORY_WINDOW_LABEL,
+        WebviewUrl::App(history_window_url().into()),
+    )
+    .title(HISTORY_WINDOW_TITLE)
+    .inner_size(1040.0, 720.0)
+    .min_inner_size(760.0, 560.0)
+    .on_navigation(|url| is_local_history_url(url))
+    .on_new_window(|_, _| NewWindowResponse::Deny)
+    .build()
+    .map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)?;
+    Ok(())
+}
+
+pub fn reuse_intent_is_valid(kind: &str, history_id: &str) -> bool {
+    matches!(kind, "input" | "result")
+        && !history_id.is_empty()
+        && history_id.len() <= 128
+        && history_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
 pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static str> {
     app.get_webview_window("main")
         .ok_or(WINDOW_UNAVAILABLE_MESSAGE)?
@@ -83,6 +126,10 @@ pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static s
 }
 
 fn recover_main_window_position<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    recover_window_position_for(window);
+}
+
+fn recover_window_position_for<R: Runtime>(window: &tauri::WebviewWindow<R>) {
     let Ok(position) = window.outer_position() else {
         return;
     };
@@ -120,6 +167,15 @@ fn recover_main_window_position<R: Runtime>(window: &tauri::WebviewWindow<R>) {
     }
 }
 
+fn is_local_history_url(url: &Url) -> bool {
+    let local_scheme = matches!(url.scheme(), "tauri" | "http" | "https");
+    let local_host = matches!(url.host_str(), Some("localhost") | Some("127.0.0.1"));
+    local_scheme
+        && local_host
+        && url.path().ends_with("/index.html")
+        && url.query() == Some("view=history")
+}
+
 fn bounds_from_rect(rect: &tauri::PhysicalRect<i32, u32>) -> PhysicalBounds {
     PhysicalBounds::new(
         rect.position.x,
@@ -131,7 +187,10 @@ fn bounds_from_rect(rect: &tauri::PhysicalRect<i32, u32>) -> PhysicalBounds {
 
 #[cfg(test)]
 mod tests {
-    use super::{recover_window_position, PhysicalBounds};
+    use super::{
+        history_window_url, is_local_history_url, recover_window_position, reuse_intent_is_valid,
+        PhysicalBounds,
+    };
 
     const PRIMARY: PhysicalBounds = PhysicalBounds::new(0, 0, 1920, 1040);
     const LEFT: PhysicalBounds = PhysicalBounds::new(-1920, 0, 1920, 1040);
@@ -174,5 +233,43 @@ mod tests {
             recover_window_position(window, &[PRIMARY], PRIMARY),
             Some((0, 0))
         );
+    }
+
+    #[test]
+    fn history_window_uses_a_fixed_local_view_query() {
+        assert_eq!(history_window_url(), "index.html?view=history");
+    }
+
+    #[test]
+    fn reuse_intents_accept_only_a_known_kind_and_bounded_history_id() {
+        assert!(reuse_intent_is_valid("input", "history-42"));
+        assert!(reuse_intent_is_valid("result", "record_42"));
+        assert!(!reuse_intent_is_valid("script", "history-42"));
+        assert!(!reuse_intent_is_valid("input", "../../private"));
+        assert!(!reuse_intent_is_valid("input", ""));
+    }
+
+    #[test]
+    fn history_navigation_allows_only_the_fixed_local_entry() {
+        for url in [
+            "tauri://localhost/index.html?view=history",
+            "http://127.0.0.1:1420/index.html?view=history",
+        ] {
+            assert!(
+                is_local_history_url(&url.parse().unwrap()),
+                "expected allow: {url}"
+            );
+        }
+        for url in [
+            "https://example.com/index.html?view=history",
+            "file:///index.html?view=history",
+            "tauri://localhost/index.html?view=other",
+            "tauri://localhost/index.html?view=history&extra=1",
+        ] {
+            assert!(
+                !is_local_history_url(&url.parse().unwrap()),
+                "expected deny: {url}"
+            );
+        }
     }
 }
