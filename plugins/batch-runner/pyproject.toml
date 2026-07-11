@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reflex-batch-runner"
+version = "0.1.0"
+description = "Batch prompt import and export plugin for Reflex Next."
+requires-python = ">=3.11"
+dependencies = ["reflex-core"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.entry-points."reflex.commands"]
+batch-runner = "reflex_batch_runner:plugin"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "../../packages/reflex-core/src"]
+
+[tool.uv.sources]
+reflex-core = { path = "../../packages/reflex-core", editable = true }

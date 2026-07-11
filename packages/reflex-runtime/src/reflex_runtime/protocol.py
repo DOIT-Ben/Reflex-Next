@@ -47,7 +47,7 @@ CONFIGURE_HISTORY_POLICY_FIELDS = frozenset(
 CONFIGURE_HISTORY_PATH_FIELDS = frozenset({"database_path"})
 EMPTY_PAYLOAD_COMMANDS = frozenset({"cancel", "ping", "shutdown", "list_plugins"})
 BUILTIN_CAPABILITY_IDS = frozenset(
-    {"history-sqlite", "translator", "markdown-preview", "semantic-detector"}
+    {"history-sqlite", "translator", "markdown-preview", "batch-runner", "semantic-detector"}
 )
 PRIVATE_FIELD_NAMES = frozenset(
     {"key", "keys", "path", "admin", "private", "secret", "token"}
@@ -65,6 +65,7 @@ PUBLIC_PLUGIN_OPERATIONS = {
     "history-sqlite": frozenset({"list", "detail", "rate", "backups", "scan"}),
     "translator": frozenset({"translate"}),
     "markdown-preview": frozenset({"preview"}),
+    "batch-runner": frozenset({"parse", "export", "template"}),
 }
 ADMIN_PLUGIN_OPERATIONS = {
     "history-sqlite": frozenset(
@@ -179,6 +180,7 @@ def _validate_plugin_configuration(payload: dict[str, Any]) -> None:
     if payload.get("plugin_id") not in {
         "translator",
         "markdown-preview",
+        "batch-runner",
         "semantic-detector",
     }:
         raise ProtocolError(message)

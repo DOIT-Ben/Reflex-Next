@@ -368,6 +368,7 @@ def test_capability_groups_load_valid_builtins_and_represent_absent_history():
     states = {item.plugin_id: item.state for item in result.descriptors}
     assert states == {
         "history-sqlite": "absent",
+        "batch-runner": "absent",
         "translator": "available",
         "markdown-preview": "available",
     }

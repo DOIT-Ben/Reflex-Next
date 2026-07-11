@@ -24,12 +24,17 @@ def test_capability_plugins_are_only_explicit_local_builtin_extras():
     assert config["project"]["dependencies"] == ["httpx>=0.28,<0.29"]
     assert config["project"]["optional-dependencies"]["builtins"] == [
         "reflex-history-sqlite",
+        "reflex-batch-runner",
         "reflex-markdown-preview",
         "reflex-plugin-semantic-detector",
         "reflex-translator",
     ]
     assert config["tool"]["uv"]["sources"]["reflex-history-sqlite"] == {
         "path": "../../plugins/history-sqlite",
+        "editable": True,
+    }
+    assert config["tool"]["uv"]["sources"]["reflex-batch-runner"] == {
+        "path": "../../plugins/batch-runner",
         "editable": True,
     }
     assert config["tool"]["uv"]["sources"]["reflex-translator"] == {

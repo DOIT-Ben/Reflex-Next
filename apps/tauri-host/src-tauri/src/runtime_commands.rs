@@ -327,7 +327,7 @@ fn validate_payload(kind: CommandKind, payload: &Value) -> bool {
             has_exact_fields(payload, &["plugin_id", "enabled"])
                 && matches!(
                     payload.get("plugin_id").and_then(Value::as_str),
-                    Some("translator" | "markdown-preview" | "semantic-detector")
+                    Some("translator" | "markdown-preview" | "batch-runner" | "semantic-detector")
                 )
                 && payload.get("enabled").is_some_and(Value::is_boolean)
         }

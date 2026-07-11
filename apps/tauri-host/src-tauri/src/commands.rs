@@ -1250,7 +1250,7 @@ where
             .map_err(str::to_string)?,
         );
     }
-    for plugin_id in ["translator", "markdown-preview", "semantic-detector"] {
+    for plugin_id in ["translator", "markdown-preview", "batch-runner", "semantic-detector"] {
         let enabled = persisted
             .enabled_plugins
             .iter()

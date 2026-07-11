@@ -37,7 +37,7 @@ class SceneDetectorDiscoveryResult:
 CAPABILITY_GROUPS = {
     "reflex.storage": frozenset({"history-sqlite"}),
     "reflex.transformers": frozenset({"translator"}),
-    "reflex.commands": frozenset({"markdown-preview"}),
+    "reflex.commands": frozenset({"markdown-preview", "batch-runner"}),
 }
 SEMANTIC_DETECTOR_ID = "semantic-detector"
 BUILTIN_CAPABILITY_DESCRIPTORS = {
@@ -82,6 +82,11 @@ BUILTIN_CAPABILITY_DESCRIPTORS = {
         operations=("preview", "export"),
         public_operations=("preview",),
     ),
+    "batch-runner": PluginDescriptor(
+        plugin_id="batch-runner", display_name="Batch Runner", version="1", kind="command",
+        permissions=(), operations=("parse", "export", "template"),
+        public_operations=("parse", "export", "template"),
+    ),
 }
 
 
@@ -111,7 +116,7 @@ class PluginManager:
         self._capability_cache: dict[str, tuple[PluginDescriptor, Any]] = {}
 
     def configure_enabled_plugin(self, plugin_id: str, enabled: bool) -> None:
-        if plugin_id not in {"translator", "markdown-preview", SEMANTIC_DETECTOR_ID}:
+        if plugin_id not in {"translator", "markdown-preview", "batch-runner", SEMANTIC_DETECTOR_ID}:
             raise ValueError("plugin configuration denied")
         if not isinstance(enabled, bool):
             raise ValueError("plugin configuration denied")
@@ -199,7 +204,7 @@ class PluginManager:
             if candidate is None:
                 descriptors.append(replace(builtin, enabled=False, state="absent"))
                 continue
-            if plugin_id in {"translator", "markdown-preview"} and (
+            if plugin_id in {"translator", "markdown-preview", "batch-runner"} and (
                 plugin_id not in self._enabled_plugins
             ):
                 descriptors.append(replace(builtin, enabled=False, state="disabled"))

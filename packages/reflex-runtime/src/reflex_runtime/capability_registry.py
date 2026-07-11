@@ -14,6 +14,7 @@ PUBLIC_OPERATION_ALLOWLIST = {
     "history-sqlite": frozenset({"list", "detail", "rate", "backups", "scan"}),
     "translator": frozenset({"translate"}),
     "markdown-preview": frozenset({"preview"}),
+    "batch-runner": frozenset({"parse", "export", "template"}),
 }
 ADMIN_OPERATION_ALLOWLIST = {
     "history-sqlite": frozenset(
@@ -28,7 +29,7 @@ HISTORY_STATES = frozenset(
 HISTORY_MUTATING_ADMIN_OPERATIONS = frozenset(
     {"delete", "clear", "repair", "restore", "rotate"}
 )
-OPTIONAL_PLUGIN_IDS = frozenset({"translator", "markdown-preview"})
+OPTIONAL_PLUGIN_IDS = frozenset({"translator", "markdown-preview", "batch-runner"})
 
 
 @dataclass(frozen=True)

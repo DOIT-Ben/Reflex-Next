@@ -14,6 +14,7 @@ dependencies = [
 [project.optional-dependencies]
 builtins = [
   "reflex-history-sqlite",
+  "reflex-batch-runner",
   "reflex-markdown-preview",
   "reflex-plugin-semantic-detector",
   "reflex-translator",
@@ -31,6 +32,7 @@ pythonpath = ["src", "../reflex-core/src"]
 
 [tool.uv.sources]
 reflex-history-sqlite = { path = "../../plugins/history-sqlite", editable = true }
+reflex-batch-runner = { path = "../../plugins/batch-runner", editable = true }
 reflex-markdown-preview = { path = "../../plugins/markdown-preview", editable = true }
 reflex-plugin-semantic-detector = { path = "../../plugins/semantic-detector", editable = true }
 reflex-translator = { path = "../../plugins/translator", editable = true }

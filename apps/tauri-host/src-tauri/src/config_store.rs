@@ -416,7 +416,7 @@ fn normalized_plugins(value: Option<&Value>, fallback: &[String]) -> Vec<String>
     let Some(values) = value.and_then(Value::as_array) else {
         return fallback.to_vec();
     };
-    ["translator", "markdown-preview", "semantic-detector"]
+    ["translator", "markdown-preview", "batch-runner", "semantic-detector"]
         .into_iter()
         .filter(|allowed| values.iter().any(|value| value.as_str() == Some(*allowed)))
         .map(str::to_string)

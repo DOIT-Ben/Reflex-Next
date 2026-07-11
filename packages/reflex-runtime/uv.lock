@@ -301,6 +301,21 @@ wheels = [
 ]
 
 [[package]]
+name = "reflex-batch-runner"
+version = "0.1.0"
+source = { editable = "../../plugins/batch-runner" }
+dependencies = [
+    { name = "reflex-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "reflex-core", editable = "../reflex-core" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "reflex-core"
 version = "0.1.0"
 source = { editable = "../reflex-core" }
@@ -371,6 +386,7 @@ dependencies = [
 
 [package.optional-dependencies]
 builtins = [
+    { name = "reflex-batch-runner" },
     { name = "reflex-history-sqlite" },
     { name = "reflex-markdown-preview" },
     { name = "reflex-plugin-semantic-detector" },
@@ -384,6 +400,7 @@ dev = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.28,<0.29" },
     { name = "pytest", marker = "extra == 'dev'" },
+    { name = "reflex-batch-runner", marker = "extra == 'builtins'", editable = "../../plugins/batch-runner" },
     { name = "reflex-history-sqlite", marker = "extra == 'builtins'", editable = "../../plugins/history-sqlite" },
     { name = "reflex-markdown-preview", marker = "extra == 'builtins'", editable = "../../plugins/markdown-preview" },
     { name = "reflex-plugin-semantic-detector", marker = "extra == 'builtins'", editable = "../../plugins/semantic-detector" },

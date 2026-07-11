@@ -1585,8 +1585,9 @@ def test_list_plugins_emits_capability_list_instead_of_core_event():
         assert envelope["type"] == "capability_list"
         assert "event" not in envelope
         assert {plugin["id"] for plugin in envelope["plugins"]} == {
-            "history-sqlite",
-            "translator",
+                "history-sqlite",
+                "batch-runner",
+                "translator",
             "markdown-preview",
         }
         listed = {plugin["id"]: plugin for plugin in envelope["plugins"]}
