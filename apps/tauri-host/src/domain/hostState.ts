@@ -95,6 +95,7 @@ export type HostSettingsDraft = {
   privacy_mode: boolean;
   history_redaction: AppConfig["history_redaction"];
   enabled_plugins: AppConfig["enabled_plugins"];
+  language: AppConfig["language"];
 };
 
 export const SETTINGS_PLUGIN_IDS = ["translator", "markdown-preview", "batch-runner", "semantic-detector"] as const;
@@ -137,7 +138,8 @@ export function createDefaultSettingsDraft(settings: RequestSettings): HostSetti
     history_enabled: false,
     privacy_mode: false,
     history_redaction: "secrets",
-    enabled_plugins: ["translator", "markdown-preview"]
+    enabled_plugins: ["translator", "markdown-preview"],
+    language: "zh-CN"
   };
 }
 
@@ -153,7 +155,8 @@ export function settingsDraftFromConfig(config: AppConfig): HostSettingsDraft {
     history_enabled: config.history_enabled,
     privacy_mode: config.privacy_mode,
     history_redaction: config.history_redaction,
-    enabled_plugins: [...config.enabled_plugins]
+    enabled_plugins: [...config.enabled_plugins],
+    language: config.language
   };
 }
 
@@ -173,7 +176,8 @@ export function configFromSettingsDraft(
     history_enabled: draft.history_enabled,
     privacy_mode: draft.privacy_mode,
     history_redaction: draft.history_redaction,
-    enabled_plugins: [...draft.enabled_plugins]
+    enabled_plugins: [...draft.enabled_plugins],
+    language: draft.language
   };
 }
 

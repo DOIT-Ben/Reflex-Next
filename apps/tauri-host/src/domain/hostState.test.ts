@@ -66,7 +66,8 @@ describe("host state", () => {
       history_enabled: false,
       privacy_mode: false,
       history_redaction: "secrets",
-      enabled_plugins: ["translator", "markdown-preview"]
+      enabled_plugins: ["translator", "markdown-preview"],
+      language: "zh-CN"
     });
   });
 

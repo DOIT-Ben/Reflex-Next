@@ -190,6 +190,10 @@
     { id: "source", label: "源码" },
     { id: "preview", label: "预览" }
   ];
+  const uiLanguages: Array<{ id: AppConfig["language"]; label: string }> = [
+    { id: "zh-CN", label: "简体中文" },
+    { id: "en-US", label: "English" }
+  ];
   const batchFormats: Array<{ id: BatchFormat; label: string }> = [
     { id: "txt", label: "TXT 每行一条" },
     { id: "csv", label: "CSV prompt 列" }
@@ -1909,6 +1913,16 @@
                     {#each scenePolicies as item}
                       <button type="button" class:active={settingsDraft.scene_policy === item.id} on:click={() => (settingsDraft = { ...settingsDraft, scene_policy: item.id })}>
                         {item.label}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+                <div class="settings-block">
+                  <span class="field-label">界面与输出语言</span>
+                  <div class="segments compact">
+                    {#each uiLanguages as language}
+                      <button type="button" class:active={settingsDraft.language === language.id} on:click={() => (settingsDraft = { ...settingsDraft, language: language.id })}>
+                        {language.label}
                       </button>
                     {/each}
                   </div>
