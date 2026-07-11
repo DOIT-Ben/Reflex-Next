@@ -5,7 +5,6 @@
   "windows": ["history"],
   "platforms": ["windows"],
   "permissions": [
-    "allow-runtime-list-plugins",
     "allow-runtime-plugin-call",
     "allow-runtime-plugin-cancel",
     "allow-history-export",

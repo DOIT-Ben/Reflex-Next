@@ -169,6 +169,10 @@ impl ChildProcess for OsChildProcess {
 
 pub trait EventEmitter: Send + Sync {
     fn emit(&self, event_name: &str, payload: Value);
+
+    fn emit_to(&self, _target: &str, event_name: &str, payload: Value) {
+        self.emit(event_name, payload);
+    }
 }
 
 struct HostRequestRegistry {
@@ -310,8 +314,25 @@ impl ResponseContract {
 
 #[derive(Clone)]
 enum RequestRoute {
+    #[cfg(test)]
     Public,
+    PublicTo(String),
     Private(mpsc::Sender<Value>),
+}
+
+impl RequestRoute {
+    fn public_target(&self) -> Option<&str> {
+        match self {
+            #[cfg(test)]
+            Self::Public => Some("main"),
+            Self::PublicTo(target) => Some(target),
+            Self::Private(_) => None,
+        }
+    }
+
+    fn owned_by_same_public_window(&self, other: &Self) -> bool {
+        self.public_target().is_some() && self.public_target() == other.public_target()
+    }
 }
 
 struct ActiveRequest {
@@ -346,7 +367,11 @@ impl ActiveRequest {
             *lifecycle = RequestLifecycle::Terminal;
         }
         match &self.route {
-            RequestRoute::Public => emitter.emit(self.contract.event_name(), payload),
+            #[cfg(test)]
+            RequestRoute::Public => emitter.emit_to("main", self.contract.event_name(), payload),
+            RequestRoute::PublicTo(target) => {
+                emitter.emit_to(target, self.contract.event_name(), payload)
+            }
             RequestRoute::Private(sender) => {
                 let _ = sender.send(payload);
             }
@@ -479,15 +504,29 @@ where
         }
     }
 
+    #[cfg(test)]
     pub fn send(&self, command: ValidatedCommand) -> Result<(), &'static str> {
+        self.send_to(command, "main")
+    }
+
+    pub fn send_to(&self, command: ValidatedCommand, target: &str) -> Result<(), &'static str> {
         if is_private_command(command.kind) {
             return Err(RUNTIME_UNAVAILABLE_MESSAGE);
         }
-        self.send_routed(vec![(command, RequestRoute::Public)])
+        self.send_routed(vec![(command, public_route(target)?)])
     }
 
     #[allow(dead_code)]
     pub fn send_sequence(&self, commands: Vec<ValidatedCommand>) -> Result<(), &'static str> {
+        self.send_sequence_to(commands, "main")
+    }
+
+    pub fn send_sequence_to(
+        &self,
+        commands: Vec<ValidatedCommand>,
+        target: &str,
+    ) -> Result<(), &'static str> {
+        let public_route = public_route(target)?;
         let _sequence = self
             .sequence
             .lock()
@@ -508,11 +547,11 @@ where
                 self.send_detached_private(command, generation.as_ref())?;
             } else if let Some(expected) = generation.as_ref() {
                 self.send_routed_with_generation(
-                    vec![(command, RequestRoute::Public)],
+                    vec![(command, public_route.clone())],
                     Some(expected),
                 )?;
             } else {
-                self.send(command)?;
+                self.send_routed(vec![(command, public_route.clone())])?;
             }
         }
         Ok(())
@@ -665,9 +704,11 @@ where
                 .active_requests
                 .lock()
                 .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
-            for (command, _) in &commands {
+            for (command, route) in &commands {
                 if command.kind == crate::runtime_commands::CommandKind::Cancel
-                    && !active_requests.contains_key(&command.request_id)
+                    && !active_requests
+                        .get(&command.request_id)
+                        .is_some_and(|active| active.route.owned_by_same_public_window(route))
                 {
                     return Err(REQUEST_NOT_FOUND_MESSAGE);
                 }
@@ -715,9 +756,12 @@ where
                 .active_requests
                 .lock()
                 .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
-            for (command, _) in &commands {
+            for (command, route) in &commands {
                 if command.kind == crate::runtime_commands::CommandKind::Cancel {
-                    if !active_requests.contains_key(&command.request_id) {
+                    if !active_requests
+                        .get(&command.request_id)
+                        .is_some_and(|active| active.route.owned_by_same_public_window(route))
+                    {
                         return Err(REQUEST_NOT_FOUND_MESSAGE);
                     }
                 }
@@ -904,23 +948,29 @@ impl RuntimeController {
         }
     }
 
-    pub fn send(&self, command: ValidatedCommand) -> Result<(), &'static str> {
+    pub fn send_to(&self, command: ValidatedCommand, target: &str) -> Result<(), &'static str> {
         let _lifecycle = self
             .lifecycle
             .lock()
             .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
-        self.send_unlocked(command)
+        self.send_unlocked_to(command, target)
     }
 
-    pub(crate) fn send_unlocked(&self, command: ValidatedCommand) -> Result<(), &'static str> {
-        self.get_or_start_sidecar()?.send(command)
+    pub(crate) fn send_unlocked_to(
+        &self,
+        command: ValidatedCommand,
+        target: &str,
+    ) -> Result<(), &'static str> {
+        self.get_or_start_sidecar()?.send_to(command, target)
     }
 
-    pub(crate) fn send_sequence_unlocked(
+    pub(crate) fn send_sequence_unlocked_to(
         &self,
         commands: Vec<ValidatedCommand>,
+        target: &str,
     ) -> Result<(), &'static str> {
-        self.get_or_start_sidecar()?.send_sequence(commands)
+        self.get_or_start_sidecar()?
+            .send_sequence_to(commands, target)
     }
 
     pub(crate) fn send_private_sequence(
@@ -984,8 +1034,21 @@ impl RuntimeController {
         &self,
         request_id: &str,
     ) -> Result<(), &'static str> {
+        self.emit_provider_unconfigured_unlocked_to(request_id, "main")
+    }
+
+    pub(crate) fn emit_provider_unconfigured_unlocked_to(
+        &self,
+        request_id: &str,
+        target: &str,
+    ) -> Result<(), &'static str> {
+        let target = public_route(target)?
+            .public_target()
+            .ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?
+            .to_string();
         self.request_registry.claim(request_id)?;
-        self.emitter.emit(
+        self.emitter.emit_to(
+            &target,
             CORE_EVENT_NAME,
             serde_json::json!({
                 "version": 1,
@@ -1110,6 +1173,14 @@ fn request_id_from_raw_event(raw: &str) -> Option<String> {
         .as_str()
         .filter(|request_id| is_safe_request_id(request_id))
         .map(str::to_string)
+}
+
+fn public_route(target: &str) -> Result<RequestRoute, &'static str> {
+    if matches!(target, "main" | "history") {
+        Ok(RequestRoute::PublicTo(target.to_string()))
+    } else {
+        Err(RUNTIME_UNAVAILABLE_MESSAGE)
+    }
 }
 
 fn is_private_command(kind: crate::runtime_commands::CommandKind) -> bool {
@@ -2176,6 +2247,47 @@ mod tests {
     }
 
     #[test]
+    fn cancel_requires_the_same_public_window_owner() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![FakeProcess::running(writes.clone())]),
+            Arc::new(FakeEmitter),
+        );
+        sidecar
+            .send_to(
+                ValidatedCommand {
+                    request_id: "owned-request".to_string(),
+                    kind: CommandKind::ListPlugins,
+                    payload: json!({}),
+                },
+                "main",
+            )
+            .unwrap();
+
+        assert_eq!(
+            sidecar.send_to(
+                ValidatedCommand {
+                    request_id: "owned-request".to_string(),
+                    kind: CommandKind::Cancel,
+                    payload: json!({}),
+                },
+                "history",
+            ),
+            Err(super::REQUEST_NOT_FOUND_MESSAGE)
+        );
+        sidecar
+            .send_to(
+                ValidatedCommand {
+                    request_id: "owned-request".to_string(),
+                    kind: CommandKind::Cancel,
+                    payload: json!({}),
+                },
+                "main",
+            )
+            .unwrap();
+    }
+
+    #[test]
     fn private_events_are_delivered_to_a_waiter_and_never_emitted_to_webview() {
         let writes = Arc::new(Mutex::new(Vec::new()));
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -2922,6 +3034,24 @@ mod tests {
     }
 
     #[test]
+    fn public_route_emits_only_to_its_window_owner() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let emitter: Arc<dyn EventEmitter> = Arc::new(TargetRecordingEmitter(events.clone()));
+        let route = super::ActiveRequest::new(
+            super::ResponseContract::Core,
+            super::RequestRoute::PublicTo("history".to_string()),
+        );
+
+        assert!(route.dispatch(
+            &emitter,
+            json!({"version":1,"request_id":"owned","event":{"type":"done","data":{}}}),
+            true,
+        ));
+        assert_eq!(events.lock().unwrap()[0].0, "history");
+        assert_eq!(events.lock().unwrap()[0].1, CORE_EVENT_NAME);
+    }
+
+    #[test]
     fn fails_all_active_requests_when_invalid_stdout_has_no_request_id() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let active_requests = Arc::new(Mutex::new(HashMap::from([(
@@ -3529,6 +3659,21 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((event_name.to_string(), payload));
+        }
+    }
+
+    struct TargetRecordingEmitter(Arc<Mutex<Vec<(String, String, serde_json::Value)>>>);
+
+    impl EventEmitter for TargetRecordingEmitter {
+        fn emit(&self, event_name: &str, payload: serde_json::Value) {
+            self.emit_to("main", event_name, payload);
+        }
+
+        fn emit_to(&self, target: &str, event_name: &str, payload: serde_json::Value) {
+            self.0
+                .lock()
+                .unwrap()
+                .push((target.to_string(), event_name.to_string(), payload));
         }
     }
 

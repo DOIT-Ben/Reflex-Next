@@ -112,7 +112,11 @@ struct TauriEventEmitter {
 
 impl EventEmitter for TauriEventEmitter {
     fn emit(&self, event_name: &str, payload: Value) {
-        let _ = self.app.emit(event_name, payload);
+        let _ = self.app.emit_to("main", event_name, payload);
+    }
+
+    fn emit_to(&self, target: &str, event_name: &str, payload: Value) {
+        let _ = self.app.emit_to(target, event_name, payload);
     }
 }
 
@@ -228,43 +232,53 @@ pub async fn delete_provider_secret(
 #[tauri::command]
 pub async fn runtime_optimize(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
     config_store: State<'_, ConfigStore>,
     secret_store: State<'_, SecretStore>,
     history_key_store: State<'_, HistoryKeyStore>,
     command: Value,
 ) -> Result<(), String> {
+    require_main_window(window.label())?;
     let command = validate_command(command, CommandKind::Optimize).map_err(str::to_string)?;
     let history_path = app
         .path()
         .app_data_dir()
         .map(|path| history_database_path(&path))
         .map_err(|_| "应用数据目录不可用。".to_string())?;
-    send_configured_optimize(
+    send_configured_optimize_to(
         &state.runtime,
         &config_store,
         &secret_store,
         &history_key_store,
         &history_path,
+        window.label(),
         command,
     )
 }
 
 #[tauri::command]
 pub async fn runtime_cancel(
+    window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
     command: Value,
 ) -> Result<(), String> {
-    forward_runtime_command(&state.runtime, command, CommandKind::Cancel)
+    require_main_window(window.label())?;
+    forward_runtime_command_to(&state.runtime, window.label(), command, CommandKind::Cancel)
 }
 
 #[tauri::command]
 pub async fn runtime_list_plugins(
+    window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
     command: Value,
 ) -> Result<(), String> {
+    require_main_window(window.label())?;
     let command = validate_command(command, CommandKind::ListPlugins).map_err(str::to_string)?;
-    state.runtime().send(command).map_err(str::to_string)
+    state
+        .runtime()
+        .send_to(command, window.label())
+        .map_err(str::to_string)
 }
 
 #[tauri::command]
@@ -284,23 +298,33 @@ pub async fn runtime_plugin_call(
             .app_data_dir()
             .map(|path| history_database_path(&path))
             .map_err(|_| "应用数据目录不可用。".to_string())?;
-        return send_configured_plugin_call(
+        return send_configured_plugin_call_to(
             state.runtime(),
             &config_store,
             &history_key_store,
             &history_path,
+            window.label(),
             command,
         );
     }
-    state.runtime().send(command).map_err(str::to_string)
+    state
+        .runtime()
+        .send_to(command, window.label())
+        .map_err(str::to_string)
 }
 
 #[tauri::command]
 pub async fn runtime_plugin_cancel(
+    window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
     command: Value,
 ) -> Result<(), String> {
-    forward_runtime_command(state.runtime(), command, CommandKind::Cancel)
+    forward_runtime_command_to(
+        state.runtime(),
+        window.label(),
+        command,
+        CommandKind::Cancel,
+    )
 }
 
 const HISTORY_OPERATION_ERROR_MESSAGE: &str = "历史操作失败，请重试。";
@@ -908,21 +932,55 @@ fn history_confirmation_message(operation: &str) -> &'static str {
     }
 }
 
-fn forward_runtime_command(
+fn require_main_window(window_label: &str) -> Result<(), String> {
+    if window_label == "main" {
+        Ok(())
+    } else {
+        Err(crate::plugin_commands::PLUGIN_COMMAND_DENIED_MESSAGE.to_string())
+    }
+}
+
+fn forward_runtime_command_to(
     runtime: &RuntimeController,
+    target: &str,
     command: Value,
     expected_kind: CommandKind,
 ) -> Result<(), String> {
     let command = validate_command(command, expected_kind).map_err(str::to_string)?;
-    runtime.send(command).map_err(str::to_string)
+    runtime.send_to(command, target).map_err(str::to_string)
 }
 
+#[cfg(test)]
 fn send_configured_optimize<B, H>(
     runtime: &RuntimeController,
     config_store: &ConfigStore,
     secret_store: &SecretStore<B>,
     history_key_store: &HistoryKeyStore<H>,
     history_path: &Path,
+    command: ValidatedCommand,
+) -> Result<(), String>
+where
+    B: CredentialBackend,
+    H: CredentialBackend,
+{
+    send_configured_optimize_to(
+        runtime,
+        config_store,
+        secret_store,
+        history_key_store,
+        history_path,
+        "main",
+        command,
+    )
+}
+
+fn send_configured_optimize_to<B, H>(
+    runtime: &RuntimeController,
+    config_store: &ConfigStore,
+    secret_store: &SecretStore<B>,
+    history_key_store: &HistoryKeyStore<H>,
+    history_path: &Path,
+    target: &str,
     command: ValidatedCommand,
 ) -> Result<(), String>
 where
@@ -939,20 +997,21 @@ where
             command,
         )? {
             Some(commands) => runtime
-                .send_sequence_unlocked(commands)
+                .send_sequence_unlocked_to(commands, target)
                 .map_err(str::to_string),
             None => runtime
-                .emit_provider_unconfigured_unlocked(&request_id)
+                .emit_provider_unconfigured_unlocked_to(&request_id, target)
                 .map_err(str::to_string),
         }
     })
 }
 
-fn send_configured_plugin_call<H>(
+fn send_configured_plugin_call_to<H>(
     runtime: &RuntimeController,
     config_store: &ConfigStore,
     history_key_store: &HistoryKeyStore<H>,
     history_path: &Path,
+    target: &str,
     command: ValidatedCommand,
 ) -> Result<(), String>
 where
@@ -966,7 +1025,7 @@ where
             command,
         )?;
         runtime
-            .send_sequence_unlocked(commands)
+            .send_sequence_unlocked_to(commands, target)
             .map_err(str::to_string)
     })
 }

@@ -11,6 +11,12 @@ export type HistoryPage = { items: HistorySummary[]; next_cursor: string | null 
 export type HistoryQuery = { search?: string; scene?: string; style?: string; provider?: string };
 export type HistoryPhase = "loading" | "loading-more" | "empty" | "error" | "ready";
 export type HistoryBackup = { id: string; created_at: string; record_count: number };
+export type HistoryBackupsState = {
+  phase: "loading" | "ready" | "error";
+  items: HistoryBackup[];
+  selectedId: string;
+  request: number;
+};
 
 export type HistoryState = {
   phase: HistoryPhase;
@@ -27,6 +33,26 @@ export type HistoryState = {
 
 export function createHistoryState(): HistoryState {
   return { phase: "loading", items: [], cursor: null, query: {}, selectedId: null, error: null, request: 0, detailRequest: 0, detail: null, operation: { phase: "idle", kind: null } };
+}
+
+export function createHistoryBackupsState(): HistoryBackupsState {
+  return { phase: "loading", items: [], selectedId: "", request: 0 };
+}
+
+export function startHistoryBackupsLoad(state: HistoryBackupsState): { state: HistoryBackupsState; request: number } {
+  const request = state.request + 1;
+  return { request, state: { ...state, phase: "loading", selectedId: "", request } };
+}
+
+export function finishHistoryBackupsLoad(state: HistoryBackupsState, request: number, value: unknown): HistoryBackupsState {
+  if (state.request !== request) return state;
+  const items = normalizeHistoryBackups(value);
+  const selectedId = items.some((backup) => backup.id === state.selectedId) ? state.selectedId : items[0]?.id ?? "";
+  return { ...state, phase: "ready", items, selectedId };
+}
+
+export function failHistoryBackupsLoad(state: HistoryBackupsState, request: number): HistoryBackupsState {
+  return state.request === request ? { ...state, phase: "error", items: [], selectedId: "" } : state;
 }
 
 export function startHistoryQuery(state: HistoryState, query: HistoryQuery): { state: HistoryState; request: number } {
@@ -51,6 +77,27 @@ export function selectHistoryItem(state: HistoryState, id: string | null): Histo
 
 export function setHistoryDetail(state: HistoryState, request: number, detail: Record<string, unknown>): HistoryState {
   return state.detailRequest === request && detail.id === state.selectedId ? { ...state, detail } : state;
+}
+
+export function applyHistoryDetailFailure(
+  state: HistoryState,
+  detail: Record<string, unknown> | null,
+  expectedId: string,
+  expectedRequest: number
+): Record<string, unknown> | null {
+  if (state.selectedId !== expectedId || state.detailRequest !== expectedRequest) return detail;
+  return { error: "无法加载这条历史记录。" };
+}
+
+export function applyHistoryDetailTerminal(
+  state: HistoryState,
+  detail: Record<string, unknown> | null,
+  expectedId: string,
+  expectedRequest: number,
+  status: "error" | "cancelled"
+): Record<string, unknown> | null {
+  if (status !== "error" && status !== "cancelled") return detail;
+  return applyHistoryDetailFailure(state, detail, expectedId, expectedRequest);
 }
 
 export function updateHistoryRating(state: HistoryState, id: string, rating: number | null): HistoryState {

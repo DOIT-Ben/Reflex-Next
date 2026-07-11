@@ -3,7 +3,7 @@
   import { CapabilityBridge } from "./domain/capabilityBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
   import { createHistoryAdminBridge } from "./domain/historyAdminBridge";
-  import { appendHistoryPage, applyHistoryRatingToDetail, createHistoryState, failHistoryQuery, historyElapsedLabel, historyExportFilters, historyScanMessage, normalizeHistoryBackups, removeHistoryItem, selectHistoryItem, startHistoryQuery, updateHistoryRating, type HistoryBackup, type HistoryPage, type HistorySummary } from "./domain/historyState";
+  import { appendHistoryPage, applyHistoryDetailFailure, applyHistoryDetailTerminal, applyHistoryRatingToDetail, createHistoryBackupsState, createHistoryState, failHistoryBackupsLoad, failHistoryQuery, finishHistoryBackupsLoad, historyElapsedLabel, historyExportFilters, historyScanMessage, removeHistoryItem, selectHistoryItem, startHistoryBackupsLoad, startHistoryQuery, updateHistoryRating, type HistoryPage, type HistorySummary } from "./domain/historyState";
   import { listSceneOptions } from "./domain/reflexSession";
 
   const scenes = listSceneOptions();
@@ -23,8 +23,7 @@
   let provider = "";
   let exportFormat: "json" | "csv" | "markdown" = "json";
   let detail: Record<string, unknown> | null = null;
-  let backups: HistoryBackup[] = [];
-  let selectedBackupId = "";
+  let backupsState = createHistoryBackupsState();
   let busy = "";
 
   onMount(() => {
@@ -55,8 +54,17 @@
   async function open(item: HistorySummary) {
     state = selectHistoryItem(state, item.id); detail = null;
     const request = state.detailRequest;
-    try { if (!capability) throw new Error(); for await (const event of capability.invoke("history-sqlite", "detail", { id: item.id })) if (event.status === "result" && state.detailRequest === request && state.selectedId === item.id) detail = (event.data.record ?? {}) as Record<string, unknown>; }
-    catch { detail = { message: "无法加载这条历史记录。" }; }
+    try {
+      if (!capability) throw new Error();
+      for await (const event of capability.invoke("history-sqlite", "detail", { id: item.id })) {
+        if (event.status === "result" && state.detailRequest === request && state.selectedId === item.id) {
+          detail = (event.data.record ?? {}) as Record<string, unknown>;
+        } else if (event.status === "error" || event.status === "cancelled") {
+          detail = applyHistoryDetailTerminal(state, detail, item.id, request, event.status);
+        }
+      }
+    }
+    catch { detail = applyHistoryDetailFailure(state, detail, item.id, request); }
   }
 
   async function rate(rating: number) {
@@ -73,12 +81,12 @@
   }
 
   async function operate(operation: "delete" | "clear" | "repair" | "restore" | "rotate") {
-    if (operation === "restore" && !selectedBackupId) { busy = "请先选择要恢复的备份。"; return; }
+    if (operation === "restore" && (backupsState.phase !== "ready" || !backupsState.selectedId)) { busy = "请先选择要恢复的备份。"; return; }
     busy = "正在处理历史记录...";
     try {
       if (!admin) throw new Error();
       const selectedId = state.selectedId;
-      const input = operation === "delete" && selectedId ? { id: selectedId } : operation === "restore" ? { backup_id: selectedBackupId } : {};
+      const input = operation === "delete" && selectedId ? { id: selectedId } : operation === "restore" ? { backup_id: backupsState.selectedId } : {};
       const result = await admin.run(operation, input);
       if (result === "cancelled") { busy = ""; return; }
       if (operation === "delete" && selectedId) {
@@ -107,13 +115,19 @@
   }
 
   async function loadBackups() {
+    const started = startHistoryBackupsLoad(backupsState);
+    backupsState = started.state;
     try {
       if (!capability) throw new Error();
+      let received = false;
       for await (const event of capability.invoke("history-sqlite", "backups", {})) {
-        if (event.status === "result") backups = normalizeHistoryBackups(event.data);
+        if (event.status === "result") {
+          backupsState = finishHistoryBackupsLoad(backupsState, started.request, event.data);
+          received = true;
+        }
       }
-      if (!backups.some((backup) => backup.id === selectedBackupId)) selectedBackupId = backups[0]?.id ?? "";
-    } catch { backups = []; selectedBackupId = ""; }
+      if (!received) throw new Error();
+    } catch { backupsState = failHistoryBackupsLoad(backupsState, started.request); }
   }
 
   async function scanHistory() {
@@ -131,9 +145,9 @@
 </script>
 
 <main class="history-shell">
-  <header class="history-head"><div><strong>Reflex</strong><span>历史记录</span></div><div class="history-actions"><details class="history-menu"><summary aria-label="历史记录维护">维护</summary><div class="history-menu-panel"><label>导出格式<select aria-label="导出格式" bind:value={exportFormat}><option value="json">JSON</option><option value="csv">CSV</option><option value="markdown">Markdown</option></select></label><button aria-label="导出历史记录" on:click={exportHistory}>导出</button><button on:click={scanHistory}>检查记录</button><button aria-label="修复历史记录" on:click={() => operate("repair")}>修复</button><label>恢复备份<select aria-label="恢复备份" bind:value={selectedBackupId} disabled={!backups.length}><option value="">暂无备份</option>{#each backups as backup (backup.id)}<option value={backup.id}>{backup.created_at} · {backup.record_count} 条</option>{/each}</select></label><button disabled={!selectedBackupId} on:click={() => operate("restore")}>恢复</button><button on:click={() => operate("rotate")}>轮换密钥</button><button class="danger" on:click={() => operate("clear")}>清空历史</button></div></details></div></header>
+  <header class="history-head"><div><strong>Reflex</strong><span>历史记录</span></div><div class="history-actions"><details class="history-menu"><summary aria-label="历史记录维护">维护</summary><div class="history-menu-panel"><label>导出格式<select aria-label="导出格式" bind:value={exportFormat}><option value="json">JSON</option><option value="csv">CSV</option><option value="markdown">Markdown</option></select></label><button aria-label="导出历史记录" on:click={exportHistory}>导出</button><button on:click={scanHistory}>检查记录</button><button aria-label="修复历史记录" on:click={() => operate("repair")}>修复</button><label>恢复备份<select aria-label="恢复备份" bind:value={backupsState.selectedId} disabled={backupsState.phase !== "ready" || !backupsState.items.length}>{#if backupsState.phase === "loading"}<option value="">正在加载备份...</option>{:else if backupsState.phase === "error"}<option value="">备份列表暂时不可用</option>{:else if !backupsState.items.length}<option value="">暂无备份</option>{/if}{#each backupsState.items as backup (backup.id)}<option value={backup.id}>{backup.created_at} · {backup.record_count} 条</option>{/each}</select></label>{#if backupsState.phase === "loading" || backupsState.phase === "error"}<p class:error={backupsState.phase === "error"} class="history-backup-status" role="status" aria-live="polite">{backupsState.phase === "loading" ? "正在加载备份..." : "备份列表暂时不可用"}</p>{/if}{#if backupsState.phase === "error"}<button aria-label="重试加载备份" on:click={loadBackups}>重试备份</button>{/if}<button disabled={backupsState.phase !== "ready" || !backupsState.selectedId} on:click={() => operate("restore")}>恢复</button><button on:click={() => operate("rotate")}>轮换密钥</button><button class="danger" on:click={() => operate("clear")}>清空历史</button></div></details></div></header>
   <section class="history-tools"><input aria-label="搜索历史记录" bind:value={search} placeholder="搜索历史记录" /><select aria-label="场景筛选" bind:value={scene}><option value="">全部场景</option>{#each scenes as item (item.id)}<option value={item.id}>{item.label}</option>{/each}</select><select aria-label="风格筛选" bind:value={style}><option value="">全部风格</option>{#each styles as item (item.id)}<option value={item.id}>{item.label}</option>{/each}</select><input aria-label="Provider 筛选" bind:value={provider} placeholder="全部 Provider" /><button on:click={() => load({ search, scene, style, provider })}>筛选</button></section>
-  {#if busy}<p class="history-notice">{busy}</p>{/if}
+  {#if busy}<p class="history-notice" role="status" aria-live="polite">{busy}</p>{/if}
   <section class="history-workspace">
     <aside class="history-list" aria-label="历史记录列表">
       {#if state.phase === "loading"}<p class="history-state">正在加载历史记录...</p>
@@ -143,8 +157,9 @@
     </aside>
     <article class="history-detail">
       {#if !state.selectedId}<p class="history-state">选择一条历史记录查看详情。</p>
-      {:else if !detail}<p class="history-state">正在加载详情...</p>
-      {:else}<div class="detail-actions"><span>评分</span>{#each [1,2,3,4,5] as score}<button aria-label={`评分 ${score}`} on:click={() => rate(score)}>{score}</button>{/each}<button aria-label="删除当前历史记录" on:click={() => operate("delete")}>删除</button></div><dl class="history-fields"><div><dt>场景</dt><dd>{detail.scene ?? "-"}</dd></div><div><dt>Provider</dt><dd>{detail.provider ?? "-"}</dd></div><div><dt>模式</dt><dd>{detail.mode ?? "-"}</dd></div><div><dt>耗时</dt><dd>{historyElapsedLabel(detail)}</dd></div></dl><h2>原文</h2><pre>{detail.input ?? ""}</pre><h2>结果</h2><pre>{detail.output ?? ""}</pre><div class="detail-actions"><button on:click={() => reuse("input")}>载入原文</button><button on:click={() => reuse("result")}>使用结果</button></div>{/if}
+      {:else if !detail}<p class="history-state" role="status" aria-live="polite">正在加载详情...</p>
+      {:else if typeof detail.error === "string"}<p class="history-state error" role="alert">{detail.error}</p>
+      {:else}<div class="detail-actions"><span>评分</span>{#each [1,2,3,4,5] as score}<button aria-label={`评分 ${score}`} aria-pressed={detail.rating === score} on:click={() => rate(score)}>{score}</button>{/each}<button aria-label="删除当前历史记录" on:click={() => operate("delete")}>删除</button></div><dl class="history-fields"><div><dt>场景</dt><dd>{detail.scene ?? "-"}</dd></div><div><dt>Provider</dt><dd>{detail.provider ?? "-"}</dd></div><div><dt>模式</dt><dd>{detail.mode ?? "-"}</dd></div><div><dt>耗时</dt><dd>{historyElapsedLabel(detail)}</dd></div></dl><h2>原文</h2><pre>{detail.input ?? ""}</pre><h2>结果</h2><pre>{detail.output ?? ""}</pre><div class="detail-actions"><button on:click={() => reuse("input")}>载入原文</button><button on:click={() => reuse("result")}>使用结果</button></div>{/if}
     </article>
   </section>
 </main>

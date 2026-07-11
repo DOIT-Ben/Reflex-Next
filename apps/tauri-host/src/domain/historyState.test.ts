@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { appendHistoryPage, applyHistoryRatingToDetail, createHistoryState, failHistoryQuery, finishHistoryOperation, historyElapsedLabel, historyExportFilters, historyScanMessage, normalizeHistoryBackups, removeHistoryItem, selectHistoryItem, setHistoryDetail, startHistoryOperation, startHistoryQuery, updateHistoryRating } from "./historyState";
+import { appendHistoryPage, applyHistoryDetailFailure, applyHistoryDetailTerminal, applyHistoryRatingToDetail, createHistoryBackupsState, createHistoryState, failHistoryBackupsLoad, failHistoryQuery, finishHistoryBackupsLoad, finishHistoryOperation, historyElapsedLabel, historyExportFilters, historyScanMessage, normalizeHistoryBackups, removeHistoryItem, selectHistoryItem, setHistoryDetail, startHistoryBackupsLoad, startHistoryOperation, startHistoryQuery, updateHistoryRating } from "./historyState";
 
 describe("history state", () => {
   it("resets the cursor and ignores an old response after filters change", () => {
@@ -129,5 +129,48 @@ describe("history state", () => {
 
     expect(applyHistoryRatingToDetail(two, twoDetail, "one", oneRequest, 5)).toBe(twoDetail);
     expect(applyHistoryRatingToDetail(one, { id: "one", rating: null }, "one", oneRequest, 5)).toEqual({ id: "one", rating: 5 });
+  });
+
+  it("does not let an old detail failure replace a newer detail", () => {
+    const listed = appendHistoryPage(startHistoryQuery(createHistoryState(), {}).state, 1, { items: [
+      { id: "one", created_at: "a", scene: "general", style: "balanced", provider: "minimax", rating: null },
+      { id: "two", created_at: "b", scene: "email", style: "concise", provider: "other", rating: null }
+    ], next_cursor: null });
+    const one = selectHistoryItem(listed, "one");
+    const two = selectHistoryItem(one, "two");
+    const twoDetail = { id: "two", output: "current" };
+
+    expect(applyHistoryDetailFailure(two, twoDetail, "one", one.detailRequest)).toBe(twoDetail);
+    expect(applyHistoryDetailFailure(one, null, "one", one.detailRequest)).toEqual({ error: "无法加载这条历史记录。" });
+  });
+
+  it("turns terminal detail errors into a visible failure state", () => {
+    const listed = appendHistoryPage(startHistoryQuery(createHistoryState(), {}).state, 1, { items: [
+      { id: "one", created_at: "a", scene: "general", style: "balanced", provider: "minimax", rating: null }
+    ], next_cursor: null });
+    const selected = selectHistoryItem(listed, "one");
+
+    expect(applyHistoryDetailTerminal(selected, null, "one", selected.detailRequest, "error")).toEqual({ error: expect.any(String) });
+    expect(applyHistoryDetailTerminal(selected, null, "one", selected.detailRequest, "cancelled")).toEqual({ error: expect.any(String) });
+  });
+
+  it("keeps an old backup response from replacing the current backup state", () => {
+    const initial = { ...createHistoryBackupsState(), phase: "ready" as const, selectedId: "backup-old" };
+    const first = startHistoryBackupsLoad(initial);
+    const second = startHistoryBackupsLoad(first.state);
+    const current = finishHistoryBackupsLoad(second.state, second.request, {
+      items: [{ id: "backup-new", created_at: "2026-07-11T12:00:00Z", record_count: 2 }]
+    });
+
+    expect(first.state.selectedId).toBe("");
+    expect(finishHistoryBackupsLoad(current, first.request, { items: [] })).toBe(current);
+    expect(failHistoryBackupsLoad(current, first.request)).toBe(current);
+  });
+
+  it("represents a current backup load failure without a selectable backup", () => {
+    const started = startHistoryBackupsLoad(createHistoryBackupsState());
+    expect(failHistoryBackupsLoad(started.state, started.request)).toEqual({
+      phase: "error", items: [], selectedId: "", request: started.request
+    });
   });
 });
