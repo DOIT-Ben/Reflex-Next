@@ -126,9 +126,7 @@ class CapabilityRegistry:
     def configure_history_keys(self, keys: dict[str, str]) -> None:
         if not isinstance(keys, dict) or any(
             not _safe_key_version(version)
-            or not isinstance(secret, str)
-            or not secret
-            or len(secret) > 16_384
+            or not _safe_history_key(secret)
             for version, secret in keys.items()
         ):
             with self._lock:
@@ -324,16 +322,23 @@ class CapabilityRegistry:
 
 
 def _safe_key_version(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith("v"):
+        return False
+    version = value[1:]
+    if (
+        not version
+        or len(version) > 7
+        or not version.isascii()
+        or not version.isdigit()
+    ):
+        return False
+    version_number = int(version)
+    return 1 <= version_number <= 1_000_000 and version == str(version_number)
+
+
+def _safe_history_key(value: object) -> bool:
     return (
         isinstance(value, str)
-        and 1 <= len(value) <= 32
-        and value[0].isascii()
-        and value[0].isalnum()
-        and ".." not in value
-        and any(character.isdigit() for character in value)
-        and all(
-            character.isascii()
-            and (character.isalnum() or character in "-_.")
-            for character in value
-        )
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
     )

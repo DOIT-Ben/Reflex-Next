@@ -506,7 +506,7 @@ def test_protocol_stream_close_is_idempotent_after_complete_cleanup():
         ("ping", {}),
         ("list_plugins", {}),
         ("configure_plugin", {"plugin_id": "translator", "enabled": False}),
-        ("configure_history_keys", {"keys": {"v1": "fixture-secret"}}),
+        ("configure_history_keys", {"keys": {"v1": "11" * 32}}),
         (
             "configure_history_policy",
             {
@@ -909,7 +909,7 @@ def test_context_list_uses_registry_unavailable_state_for_unloaded_history():
                 "version": 1,
                 "request_id": "keys-unloaded",
                 "type": "configure_history_keys",
-                "payload": {"keys": {"v1": "fixture-history-secret"}},
+                "payload": {"keys": {"v1": "11" * 32}},
             }
         )
     )
@@ -950,7 +950,7 @@ def test_context_list_tracks_loaded_history_policy_state_changes():
         (
             "keys-loaded",
             "configure_history_keys",
-            {"keys": {"v1": "fixture-history-secret"}},
+            {"keys": {"v1": "11" * 32}},
         ),
         (
             "policy-loaded",

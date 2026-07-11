@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 pub const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_BACKUP_FILE_NAME: &str = "config.json.bak";
 const CONFIG_TEMP_FILE_NAME: &str = "config.json.tmp";
-const CURRENT_CONFIG_VERSION: u32 = 1;
+const CURRENT_CONFIG_VERSION: u32 = 2;
 const CONFIG_ERROR_MESSAGE: &str = "配置存储暂不可用。";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -27,6 +27,8 @@ pub struct AppConfig {
     pub clipboard_replace_confirmed: bool,
     pub history_enabled: bool,
     pub privacy_mode: bool,
+    pub history_redaction: String,
+    pub enabled_plugins: Vec<String>,
     pub language: String,
     pub theme: String,
     pub hotkey: String,
@@ -47,8 +49,10 @@ impl Default for AppConfig {
             scene_policy: "auto".to_string(),
             clipboard_policy: "manual".to_string(),
             clipboard_replace_confirmed: false,
-            history_enabled: true,
+            history_enabled: false,
             privacy_mode: false,
+            history_redaction: "secrets".to_string(),
+            enabled_plugins: vec!["translator".to_string(), "markdown-preview".to_string()],
             language: "zh-CN".to_string(),
             theme: "system".to_string(),
             hotkey: "Ctrl+Alt+R".to_string(),
@@ -64,7 +68,7 @@ impl AppConfig {
         let Value::Object(mut object) = value else {
             return Err(ConfigStoreError);
         };
-        migrate_legacy_fields(&mut object)?;
+        let source_version = migrate_legacy_fields(&mut object)?;
 
         let defaults = Self::default();
         let known_fields = known_config_fields();
@@ -105,6 +109,17 @@ impl AppConfig {
         );
         let hotkey = normalized_bounded_string(object.get("hotkey"), &defaults.hotkey, 128);
         let ca_bundle_path = normalized_optional_string(object.get("ca_bundle_path"), 2048);
+        let history_redaction = if source_version == u64::from(CURRENT_CONFIG_VERSION) {
+            normalized_choice(
+                object.get("history_redaction"),
+                &defaults.history_redaction,
+                &["secrets", "none"],
+            )
+        } else {
+            defaults.history_redaction.clone()
+        };
+        let enabled_plugins =
+            normalized_plugins(object.get("enabled_plugins"), &defaults.enabled_plugins);
 
         Ok(Self {
             version: CURRENT_CONFIG_VERSION,
@@ -118,14 +133,17 @@ impl AppConfig {
                 .get("clipboard_replace_confirmed")
                 .and_then(Value::as_bool)
                 .unwrap_or(defaults.clipboard_replace_confirmed),
-            history_enabled: object
-                .get("history_enabled")
-                .and_then(Value::as_bool)
-                .unwrap_or(defaults.history_enabled),
+            history_enabled: source_version == u64::from(CURRENT_CONFIG_VERSION)
+                && object
+                    .get("history_enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(defaults.history_enabled),
             privacy_mode: object
                 .get("privacy_mode")
                 .and_then(Value::as_bool)
                 .unwrap_or(defaults.privacy_mode),
+            history_redaction,
+            enabled_plugins,
             language,
             theme,
             hotkey,
@@ -284,7 +302,7 @@ fn replace_primary_file(
     fs::rename(temporary, primary).map_err(|_| ConfigStoreError)
 }
 
-fn migrate_legacy_fields(object: &mut Map<String, Value>) -> Result<(), ConfigStoreError> {
+fn migrate_legacy_fields(object: &mut Map<String, Value>) -> Result<u64, ConfigStoreError> {
     let version = object.get("version").and_then(Value::as_u64).unwrap_or(0);
     if version > u64::from(CURRENT_CONFIG_VERSION) {
         return Err(ConfigStoreError);
@@ -305,7 +323,7 @@ fn migrate_legacy_fields(object: &mut Map<String, Value>) -> Result<(), ConfigSt
         }
     }
     object.insert("version".to_string(), Value::from(CURRENT_CONFIG_VERSION));
-    Ok(())
+    Ok(version)
 }
 
 fn known_config_fields() -> HashSet<&'static str> {
@@ -320,6 +338,8 @@ fn known_config_fields() -> HashSet<&'static str> {
         "clipboard_replace_confirmed",
         "history_enabled",
         "privacy_mode",
+        "history_redaction",
+        "enabled_plugins",
         "language",
         "theme",
         "hotkey",
@@ -331,22 +351,38 @@ fn known_config_fields() -> HashSet<&'static str> {
 }
 
 fn validate_extension_keys(extensions: &Map<String, Value>) -> Result<(), ConfigStoreError> {
-    let forbidden = [
+    if extensions
+        .iter()
+        .any(|(key, value)| is_secret_like_key(key) || contains_secret_like_extension_field(value))
+    {
+        Err(ConfigStoreError)
+    } else {
+        Ok(())
+    }
+}
+
+fn contains_secret_like_extension_field(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().any(contains_secret_like_extension_field),
+        Value::Object(values) => values.iter().any(|(key, value)| {
+            is_secret_like_key(key) || contains_secret_like_extension_field(value)
+        }),
+        _ => false,
+    }
+}
+
+fn is_secret_like_key(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase().replace('-', "_");
+    [
         "api_key",
         "apikey",
         "token",
         "secret",
         "authorization",
         "password",
-    ];
-    if extensions.keys().any(|key| {
-        let normalized = key.to_ascii_lowercase().replace('-', "_");
-        forbidden.iter().any(|part| normalized.contains(part))
-    }) {
-        Err(ConfigStoreError)
-    } else {
-        Ok(())
-    }
+    ]
+    .iter()
+    .any(|part| normalized.contains(part))
 }
 
 fn normalized_provider(value: Option<&Value>, fallback: &str) -> String {
@@ -374,6 +410,17 @@ fn normalized_choice(value: Option<&Value>, fallback: &str, allowed: &[&str]) ->
         .find(|candidate| **candidate == value)
         .map(|value| (*value).to_string())
         .unwrap_or_else(|| fallback.to_string())
+}
+
+fn normalized_plugins(value: Option<&Value>, fallback: &[String]) -> Vec<String> {
+    let Some(values) = value.and_then(Value::as_array) else {
+        return fallback.to_vec();
+    };
+    ["translator", "markdown-preview"]
+        .into_iter()
+        .filter(|allowed| values.iter().any(|value| value.as_str() == Some(*allowed)))
+        .map(str::to_string)
+        .collect()
 }
 
 fn normalized_bounded_string(value: Option<&Value>, fallback: &str, max_len: usize) -> String {
@@ -437,7 +484,7 @@ mod tests {
     fn defaults_are_safe_and_match_the_stage_a_contract() {
         let config = AppConfig::default();
 
-        assert_eq!(config.version, 1);
+        assert_eq!(config.version, 2);
         assert_eq!(config.provider, "minimax");
         assert_eq!(config.model, "MiniMax-M2.7-highspeed");
         assert_eq!(config.mode, "content");
@@ -445,8 +492,10 @@ mod tests {
         assert_eq!(config.scene_policy, "auto");
         assert_eq!(config.clipboard_policy, "manual");
         assert!(!config.clipboard_replace_confirmed);
-        assert!(config.history_enabled);
+        assert!(!config.history_enabled);
         assert!(!config.privacy_mode);
+        assert_eq!(config.history_redaction, "secrets");
+        assert_eq!(config.enabled_plugins, ["translator", "markdown-preview"]);
         assert_eq!(config.language, "zh-CN");
         assert_eq!(config.theme, "system");
         assert!(config.tls_verify);
@@ -456,13 +505,15 @@ mod tests {
     #[test]
     fn invalid_values_fall_back_without_dropping_unknown_fields() {
         let config = AppConfig::from_value(json!({
-            "version": 1,
+            "version": 2,
             "provider": "../minimax",
             "model": "",
             "mode": "unsafe",
             "style": "verbose",
             "scene_policy": "guess",
             "clipboard_policy": "always",
+            "history_redaction": "raw",
+            "enabled_plugins": ["translator", "history-sqlite", "../unsafe"],
             "language": "fr-FR",
             "theme": "purple",
             "tls_verify": false,
@@ -477,6 +528,8 @@ mod tests {
         assert_eq!(config.style, "balanced");
         assert_eq!(config.scene_policy, "auto");
         assert_eq!(config.clipboard_policy, "manual");
+        assert_eq!(config.history_redaction, "secrets");
+        assert_eq!(config.enabled_plugins, ["translator"]);
         assert_eq!(config.language, "zh-CN");
         assert_eq!(config.theme, "system");
         assert!(config.tls_verify);
@@ -498,12 +551,48 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(config.version, 1);
+        assert_eq!(config.version, 2);
         assert_eq!(config.provider, "minimax");
         assert_eq!(config.model, "legacy-model");
         assert_eq!(config.mode, "prompt");
         assert_eq!(config.style, "creative");
+        assert!(!config.history_enabled);
+        assert_eq!(config.history_redaction, "secrets");
+        assert_eq!(config.enabled_plugins, ["translator", "markdown-preview"]);
         assert!(!config.extensions.contains_key("default_provider"));
+    }
+
+    #[test]
+    fn version_one_migration_forces_history_off_even_when_legacy_value_was_true() {
+        let config = AppConfig::from_value(json!({
+            "version": 1,
+            "history_enabled": true,
+            "privacy_mode": true,
+            "history_redaction": "none"
+        }))
+        .unwrap();
+
+        assert_eq!(config.version, 2);
+        assert!(!config.history_enabled);
+        assert!(config.privacy_mode);
+        assert_eq!(config.history_redaction, "secrets");
+    }
+
+    #[test]
+    fn version_two_preserves_explicit_history_policy_and_valid_plugins() {
+        let config = AppConfig::from_value(json!({
+            "version": 2,
+            "history_enabled": true,
+            "privacy_mode": true,
+            "history_redaction": "none",
+            "enabled_plugins": ["markdown-preview", "translator", "translator"]
+        }))
+        .unwrap();
+
+        assert!(config.history_enabled);
+        assert!(config.privacy_mode);
+        assert_eq!(config.history_redaction, "none");
+        assert_eq!(config.enabled_plugins, ["translator", "markdown-preview"]);
     }
 
     #[test]
@@ -545,5 +634,19 @@ mod tests {
 
         assert!(store.save(&config).is_err());
         assert!(!directory.path().join(CONFIG_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn refuses_nested_secret_like_extension_fields() {
+        let config = AppConfig::from_value(json!({
+            "version": 2,
+            "future_provider": {
+                "credentials": {
+                    "token": "history-fixture-key"
+                }
+            }
+        }));
+
+        assert!(config.is_err());
     }
 }

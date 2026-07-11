@@ -17,6 +17,7 @@ pub const DUPLICATE_REQUEST_MESSAGE: &str = "运行请求重复。";
 pub const REQUEST_NOT_FOUND_MESSAGE: &str = "目标请求不存在。";
 pub const REQUEST_SESSION_FULL_MESSAGE: &str = "运行会话已满，请重启应用。";
 const MAX_SEEN_REQUEST_IDS: usize = 100_000;
+const PRIVATE_CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(2);
 pub const CORE_EVENT_NAME: &str = "reflex://core-event";
 pub const PLUGIN_EVENT_NAME: &str = "reflex://plugin-event";
 pub const CAPABILITY_LIST_EVENT_NAME: &str = "reflex://capability-list";
@@ -433,6 +434,7 @@ where
     emitter: Arc<dyn EventEmitter>,
     request_registry: Arc<HostRequestRegistry>,
     running: Arc<Mutex<Option<RunningProcess>>>,
+    sequence: Mutex<()>,
 }
 
 impl<F> RuntimeSidecar<F>
@@ -454,6 +456,7 @@ where
             emitter,
             request_registry,
             running: Arc::new(Mutex::new(None)),
+            sequence: Mutex::new(()),
         }
     }
 
@@ -466,23 +469,34 @@ where
 
     #[allow(dead_code)]
     pub fn send_sequence(&self, commands: Vec<ValidatedCommand>) -> Result<(), &'static str> {
-        let mut receivers = Vec::new();
-        let commands = commands
-            .into_iter()
-            .map(|command| {
-                let route = if is_private_command(command.kind) {
-                    let (sender, receiver) = mpsc::channel();
-                    receivers.push(receiver);
-                    RequestRoute::Private(sender)
-                } else {
-                    RequestRoute::Public
-                };
-                (command, route)
-            })
-            .collect();
-        let result = self.send_routed(commands);
-        drop(receivers);
-        result
+        let _sequence = self
+            .sequence
+            .lock()
+            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+        let mut generation = None;
+        for command in commands {
+            if let Some(expected_message) = expected_private_status(command.kind) {
+                let (mut stream, active_requests) =
+                    self.send_private_for_generation(command, generation.as_ref())?;
+                if generation.is_none() {
+                    generation = Some(active_requests);
+                }
+                let payload = stream.recv_timeout(PRIVATE_CONFIGURATION_TIMEOUT)?;
+                if !is_expected_private_success(&payload, expected_message) {
+                    return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+                }
+            } else if is_private_command(command.kind) {
+                self.send_detached_private(command, generation.as_ref())?;
+            } else if let Some(expected) = generation.as_ref() {
+                self.send_routed_with_generation(
+                    vec![(command, RequestRoute::Public)],
+                    Some(expected),
+                )?;
+            } else {
+                self.send(command)?;
+            }
+        }
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -490,6 +504,15 @@ where
         &self,
         command: ValidatedCommand,
     ) -> Result<PrivateEventStream, &'static str> {
+        self.send_private_for_generation(command, None)
+            .map(|(stream, _)| stream)
+    }
+
+    fn send_private_for_generation(
+        &self,
+        command: ValidatedCommand,
+        expected_generation: Option<&ActiveRequests>,
+    ) -> Result<(PrivateEventStream, ActiveRequests), &'static str> {
         if !is_private_command(command.kind)
             || command.kind == crate::runtime_commands::CommandKind::Cancel
         {
@@ -497,27 +520,51 @@ where
         }
         let request_id = command.request_id.clone();
         let (sender, receiver) = mpsc::channel();
-        let active_requests =
-            self.send_routed_with_registry(vec![(command, RequestRoute::Private(sender))])?;
-        Ok(PrivateEventStream {
-            request_id,
-            receiver,
+        let active_requests = self.send_routed_with_generation(
+            vec![(command, RequestRoute::Private(sender))],
+            expected_generation,
+        )?;
+        Ok((
+            PrivateEventStream {
+                request_id,
+                receiver,
+                active_requests: active_requests.clone(),
+                running: self.running.clone(),
+                emitter: self.emitter.clone(),
+            },
             active_requests,
-            running: self.running.clone(),
-            emitter: self.emitter.clone(),
-        })
+        ))
+    }
+
+    fn send_detached_private(
+        &self,
+        command: ValidatedCommand,
+        expected_generation: Option<&ActiveRequests>,
+    ) -> Result<(), &'static str> {
+        if !is_private_command(command.kind)
+            || command.kind == crate::runtime_commands::CommandKind::Cancel
+        {
+            return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+        }
+        let (sender, _receiver) = mpsc::channel();
+        self.send_routed_with_generation(
+            vec![(command, RequestRoute::Private(sender))],
+            expected_generation,
+        )
+        .map(|_| ())
     }
 
     fn send_routed(
         &self,
         commands: Vec<(ValidatedCommand, RequestRoute)>,
     ) -> Result<(), &'static str> {
-        self.send_routed_with_registry(commands).map(|_| ())
+        self.send_routed_with_generation(commands, None).map(|_| ())
     }
 
-    fn send_routed_with_registry(
+    fn send_routed_with_generation(
         &self,
         commands: Vec<(ValidatedCommand, RequestRoute)>,
+        expected_generation: Option<&ActiveRequests>,
     ) -> Result<ActiveRequests, &'static str> {
         if commands.is_empty() {
             return Err(RUNTIME_UNAVAILABLE_MESSAGE);
@@ -549,6 +596,18 @@ where
                 }
             }
         }
+        let allow_restart = expected_generation.is_none();
+        if let Some(expected_generation) = expected_generation {
+            let Some(child) = running.as_mut() else {
+                return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+            };
+            if !Arc::ptr_eq(&child.active_requests, expected_generation)
+                || child.unhealthy.load(Ordering::Acquire)
+                || child.process.has_exited().unwrap_or(true)
+            {
+                return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+            }
+        }
         self.request_registry
             .claim_many(commands.iter().filter_map(|(command, _)| {
                 (command.kind != crate::runtime_commands::CommandKind::Cancel)
@@ -561,8 +620,10 @@ where
                     || child.process.has_exited().unwrap_or(true)
             })
             .unwrap_or(true);
-
         if needs_restart {
+            if !allow_restart {
+                return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+            }
             if let Some(mut previous) = running.take() {
                 previous.stopping.store(true, Ordering::Release);
                 fail_all_requests(&self.emitter, &previous.active_requests);
@@ -748,7 +809,7 @@ pub struct RuntimeController {
     emitter: Arc<dyn EventEmitter>,
     request_registry: Arc<HostRequestRegistry>,
     lifecycle: Mutex<RuntimeLifecycle>,
-    sidecar: Mutex<Option<RuntimeSidecar<OsProcessFactory>>>,
+    sidecar: Mutex<Option<Arc<RuntimeSidecar<OsProcessFactory>>>>,
 }
 
 #[derive(Default)]
@@ -775,29 +836,17 @@ impl RuntimeController {
     }
 
     pub(crate) fn send_unlocked(&self, command: ValidatedCommand) -> Result<(), &'static str> {
-        let mut sidecar = self
-            .sidecar
-            .lock()
-            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
-        if sidecar.is_none() {
-            let paths = resolve_runtime_paths()?;
-            let launch = build_launch_spec(resolve_python_launcher()?, &paths)?;
-            *sidecar = Some(RuntimeSidecar::new_with_registry(
-                OsProcessFactory::new(launch),
-                self.emitter.clone(),
-                self.request_registry.clone(),
-            ));
-        }
-        sidecar
-            .as_ref()
-            .ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?
-            .send(command)
+        self.get_or_start_sidecar()?.send(command)
     }
 
     pub(crate) fn send_sequence_unlocked(
         &self,
         commands: Vec<ValidatedCommand>,
     ) -> Result<(), &'static str> {
+        self.get_or_start_sidecar()?.send_sequence(commands)
+    }
+
+    fn get_or_start_sidecar(&self) -> Result<Arc<RuntimeSidecar<OsProcessFactory>>, &'static str> {
         let mut sidecar = self
             .sidecar
             .lock()
@@ -805,16 +854,13 @@ impl RuntimeController {
         if sidecar.is_none() {
             let paths = resolve_runtime_paths()?;
             let launch = build_launch_spec(resolve_python_launcher()?, &paths)?;
-            *sidecar = Some(RuntimeSidecar::new_with_registry(
+            *sidecar = Some(Arc::new(RuntimeSidecar::new_with_registry(
                 OsProcessFactory::new(launch),
                 self.emitter.clone(),
                 self.request_registry.clone(),
-            ));
+            )));
         }
-        sidecar
-            .as_ref()
-            .ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?
-            .send_sequence(commands)
+        sidecar.as_ref().cloned().ok_or(RUNTIME_UNAVAILABLE_MESSAGE)
     }
 
     #[allow(dead_code)]
@@ -973,6 +1019,24 @@ fn is_private_command(kind: crate::runtime_commands::CommandKind) -> bool {
     )
 }
 
+fn expected_private_status(kind: crate::runtime_commands::CommandKind) -> Option<&'static str> {
+    use crate::runtime_commands::CommandKind;
+
+    match kind {
+        CommandKind::ConfigureProvider => Some("provider_configured"),
+        CommandKind::ConfigurePlugin => Some("plugin_configured"),
+        CommandKind::ConfigureHistoryKeys => Some("history_keys_configured"),
+        CommandKind::ConfigureHistoryPolicy => Some("history_policy_configured"),
+        _ => None,
+    }
+}
+
+fn is_expected_private_success(payload: &Value, expected_message: &str) -> bool {
+    payload["event"]["type"] == "status"
+        && payload["event"]["data"]["phase"] == "completed"
+        && payload["event"]["data"]["message"] == expected_message
+}
+
 fn route_parsed_event(
     emitter: &Arc<dyn EventEmitter>,
     active_requests: &ActiveRequests,
@@ -986,14 +1050,15 @@ fn route_parsed_event(
         return;
     };
     if !request.contract.matches(&parsed) {
-        dispatch_failure(emitter, &request, &parsed.request_id);
         remove_active_request(active_requests, &parsed.request_id, &request);
+        dispatch_failure(emitter, &request, &parsed.request_id);
         return;
     }
     let terminal = parsed.terminal;
-    if request.dispatch(emitter, parsed.payload, terminal) && terminal {
+    if terminal {
         remove_active_request(active_requests, &parsed.request_id, &request);
     }
+    request.dispatch(emitter, parsed.payload, terminal);
 }
 
 fn remove_active_request(
@@ -2030,6 +2095,330 @@ mod tests {
     }
 
     #[test]
+    fn first_plugin_configuration_failure_stops_before_later_configuration_and_optimize() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
+        let process = FakeProcess::with_stdout_reader(
+            writes.clone(),
+            Box::new(WriteGatedReader::new(
+                writes.clone(),
+                release.clone(),
+                vec![
+                    (1, core_status("provider-1", "provider_configured")),
+                    (2, core_error("plugin-1", "plugin_configuration_denied")),
+                ],
+            )),
+        );
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![process]),
+            Arc::new(NamedRecordingEmitter(events.clone())),
+        );
+        let provider = configure_provider_command(
+            "minimax",
+            "history-fixture-provider-key",
+            json!({ "model": "fixture-model" }),
+        )
+        .unwrap();
+        let provider = ValidatedCommand {
+            request_id: "provider-1".to_string(),
+            ..provider
+        };
+
+        let result = sidecar.send_sequence(vec![
+            provider.clone(),
+            plugin_configuration("plugin-1", "translator", true),
+            plugin_configuration("plugin-2", "markdown-preview", true),
+            optimize_command("optimize-1"),
+        ]);
+
+        release.store(true, Ordering::Release);
+        assert_eq!(result, Err(RUNTIME_UNAVAILABLE_MESSAGE));
+        assert_eq!(
+            written_command_types(&writes),
+            ["configure_provider", "configure_plugin"]
+        );
+        assert!(events.lock().unwrap().is_empty());
+        assert!(!format!("{provider:?} {result:?}").contains("history-fixture-provider-key"));
+    }
+
+    #[test]
+    fn second_plugin_configuration_failure_stops_before_optimize() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
+        let process = FakeProcess::with_stdout_reader(
+            writes.clone(),
+            Box::new(WriteGatedReader::new(
+                writes.clone(),
+                release.clone(),
+                vec![
+                    (1, core_status("provider-2", "provider_configured")),
+                    (2, core_status("plugin-3", "plugin_configured")),
+                    (3, core_error("plugin-4", "plugin_configuration_denied")),
+                ],
+            )),
+        );
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![process]),
+            Arc::new(FakeEmitter),
+        );
+        let provider = configure_provider_command(
+            "minimax",
+            "history-fixture-provider-key",
+            json!({ "model": "fixture-model" }),
+        )
+        .unwrap();
+
+        let result = sidecar.send_sequence(vec![
+            ValidatedCommand {
+                request_id: "provider-2".to_string(),
+                ..provider
+            },
+            plugin_configuration("plugin-3", "translator", true),
+            plugin_configuration("plugin-4", "markdown-preview", true),
+            optimize_command("optimize-2"),
+        ]);
+
+        release.store(true, Ordering::Release);
+        assert_eq!(result, Err(RUNTIME_UNAVAILABLE_MESSAGE));
+        assert_eq!(
+            written_command_types(&writes),
+            ["configure_provider", "configure_plugin", "configure_plugin"]
+        );
+    }
+
+    #[test]
+    fn optimize_is_sent_only_after_every_private_configuration_succeeds() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
+        let process = FakeProcess::with_stdout_reader(
+            writes.clone(),
+            Box::new(WriteGatedReader::new(
+                writes.clone(),
+                release.clone(),
+                vec![
+                    (1, core_status("provider-3", "provider_configured")),
+                    (2, core_status("plugin-5", "plugin_configured")),
+                    (3, core_status("plugin-6", "plugin_configured")),
+                ],
+            )),
+        );
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![process]),
+            Arc::new(FakeEmitter),
+        );
+        let provider = configure_provider_command(
+            "minimax",
+            "history-fixture-provider-key",
+            json!({ "model": "fixture-model" }),
+        )
+        .unwrap();
+
+        let result = sidecar.send_sequence(vec![
+            ValidatedCommand {
+                request_id: "provider-3".to_string(),
+                ..provider
+            },
+            plugin_configuration("plugin-5", "translator", true),
+            plugin_configuration("plugin-6", "markdown-preview", true),
+            optimize_command("optimize-3"),
+        ]);
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(
+            written_command_types(&writes),
+            [
+                "configure_provider",
+                "configure_plugin",
+                "configure_plugin",
+                "optimize"
+            ]
+        );
+        release.store(true, Ordering::Release);
+    }
+
+    #[test]
+    fn private_configuration_timeout_cleans_the_route_and_never_sends_optimize() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![FakeProcess::running(writes.clone())]),
+            Arc::new(FakeEmitter),
+        );
+        let provider = configure_provider_command(
+            "minimax",
+            "history-fixture-provider-key",
+            json!({ "model": "fixture-model" }),
+        )
+        .unwrap();
+
+        let result = sidecar.send_sequence(vec![provider, optimize_command("optimize-timeout")]);
+
+        assert_eq!(result, Err(RUNTIME_UNAVAILABLE_MESSAGE));
+        assert_eq!(
+            written_command_types(&writes),
+            ["configure_provider", "cancel"]
+        );
+        assert!(sidecar
+            .running
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .active_requests
+            .lock()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn generic_private_sequence_uses_private_routes_without_webview_or_cancel() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
+        let process = FakeProcess::with_stdout_reader(
+            writes.clone(),
+            Box::new(WriteGatedReader::new(
+                writes.clone(),
+                release.clone(),
+                vec![
+                    (1, core_status("ping-private", "pong")),
+                    (
+                        2,
+                        plugin_result("admin-private", "history-sqlite", "delete"),
+                    ),
+                    (3, core_status("shutdown-private", "shutdown")),
+                ],
+            )),
+        );
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![process]),
+            Arc::new(NamedRecordingEmitter(events.clone())),
+        );
+
+        let result = sidecar.send_sequence(vec![
+            ValidatedCommand {
+                request_id: "ping-private".to_string(),
+                kind: CommandKind::Ping,
+                payload: json!({}),
+            },
+            ValidatedCommand {
+                request_id: "admin-private".to_string(),
+                kind: CommandKind::PluginAdminCall,
+                payload: json!({
+                    "plugin_id": "history-sqlite",
+                    "operation": "delete",
+                    "input": {}
+                }),
+            },
+            ValidatedCommand {
+                request_id: "shutdown-private".to_string(),
+                kind: CommandKind::Shutdown,
+                payload: json!({}),
+            },
+        ]);
+
+        assert_eq!(result, Ok(()));
+        wait_for_active_requests_empty(&sidecar);
+        release.store(true, Ordering::Release);
+        assert_eq!(
+            written_command_types(&writes),
+            ["ping", "plugin_admin_call", "shutdown"]
+        );
+        assert!(events.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn configuration_sequence_fails_instead_of_restarting_after_child_exit() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let first_release = Arc::new(AtomicBool::new(false));
+        let second_release = Arc::new(AtomicBool::new(false));
+        let first = FakeProcess::with_stdout_reader_and_exit_after_write(
+            writes.clone(),
+            Box::new(WriteGatedReader::new(
+                writes.clone(),
+                first_release.clone(),
+                vec![(1, core_status("provider-generation", "provider_configured"))],
+            )),
+        );
+        let second = FakeProcess::with_stdout_reader(
+            writes.clone(),
+            Box::new(WriteGatedReader::new(
+                writes.clone(),
+                second_release.clone(),
+                vec![(2, core_status("plugin-generation", "plugin_configured"))],
+            )),
+        );
+        let factory = FakeProcessFactory::new(vec![first, second]);
+        let sidecar = RuntimeSidecar::new(factory.clone(), Arc::new(FakeEmitter));
+        let provider = configure_provider_command(
+            "minimax",
+            "history-fixture-provider-key",
+            json!({ "model": "fixture-model" }),
+        )
+        .unwrap();
+
+        let result = sidecar.send_sequence(vec![
+            ValidatedCommand {
+                request_id: "provider-generation".to_string(),
+                ..provider
+            },
+            plugin_configuration("plugin-generation", "translator", true),
+            optimize_command("optimize-generation"),
+        ]);
+
+        first_release.store(true, Ordering::Release);
+        second_release.store(true, Ordering::Release);
+        assert_eq!(result, Err(RUNTIME_UNAVAILABLE_MESSAGE));
+        assert_eq!(factory.launch_count(), 1);
+        assert_eq!(written_command_types(&writes), ["configure_provider"]);
+    }
+
+    #[test]
+    fn expected_generation_does_not_restart_after_a_second_liveness_change() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
+        let first = FakeProcess::with_stdout_reader_and_has_exited_script(
+            writes.clone(),
+            Box::new(WriteGatedReader::new(
+                writes.clone(),
+                release.clone(),
+                vec![(1, core_status("provider-liveness", "provider_configured"))],
+            )),
+            vec![false, true],
+        );
+        let factory = FakeProcessFactory::new(vec![first, FakeProcess::running(writes.clone())]);
+        let sidecar = RuntimeSidecar::new(factory.clone(), Arc::new(FakeEmitter));
+        let provider = configure_provider_command(
+            "minimax",
+            "history-fixture-provider-key",
+            json!({ "model": "fixture-model" }),
+        )
+        .unwrap();
+
+        let result = sidecar.send_sequence(vec![
+            ValidatedCommand {
+                request_id: "provider-liveness".to_string(),
+                ..provider
+            },
+            optimize_command("optimize-liveness"),
+        ]);
+
+        release.store(true, Ordering::Release);
+        assert_eq!(
+            (
+                result,
+                factory.launch_count(),
+                written_command_types(&writes)
+            ),
+            (
+                Err(RUNTIME_UNAVAILABLE_MESSAGE),
+                1,
+                vec!["configure_provider".to_string()]
+            )
+        );
+    }
+
+    #[test]
     fn private_timeout_cancel_and_shutdown_remove_waiter_registrations() {
         let writes = Arc::new(Mutex::new(Vec::new()));
         let factory = FakeProcessFactory::new(vec![FakeProcess::running(writes.clone())]);
@@ -2416,7 +2805,11 @@ mod tests {
     #[test]
     fn concurrent_configuration_and_optimize_sequences_never_interleave() {
         let writes = Arc::new(Mutex::new(Vec::new()));
-        let factory = FakeProcessFactory::new(vec![FakeProcess::running(writes.clone())]);
+        let release = Arc::new(AtomicBool::new(false));
+        let factory = FakeProcessFactory::new(vec![FakeProcess::with_stdout_reader(
+            writes.clone(),
+            Box::new(CommandResponseReader::new(writes.clone(), release.clone())),
+        )]);
         let sidecar = Arc::new(RuntimeSidecar::new(factory, Arc::new(FakeEmitter)));
         let barrier = Arc::new(Barrier::new(3));
         let mut threads = Vec::new();
@@ -2444,6 +2837,7 @@ mod tests {
         for thread in threads {
             thread.join().unwrap();
         }
+        release.store(true, Ordering::Release);
 
         let lines = writes
             .lock()
@@ -2543,14 +2937,103 @@ mod tests {
     struct FakeProcess {
         exited: bool,
         exits_after_write: bool,
+        has_exited_script: VecDeque<bool>,
         fail_after_writes: Option<usize>,
         writes: Arc<Mutex<Vec<Vec<u8>>>>,
-        stdout: Option<Cursor<Vec<u8>>>,
+        stdout: Option<Box<dyn Read + Send>>,
     }
 
     struct HoldOpenReader {
         bytes: Cursor<Vec<u8>>,
         release: Arc<AtomicBool>,
+    }
+
+    struct WriteGatedReader {
+        writes: Arc<Mutex<Vec<Vec<u8>>>>,
+        release: Arc<AtomicBool>,
+        responses: VecDeque<(usize, Cursor<Vec<u8>>)>,
+    }
+
+    struct CommandResponseReader {
+        writes: Arc<Mutex<Vec<Vec<u8>>>>,
+        release: Arc<AtomicBool>,
+        processed: usize,
+        response: Cursor<Vec<u8>>,
+    }
+
+    impl WriteGatedReader {
+        fn new(
+            writes: Arc<Mutex<Vec<Vec<u8>>>>,
+            release: Arc<AtomicBool>,
+            responses: Vec<(usize, Vec<u8>)>,
+        ) -> Self {
+            Self {
+                writes,
+                release,
+                responses: responses
+                    .into_iter()
+                    .map(|(required_writes, response)| (required_writes, Cursor::new(response)))
+                    .collect(),
+            }
+        }
+    }
+
+    impl Read for WriteGatedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            loop {
+                if let Some((required_writes, response)) = self.responses.front_mut() {
+                    if self.writes.lock().unwrap().len() < *required_writes {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                        continue;
+                    }
+                    if response.position() < response.get_ref().len() as u64 {
+                        return response.read(buffer);
+                    }
+                    self.responses.pop_front();
+                    continue;
+                } else if self.release.load(Ordering::Acquire) {
+                    return Ok(0);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+    }
+
+    impl CommandResponseReader {
+        fn new(writes: Arc<Mutex<Vec<Vec<u8>>>>, release: Arc<AtomicBool>) -> Self {
+            Self {
+                writes,
+                release,
+                processed: 0,
+                response: Cursor::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Read for CommandResponseReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            loop {
+                if self.response.position() < self.response.get_ref().len() as u64 {
+                    return self.response.read(buffer);
+                }
+                let command = self.writes.lock().unwrap().get(self.processed).cloned();
+                if let Some(command) = command {
+                    self.processed += 1;
+                    let command: Value = serde_json::from_slice(&command).unwrap();
+                    if command["type"] == "configure_provider" {
+                        self.response = Cursor::new(core_status(
+                            command["request_id"].as_str().unwrap(),
+                            "provider_configured",
+                        ));
+                    }
+                    continue;
+                }
+                if self.release.load(Ordering::Acquire) {
+                    return Ok(0);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
     }
 
     impl Read for HoldOpenReader {
@@ -2570,6 +3053,7 @@ mod tests {
             Self {
                 exited: false,
                 exits_after_write: true,
+                has_exited_script: VecDeque::new(),
                 fail_after_writes: None,
                 writes,
                 stdout: None,
@@ -2580,6 +3064,7 @@ mod tests {
             Self {
                 exited: false,
                 exits_after_write: false,
+                has_exited_script: VecDeque::new(),
                 fail_after_writes: None,
                 writes,
                 stdout: None,
@@ -2590,6 +3075,7 @@ mod tests {
             Self {
                 exited: false,
                 exits_after_write: false,
+                has_exited_script: VecDeque::new(),
                 fail_after_writes: Some(count),
                 writes,
                 stdout: None,
@@ -2600,16 +3086,60 @@ mod tests {
             Self {
                 exited: false,
                 exits_after_write: false,
+                has_exited_script: VecDeque::new(),
                 fail_after_writes: None,
                 writes,
-                stdout: Some(Cursor::new(stdout)),
+                stdout: Some(Box::new(Cursor::new(stdout))),
+            }
+        }
+
+        fn with_stdout_reader(
+            writes: Arc<Mutex<Vec<Vec<u8>>>>,
+            stdout: Box<dyn Read + Send>,
+        ) -> Self {
+            Self {
+                exited: false,
+                exits_after_write: false,
+                has_exited_script: VecDeque::new(),
+                fail_after_writes: None,
+                writes,
+                stdout: Some(stdout),
+            }
+        }
+
+        fn with_stdout_reader_and_exit_after_write(
+            writes: Arc<Mutex<Vec<Vec<u8>>>>,
+            stdout: Box<dyn Read + Send>,
+        ) -> Self {
+            Self {
+                exited: false,
+                exits_after_write: true,
+                has_exited_script: VecDeque::new(),
+                fail_after_writes: None,
+                writes,
+                stdout: Some(stdout),
+            }
+        }
+
+        fn with_stdout_reader_and_has_exited_script(
+            writes: Arc<Mutex<Vec<Vec<u8>>>>,
+            stdout: Box<dyn Read + Send>,
+            has_exited_script: Vec<bool>,
+        ) -> Self {
+            Self {
+                exited: false,
+                exits_after_write: false,
+                has_exited_script: has_exited_script.into(),
+                fail_after_writes: None,
+                writes,
+                stdout: Some(stdout),
             }
         }
     }
 
     impl ChildProcess for FakeProcess {
         fn has_exited(&mut self) -> io::Result<bool> {
-            Ok(self.exited)
+            Ok(self.has_exited_script.pop_front().unwrap_or(self.exited))
         }
 
         fn write_stdin(&mut self, bytes: &[u8]) -> io::Result<()> {
@@ -2632,10 +3162,76 @@ mod tests {
         }
 
         fn take_stdout(&mut self) -> Option<Box<dyn Read + Send>> {
-            self.stdout
-                .take()
-                .map(|stream| Box::new(stream) as Box<dyn Read + Send>)
+            self.stdout.take()
         }
+    }
+
+    fn core_status(request_id: &str, message: &str) -> Vec<u8> {
+        format!(
+            "{{\"version\":1,\"request_id\":\"{request_id}\",\"event\":{{\"type\":\"status\",\"data\":{{\"phase\":\"completed\",\"message\":\"{message}\"}}}}}}\n"
+        )
+        .into_bytes()
+    }
+
+    fn core_error(request_id: &str, code: &str) -> Vec<u8> {
+        format!(
+            "{{\"version\":1,\"request_id\":\"{request_id}\",\"event\":{{\"type\":\"error\",\"data\":{{\"code\":\"{code}\",\"message\":\"fixture failure\"}}}}}}\n"
+        )
+        .into_bytes()
+    }
+
+    fn plugin_result(request_id: &str, plugin_id: &str, operation: &str) -> Vec<u8> {
+        format!(
+            "{{\"version\":1,\"request_id\":\"{request_id}\",\"type\":\"plugin_event\",\"plugin_id\":\"{plugin_id}\",\"operation\":\"{operation}\",\"status\":\"result\",\"data\":{{}}}}\n"
+        )
+        .into_bytes()
+    }
+
+    fn plugin_configuration(request_id: &str, plugin_id: &str, enabled: bool) -> ValidatedCommand {
+        ValidatedCommand {
+            request_id: request_id.to_string(),
+            kind: CommandKind::ConfigurePlugin,
+            payload: json!({ "plugin_id": plugin_id, "enabled": enabled }),
+        }
+    }
+
+    fn optimize_command(request_id: &str) -> ValidatedCommand {
+        ValidatedCommand {
+            request_id: request_id.to_string(),
+            kind: CommandKind::Optimize,
+            payload: json!({ "text": "fixture input", "provider": "minimax" }),
+        }
+    }
+
+    fn written_command_types(writes: &Arc<Mutex<Vec<Vec<u8>>>>) -> Vec<String> {
+        writes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|write| {
+                serde_json::from_slice::<Value>(write).unwrap()["type"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn wait_for_active_requests_empty(sidecar: &RuntimeSidecar<FakeProcessFactory>) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while std::time::Instant::now() < deadline {
+            let empty = sidecar
+                .running
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|running| running.active_requests.lock().unwrap().is_empty());
+            if empty {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("timed out waiting for private routes to close");
     }
 
     struct FakeEmitter;

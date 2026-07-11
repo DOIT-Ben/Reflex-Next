@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -105,6 +106,67 @@ pub(crate) fn configure_provider_command(
     })
 }
 
+pub(crate) fn configure_history_keys_command(
+    keys: BTreeMap<String, String>,
+) -> Result<ValidatedCommand, &'static str> {
+    let payload = serde_json::json!({ "keys": keys });
+    if !validate_payload(CommandKind::ConfigureHistoryKeys, &payload) {
+        return Err(COMMAND_INVALID_MESSAGE);
+    }
+    Ok(ValidatedCommand {
+        request_id: format!(
+            "host-history-keys-{}",
+            PRIVATE_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ),
+        kind: CommandKind::ConfigureHistoryKeys,
+        payload,
+    })
+}
+
+pub(crate) fn configure_plugin_command(
+    plugin_id: &str,
+    enabled: bool,
+) -> Result<ValidatedCommand, &'static str> {
+    let payload = serde_json::json!({
+        "plugin_id": plugin_id,
+        "enabled": enabled,
+    });
+    if !validate_payload(CommandKind::ConfigurePlugin, &payload) {
+        return Err(COMMAND_INVALID_MESSAGE);
+    }
+    Ok(ValidatedCommand {
+        request_id: format!(
+            "host-plugin-{plugin_id}-{}",
+            PRIVATE_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ),
+        kind: CommandKind::ConfigurePlugin,
+        payload,
+    })
+}
+
+pub(crate) fn configure_history_policy_command(
+    history_enabled: bool,
+    privacy_mode: bool,
+    history_redaction: &str,
+) -> Result<ValidatedCommand, &'static str> {
+    let payload = serde_json::json!({
+        "history_enabled": history_enabled,
+        "privacy_mode": privacy_mode,
+        "history_redaction": history_redaction,
+    });
+    if !validate_payload(CommandKind::ConfigureHistoryPolicy, &payload) {
+        return Err(COMMAND_INVALID_MESSAGE);
+    }
+    Ok(ValidatedCommand {
+        request_id: format!(
+            "host-history-policy-{}",
+            PRIVATE_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ),
+        kind: CommandKind::ConfigureHistoryPolicy,
+        payload,
+    })
+}
+
 pub(crate) fn validate_command(
     command: Value,
     expected_kind: CommandKind,
@@ -203,9 +265,7 @@ fn validate_payload(kind: CommandKind, payload: &Value) -> bool {
                     .is_some_and(|keys| {
                         keys.iter().all(|(key_id, secret)| {
                             is_safe_key_version(key_id)
-                                && secret.as_str().is_some_and(|secret| {
-                                    !secret.is_empty() && secret.len() <= 16_384
-                                })
+                                && secret.as_str().is_some_and(is_canonical_history_key)
                         })
                     })
         }
@@ -315,21 +375,30 @@ fn is_safe_dotted_id(value: &str) -> bool {
 }
 
 fn is_safe_key_version(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 32
-        && value.as_bytes()[0].is_ascii_alphanumeric()
-        && !value.contains("..")
-        && value.bytes().any(|byte| byte.is_ascii_digit())
+    let Some(version) = value.strip_prefix('v') else {
+        return false;
+    };
+    let Ok(version_number) = version.parse::<u32>() else {
+        return false;
+    };
+    version_number > 0 && version_number <= 1_000_000 && version == version_number.to_string()
+}
+
+fn is_canonical_history_key(value: &str) -> bool {
+    value.len() == 64
         && value
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::json;
 
     use super::{
+        configure_history_keys_command, configure_history_policy_command,
         configure_provider_command, validate_command, CommandKind, ValidatedCommand,
         COMMAND_INVALID_MESSAGE,
     };
@@ -383,6 +452,52 @@ mod tests {
         assert_eq!(command.payload["provider_id"], "minimax");
         assert_eq!(command.payload["secret"], secret);
         assert!(!format!("{command:?}").contains(secret));
+    }
+
+    #[test]
+    fn builds_strict_private_history_commands_without_debug_secret_leakage() {
+        let first_key = "11".repeat(32);
+        let second_key = "22".repeat(32);
+        let mut keys = BTreeMap::new();
+        keys.insert("v1".to_string(), first_key.clone());
+        keys.insert("v2".to_string(), second_key);
+
+        let key_command = configure_history_keys_command(keys.clone()).unwrap();
+        let policy_command = configure_history_policy_command(true, false, "secrets").unwrap();
+
+        assert_eq!(key_command.kind, CommandKind::ConfigureHistoryKeys);
+        assert_eq!(key_command.payload["keys"]["v1"], first_key);
+        assert_eq!(policy_command.kind, CommandKind::ConfigureHistoryPolicy);
+        assert_eq!(
+            policy_command.payload,
+            json!({
+                "history_enabled": true,
+                "privacy_mode": false,
+                "history_redaction": "secrets"
+            })
+        );
+        assert!(!format!("{key_command:?}").contains(&first_key));
+        assert!(!format!("{policy_command:?}").contains(&first_key));
+    }
+
+    #[test]
+    fn private_history_command_builders_reject_unsafe_payload_values() {
+        let mut invalid_keys = BTreeMap::new();
+        invalid_keys.insert("v0".to_string(), "11".repeat(32));
+        assert!(configure_history_keys_command(invalid_keys).is_err());
+        for invalid_value in [
+            "history-fixture-key".to_string(),
+            String::new(),
+            "1".repeat(63),
+            "1".repeat(65),
+            "g".repeat(64),
+            "AA".repeat(32),
+        ] {
+            let mut invalid_keys = BTreeMap::new();
+            invalid_keys.insert("v1".to_string(), invalid_value);
+            assert!(configure_history_keys_command(invalid_keys).is_err());
+        }
+        assert!(configure_history_policy_command(true, false, "raw").is_err());
     }
 
     #[test]

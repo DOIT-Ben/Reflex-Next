@@ -59,7 +59,14 @@ export type HostSettingsDraft = {
   scene_policy: ScenePolicy;
   clipboard_policy: ClipboardPolicy;
   hotkey: string;
+  history_enabled: boolean;
+  privacy_mode: boolean;
+  history_redaction: AppConfig["history_redaction"];
+  enabled_plugins: AppConfig["enabled_plugins"];
 };
+
+export const SETTINGS_PLUGIN_IDS = ["translator", "markdown-preview"] as const;
+export type SettingsPluginId = (typeof SETTINGS_PLUGIN_IDS)[number];
 
 export type HostState = {
   phase: HostPhase;
@@ -82,6 +89,102 @@ export type HostState = {
   canGenerate: boolean;
   copied: boolean;
 };
+
+export function createDefaultSettingsDraft(settings: RequestSettings): HostSettingsDraft {
+  return {
+    default_provider: settings.provider,
+    default_model: settings.model,
+    default_mode: settings.mode,
+    default_style: settings.style,
+    scene_policy: settings.scene_policy,
+    clipboard_policy: "manual",
+    hotkey: "Ctrl+Alt+R",
+    history_enabled: false,
+    privacy_mode: false,
+    history_redaction: "secrets",
+    enabled_plugins: ["translator", "markdown-preview"]
+  };
+}
+
+export function settingsDraftFromConfig(config: AppConfig): HostSettingsDraft {
+  return {
+    default_provider: config.provider,
+    default_model: config.model,
+    default_mode: config.mode,
+    default_style: config.style,
+    scene_policy: config.scene_policy,
+    clipboard_policy: config.clipboard_policy,
+    hotkey: config.hotkey,
+    history_enabled: config.history_enabled,
+    privacy_mode: config.privacy_mode,
+    history_redaction: config.history_redaction,
+    enabled_plugins: [...config.enabled_plugins]
+  };
+}
+
+export function configFromSettingsDraft(
+  config: AppConfig,
+  draft: HostSettingsDraft
+): AppConfig {
+  return {
+    ...config,
+    provider: draft.default_provider ?? "minimax",
+    model: draft.default_model ?? "MiniMax-M2.7-highspeed",
+    mode: draft.default_mode,
+    style: draft.default_style,
+    scene_policy: draft.scene_policy,
+    clipboard_policy: draft.clipboard_policy,
+    hotkey: draft.hotkey,
+    history_enabled: draft.history_enabled,
+    privacy_mode: draft.privacy_mode,
+    history_redaction: draft.history_redaction,
+    enabled_plugins: [...draft.enabled_plugins]
+  };
+}
+
+export function updateHistorySettingsDraft(
+  draft: HostSettingsDraft,
+  changes: Partial<
+    Pick<HostSettingsDraft, "history_enabled" | "privacy_mode" | "history_redaction">
+  >
+): HostSettingsDraft {
+  return {
+    ...draft,
+    ...(typeof changes.history_enabled === "boolean"
+      ? { history_enabled: changes.history_enabled }
+      : {}),
+    ...(typeof changes.privacy_mode === "boolean"
+      ? { privacy_mode: changes.privacy_mode }
+      : {}),
+    ...(changes.history_redaction === "secrets" || changes.history_redaction === "none"
+      ? { history_redaction: changes.history_redaction }
+      : {})
+  };
+}
+
+export function updatePluginSettingsDraft(
+  draft: HostSettingsDraft,
+  pluginId: string,
+  enabled: boolean
+): HostSettingsDraft {
+  if (!SETTINGS_PLUGIN_IDS.includes(pluginId as SettingsPluginId)) {
+    return { ...draft, enabled_plugins: [...draft.enabled_plugins] };
+  }
+  const enabledPlugins = new Set(
+    draft.enabled_plugins.filter((candidate) =>
+      SETTINGS_PLUGIN_IDS.includes(candidate as SettingsPluginId)
+    )
+  );
+  if (enabled) {
+    enabledPlugins.add(pluginId);
+  } else {
+    enabledPlugins.delete(pluginId);
+  }
+  return {
+    ...draft,
+    enabled_plugins: SETTINGS_PLUGIN_IDS.filter((candidate) => enabledPlugins.has(candidate))
+  };
+}
 
 export function createHostState(): HostState {
   const requestDraft = createDefaultSettings();
@@ -259,15 +362,7 @@ export function applyPersistedConfig(state: HostState, config: AppConfig): HostS
     scene_policy: config.scene_policy
   };
   const settingsDraft: HostSettingsDraft | null = state.settingsDraft
-    ? {
-        default_provider: config.provider,
-        default_model: config.model,
-        default_mode: config.mode,
-        default_style: config.style,
-        scene_policy: config.scene_policy,
-        clipboard_policy: config.clipboard_policy,
-        hotkey: config.hotkey
-      }
+    ? settingsDraftFromConfig(config)
     : null;
   return {
     ...state,
@@ -443,15 +538,7 @@ function createDefaultSettings(): RequestSettings {
 }
 
 function createSettingsDraft(state: HostState): HostSettingsDraft {
-  return {
-    default_provider: state.requestDraft.provider,
-    default_model: state.requestDraft.model,
-    default_mode: state.requestDraft.mode,
-    default_style: state.requestDraft.style,
-    scene_policy: state.requestDraft.scene_policy,
-    clipboard_policy: "manual",
-    hotkey: "Ctrl+Alt+R"
-  };
+  return createDefaultSettingsDraft(state.requestDraft);
 }
 
 function providerLabel(settings: RequestSettings): string {

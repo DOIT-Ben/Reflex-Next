@@ -11,6 +11,8 @@ import {
   cancelGeneration,
   cancelAdjust,
   cancelSettings,
+  configFromSettingsDraft,
+  createDefaultSettingsDraft,
   createHostState,
   createRequestDraft,
   openAdjust,
@@ -18,12 +20,16 @@ import {
   resolveHostShortcut,
   retryAfterError,
   startGeneration,
-  updateInput
+  settingsDraftFromConfig,
+  updateHistorySettingsDraft,
+  updateInput,
+  updatePluginSettingsDraft,
+  type HostSettingsDraft
 } from "./hostState";
 import type { AppConfig } from "./settingsApi";
 
 const persistedConfig: AppConfig = {
-  version: 1,
+  version: 2,
   provider: "minimax",
   model: "MiniMax-M2.7-highspeed",
   mode: "prompt",
@@ -33,6 +39,8 @@ const persistedConfig: AppConfig = {
   clipboard_replace_confirmed: false,
   history_enabled: true,
   privacy_mode: false,
+  history_redaction: "none",
+  enabled_plugins: ["translator"],
   language: "zh-CN",
   theme: "system",
   hotkey: "Ctrl+Alt+R",
@@ -41,6 +49,105 @@ const persistedConfig: AppConfig = {
 };
 
 describe("host state", () => {
+  it("builds the App initial settings draft with safe history defaults", () => {
+    const draft = createDefaultSettingsDraft(createHostState().requestDraft);
+
+    expect(draft).toEqual({
+      default_provider: "minimax",
+      default_model: "MiniMax-M2.7-highspeed",
+      default_mode: "content",
+      default_style: "balanced",
+      scene_policy: "auto",
+      clipboard_policy: "manual",
+      hotkey: "Ctrl+Alt+R",
+      history_enabled: false,
+      privacy_mode: false,
+      history_redaction: "secrets",
+      enabled_plugins: ["translator", "markdown-preview"]
+    });
+  });
+
+  it("round-trips every App settings field through hydrate save and cancel data paths", () => {
+    const hydrated = settingsDraftFromConfig(persistedConfig);
+    const edited: HostSettingsDraft = {
+      ...hydrated,
+      history_enabled: false,
+      privacy_mode: true,
+      history_redaction: "secrets",
+      enabled_plugins: ["markdown-preview"]
+    };
+
+    const saved = configFromSettingsDraft(
+      { ...persistedConfig, future_flag: true },
+      edited
+    );
+    const cancelledBackToPersisted = settingsDraftFromConfig(saved);
+
+    expect(hydrated).toMatchObject({
+      history_enabled: true,
+      privacy_mode: false,
+      history_redaction: "none",
+      enabled_plugins: ["translator"]
+    });
+    expect(saved).toMatchObject({
+      history_enabled: false,
+      privacy_mode: true,
+      history_redaction: "secrets",
+      enabled_plugins: ["markdown-preview"],
+      future_flag: true
+    });
+    expect(cancelledBackToPersisted).toEqual(edited);
+  });
+
+  it("updates history and privacy controls without dropping other draft fields", () => {
+    const hydrated = settingsDraftFromConfig(persistedConfig);
+
+    const updated = updateHistorySettingsDraft(hydrated, {
+      history_enabled: false,
+      privacy_mode: true,
+      history_redaction: "secrets"
+    });
+
+    expect(updated).toEqual({
+      ...hydrated,
+      history_enabled: false,
+      privacy_mode: true,
+      history_redaction: "secrets"
+    });
+    expect(hydrated).toMatchObject({
+      history_enabled: true,
+      privacy_mode: false,
+      history_redaction: "none"
+    });
+  });
+
+  it("toggles only supported plugins in stable configuration order", () => {
+    const hydrated = settingsDraftFromConfig(persistedConfig);
+    const markdownEnabled = updatePluginSettingsDraft(
+      hydrated,
+      "markdown-preview",
+      true
+    );
+    const translatorDisabled = updatePluginSettingsDraft(
+      markdownEnabled,
+      "translator",
+      false
+    );
+    const invalidIgnored = updatePluginSettingsDraft(
+      translatorDisabled,
+      "../unsafe",
+      true
+    );
+
+    expect(markdownEnabled.enabled_plugins).toEqual([
+      "translator",
+      "markdown-preview"
+    ]);
+    expect(translatorDisabled.enabled_plugins).toEqual(["markdown-preview"]);
+    expect(invalidIgnored).toEqual(translatorDisabled);
+    expect(hydrated.enabled_plugins).toEqual(["translator"]);
+  });
+
   it("moves between empty and ready from input text", () => {
     let state = createHostState();
 
@@ -200,7 +307,7 @@ describe("host state", () => {
         type: "error",
         data: {
           code: "provider_unavailable",
-          message: "模型服务暂时不可用 Bearer sk-1234567890abcdef",
+          message: "模型服务暂时不可用 Bearer sk-history-fixture-key",
           recoverable: true,
           action: "retry",
           diagnostic_id: "diag-42"
@@ -235,7 +342,11 @@ describe("host state", () => {
       default_style: "balanced",
       scene_policy: "auto",
       clipboard_policy: "manual",
-      hotkey: "Ctrl+Alt+R"
+      hotkey: "Ctrl+Alt+R",
+      history_enabled: false,
+      privacy_mode: false,
+      history_redaction: "secrets",
+      enabled_plugins: ["translator", "markdown-preview"]
     });
     expect(settings).not.toHaveProperty("apiKey");
 
@@ -246,7 +357,11 @@ describe("host state", () => {
       default_style: "creative",
       scene_policy: "ask",
       clipboard_policy: "manual",
-      hotkey: "Ctrl+Shift+K"
+      hotkey: "Ctrl+Shift+K",
+      history_enabled: true,
+      privacy_mode: true,
+      history_redaction: "none",
+      enabled_plugins: ["translator"]
     });
 
     expect(saved.overlay).toBeNull();

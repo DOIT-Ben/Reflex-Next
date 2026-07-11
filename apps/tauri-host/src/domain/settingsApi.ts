@@ -13,6 +13,8 @@ export type AppConfig = {
   clipboard_replace_confirmed: boolean;
   history_enabled: boolean;
   privacy_mode: boolean;
+  history_redaction: "secrets" | "none";
+  enabled_plugins: Array<"translator" | "markdown-preview">;
   language: "zh-CN" | "en-US";
   theme: "light" | "dark" | "system";
   hotkey: string;
@@ -69,7 +71,7 @@ export function createSettingsApi(host: TauriHostApi): SettingsApi {
 }
 
 const defaults: AppConfig = {
-  version: 1,
+  version: 2,
   provider: "minimax",
   model: "MiniMax-M2.7-highspeed",
   mode: "content",
@@ -77,8 +79,10 @@ const defaults: AppConfig = {
   scene_policy: "auto",
   clipboard_policy: "manual",
   clipboard_replace_confirmed: false,
-  history_enabled: true,
+  history_enabled: false,
   privacy_mode: false,
+  history_redaction: "secrets",
+  enabled_plugins: ["translator", "markdown-preview"],
   language: "zh-CN",
   theme: "system",
   hotkey: "Ctrl+Alt+R",
@@ -88,12 +92,16 @@ const defaults: AppConfig = {
 
 function normalizeConfig(value: unknown): AppConfig {
   const raw = isRecord(value) ? value : {};
+  const isVersionTwo = raw.version === 2;
   const safeExtensions = Object.fromEntries(
-    Object.entries(raw).filter(([key]) => !isSensitiveKey(key))
+    Object.entries(raw).filter(
+      ([key, extensionValue]) =>
+        !isSensitiveKey(key) && !containsSensitiveField(extensionValue)
+    )
   );
   return {
     ...safeExtensions,
-    version: 1,
+    version: 2,
     provider: normalizeProviderId(stringValue(raw.provider, defaults.provider)),
     model: stringValue(raw.model, defaults.model),
     mode: choiceValue(raw.mode, ["content", "prompt"], defaults.mode),
@@ -116,8 +124,13 @@ function normalizeConfig(value: unknown): AppConfig {
       raw.clipboard_replace_confirmed,
       defaults.clipboard_replace_confirmed
     ),
-    history_enabled: booleanValue(raw.history_enabled, defaults.history_enabled),
+    history_enabled:
+      isVersionTwo && booleanValue(raw.history_enabled, defaults.history_enabled),
     privacy_mode: booleanValue(raw.privacy_mode, defaults.privacy_mode),
+    history_redaction: isVersionTwo
+      ? choiceValue(raw.history_redaction, ["secrets", "none"], defaults.history_redaction)
+      : defaults.history_redaction,
+    enabled_plugins: enabledPluginsValue(raw.enabled_plugins, defaults.enabled_plugins),
     language: choiceValue(raw.language, ["zh-CN", "en-US"], defaults.language),
     theme: choiceValue(raw.theme, ["light", "dark", "system"], defaults.theme),
     hotkey: stringValue(raw.hotkey, defaults.hotkey),
@@ -127,6 +140,16 @@ function normalizeConfig(value: unknown): AppConfig {
         ? raw.ca_bundle_path.trim()
         : null
   };
+}
+
+function enabledPluginsValue(
+  value: unknown,
+  fallback: AppConfig["enabled_plugins"]
+): AppConfig["enabled_plugins"] {
+  if (!Array.isArray(value)) return [...fallback];
+  return (["translator", "markdown-preview"] as const).filter((pluginId) =>
+    value.includes(pluginId)
+  );
 }
 
 function normalizeSecretStatus(value: unknown): SecretStatus {
@@ -150,6 +173,14 @@ function isSensitiveKey(key: string): boolean {
   const normalized = key.toLowerCase().replaceAll("-", "_");
   return ["api_key", "apikey", "token", "secret", "authorization", "password"].some(
     (part) => normalized.includes(part)
+  );
+}
+
+function containsSensitiveField(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsSensitiveField);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(
+    ([key, nestedValue]) => isSensitiveKey(key) || containsSensitiveField(nestedValue)
   );
 }
 

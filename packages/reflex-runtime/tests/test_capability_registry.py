@@ -170,7 +170,7 @@ def test_public_dispatch_cannot_reach_admin_or_undeclared_operations():
     registry = CapabilityRegistry(
         [(history_descriptor(), plugin)],
     )
-    registry.configure_history_keys({"v1": "fixture-history-secret"})
+    registry.configure_history_keys({"v1": "11" * 32})
     registry.configure_history_policy(
         history_enabled=True,
         privacy_mode=False,
@@ -188,6 +188,39 @@ def test_public_dispatch_cannot_reach_admin_or_undeclared_operations():
     assert plugin.calls == []
 
 
+@pytest.mark.parametrize(
+    "keys",
+    [
+        {"v0": "11" * 32},
+        {"v01": "11" * 32},
+        {"active": "11" * 32},
+        {"v1": "fixture-history-private-key"},
+        {"v1": ""},
+        {"v1": "1" * 63},
+        {"v1": "1" * 65},
+        {"v1": "g" * 64},
+        {"v1": "AA" * 32},
+    ],
+)
+def test_direct_history_key_configuration_requires_canonical_version_and_key(keys):
+    registry = CapabilityRegistry([(history_descriptor(), RecordingPlugin())])
+
+    with pytest.raises(CapabilityDenied) as caught:
+        registry.configure_history_keys(keys)
+
+    assert caught.value.code == "history_keys_invalid"
+
+
+def test_direct_history_key_configuration_rejects_overlong_version_safely():
+    registry = CapabilityRegistry([(history_descriptor(), RecordingPlugin())])
+    overlong_version = "v" + "9" * 5000
+
+    with pytest.raises(CapabilityDenied) as caught:
+        registry.configure_history_keys({overlong_version: "11" * 32})
+
+    assert caught.value.code == "history_keys_invalid"
+
+
 def test_admin_dispatch_has_a_separate_explicit_allowlist():
     plugin = RecordingPlugin()
     registry = CapabilityRegistry(
@@ -198,7 +231,7 @@ def test_admin_dispatch_has_a_separate_explicit_allowlist():
             )
         ],
     )
-    registry.configure_history_keys({"v1": "fixture-history-secret"})
+    registry.configure_history_keys({"v1": "11" * 32})
     registry.configure_history_policy(
         history_enabled=True,
         privacy_mode=False,
@@ -232,7 +265,7 @@ def test_history_state_is_derived_only_from_keys_and_policy():
 
     assert registry.history_state == "absent"
 
-    registry.configure_history_keys({"v1": "fixture-history-secret"})
+    registry.configure_history_keys({"v1": "11" * 32})
     assert registry.history_state == "read_only"
 
     registry.configure_history_policy(
@@ -261,7 +294,7 @@ def test_internal_trusted_save_is_rejected_unless_history_is_writable(state):
         history_unavailable=state == "unavailable",
     )
     if state != "absent":
-        registry.configure_history_keys({"v1": "fixture-history-secret"})
+        registry.configure_history_keys({"v1": "11" * 32})
     if state == "private":
         registry.configure_history_policy(
             history_enabled=True,
@@ -285,7 +318,7 @@ def test_internal_trusted_save_is_rejected_unless_history_is_writable(state):
 def test_internal_trusted_save_succeeds_only_in_writable_state():
     plugin = RecordingPlugin()
     registry = CapabilityRegistry([(history_descriptor(), plugin)])
-    registry.configure_history_keys({"v1": "fixture-history-secret"})
+    registry.configure_history_keys({"v1": "11" * 32})
     registry.configure_history_policy(
         history_enabled=True,
         privacy_mode=False,
@@ -311,7 +344,7 @@ def test_existing_history_admin_operations_are_allowed_without_new_record_writes
 ):
     plugin = RecordingPlugin()
     registry = CapabilityRegistry([(history_descriptor(), plugin)])
-    registry.configure_history_keys({"v1": "fixture-history-secret"})
+    registry.configure_history_keys({"v1": "11" * 32})
     if state == "private":
         registry.configure_history_policy(
             history_enabled=True,
@@ -368,7 +401,7 @@ def test_known_unloaded_history_descriptor_tracks_absent_then_unavailable():
     assert absent.state == "absent"
     assert absent.error_code is None
 
-    registry.configure_history_keys({"v1": "fixture-history-secret"})
+    registry.configure_history_keys({"v1": "11" * 32})
     unavailable = registry.descriptors()[0]
 
     assert registry.history_state == "unavailable"
@@ -384,7 +417,7 @@ def test_loaded_history_descriptor_tracks_every_derived_runtime_state():
     )
 
     assert registry.descriptors()[0].state == "absent"
-    registry.configure_history_keys({"v1": "fixture-history-secret"})
+    registry.configure_history_keys({"v1": "11" * 32})
     assert registry.descriptors()[0].state == "read_only"
     registry.configure_history_policy(
         history_enabled=True,
@@ -489,7 +522,7 @@ def test_plugin_execution_happens_outside_registry_lock():
 def test_public_history_call_rejects_write_admin_and_legacy_aliases(operation):
     plugin = RecordingPlugin()
     registry = CapabilityRegistry([(history_descriptor(), plugin)])
-    registry.configure_history_keys({"v1": "fixture-history-secret"})
+    registry.configure_history_keys({"v1": "11" * 32})
     registry.configure_history_policy(
         history_enabled=True,
         privacy_mode=False,
@@ -508,7 +541,7 @@ def test_public_history_call_rejects_write_admin_and_legacy_aliases(operation):
 def test_untrusted_internal_save_is_rejected_even_when_writable():
     plugin = RecordingPlugin()
     registry = CapabilityRegistry([(history_descriptor(), plugin)])
-    registry.configure_history_keys({"v1": "fixture-history-secret"})
+    registry.configure_history_keys({"v1": "11" * 32})
     registry.configure_history_policy(
         history_enabled=True,
         privacy_mode=False,

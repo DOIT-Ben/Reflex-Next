@@ -2,6 +2,7 @@ mod clipboard;
 mod commands;
 mod config_store;
 mod desktop;
+mod history_key_store;
 mod plugin_commands;
 mod runtime_commands;
 mod secret_store;
@@ -38,6 +39,7 @@ pub fn run() {
             app.manage(config_store);
             app.manage(desktop_state);
             app.manage(secret_store::SecretStore::windows());
+            app.manage(history_key_store::HistoryKeyStore::windows());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

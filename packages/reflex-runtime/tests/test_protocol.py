@@ -76,7 +76,7 @@ def test_parse_private_provider_configuration_command():
         ("configure_plugin", {"plugin_id": "translator", "enabled": True}),
         (
             "configure_history_keys",
-            {"keys": {"v1": "fixture-history-private-key"}},
+            {"keys": {"v1": "11" * 32}},
         ),
         (
             "configure_history_policy",
@@ -122,7 +122,7 @@ def test_public_plugin_call_rejects_private_fields_recursively(private_input):
 
 
 def test_history_key_command_repr_and_str_do_not_expose_private_payload():
-    private_value = "fixture-history-private-key"
+    private_value = "11" * 32
     parsed = parse_command(
         command("configure_history_keys", {"keys": {"v1": private_value}})
     )
@@ -196,11 +196,30 @@ def test_history_policy_requires_the_versioned_boolean_contract(payload):
         {"v1": ""},
         {"../v1": "fixture-secret"},
         {"v1": 42},
+        {"v0": "11" * 32},
+        {"v01": "11" * 32},
+        {"v1": "fixture-history-private-key"},
+        {"v1": "1" * 63},
+        {"v1": "1" * 65},
+        {"v1": "g" * 64},
+        {"v1": "AA" * 32},
     ],
 )
-def test_history_keys_require_safe_version_to_nonempty_secret_map(keys):
+def test_history_keys_require_safe_version_and_exact_lowercase_64_hex_value(keys):
     with pytest.raises(ProtocolError):
         parse_command(command("configure_history_keys", {"keys": keys}))
+
+
+def test_history_key_protocol_rejects_overlong_version_safely():
+    overlong_version = "v" + "9" * 5000
+
+    with pytest.raises(ProtocolError):
+        parse_command(
+            command(
+                "configure_history_keys",
+                {"keys": {overlong_version: "11" * 32}},
+            )
+        )
 
 
 def test_empty_history_key_map_is_valid_and_derives_absent_state():

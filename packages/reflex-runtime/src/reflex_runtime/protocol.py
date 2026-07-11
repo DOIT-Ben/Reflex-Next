@@ -178,7 +178,7 @@ def _validate_history_keys(payload: dict[str, Any]) -> None:
     for key_id, secret in keys.items():
         if not _safe_key_version(key_id):
             raise ProtocolError(message)
-        if not isinstance(secret, str) or not secret or len(secret) > 16_384:
+        if not _safe_history_key(secret):
             raise ProtocolError(message)
 
 
@@ -255,16 +255,23 @@ def _safe_request_id(value: object) -> bool:
 
 
 def _safe_key_version(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith("v"):
+        return False
+    version = value[1:]
+    if (
+        not version
+        or len(version) > 7
+        or not version.isascii()
+        or not version.isdigit()
+    ):
+        return False
+    version_number = int(version)
+    return 1 <= version_number <= 1_000_000 and version == str(version_number)
+
+
+def _safe_history_key(value: object) -> bool:
     return (
         isinstance(value, str)
-        and 1 <= len(value) <= 32
-        and value[0].isascii()
-        and value[0].isalnum()
-        and ".." not in value
-        and any(character.isdigit() for character in value)
-        and all(
-            character.isascii()
-            and (character.isalnum() or character in "-_.")
-            for character in value
-        )
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
     )

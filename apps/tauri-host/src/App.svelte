@@ -13,6 +13,8 @@
     cancelGeneration,
     cancelAdjust,
     cancelSettings,
+    configFromSettingsDraft,
+    createDefaultSettingsDraft,
     createHostState,
     createRequestDraft,
     openAdjust,
@@ -20,11 +22,16 @@
     providerDisplayName,
     resolveHostShortcut,
     retryAfterError,
+    SETTINGS_PLUGIN_IDS,
+    settingsDraftFromConfig,
     startGeneration,
+    updateHistorySettingsDraft,
     updateInput,
+    updatePluginSettingsDraft,
     type HostState,
     type HostSettingsDraft,
-    type RequestSettings
+    type RequestSettings,
+    type SettingsPluginId
   } from "./domain/hostState";
   import {
     clipboardActionAfterCompletion,
@@ -81,11 +88,27 @@
     { id: "ask", label: "每次询问" },
     { id: "manual", label: "手动固定" }
   ];
+  const historyRedactionOptions: Array<{
+    id: HostSettingsDraft["history_redaction"];
+    label: string;
+  }> = [
+    { id: "secrets", label: "隐藏敏感内容" },
+    { id: "none", label: "保留原文" }
+  ];
+  const settingsPlugins: Array<{
+    id: SettingsPluginId;
+    label: string;
+    description: string;
+  }> = [
+    { id: SETTINGS_PLUGIN_IDS[0], label: "翻译", description: "跨语言转换" },
+    { id: SETTINGS_PLUGIN_IDS[1], label: "Markdown 预览", description: "渲染 Markdown 内容" }
+  ];
   const settingsSections = [
     { id: "provider", label: "模型与 Provider" },
     { id: "defaults", label: "默认行为" },
     { id: "clipboard", label: "剪贴板" },
-    { id: "privacy", label: "安全与隐私" }
+    { id: "privacy", label: "安全与隐私" },
+    { id: "plugins", label: "插件" }
   ] as const;
   type SettingsSection = (typeof settingsSections)[number]["id"];
 
@@ -97,15 +120,7 @@
   let clipboardWriter: ClipboardWriter = createClipboardWriter();
   let state: HostState = createHostState();
   let draft: RequestSettings = { ...state.requestDraft };
-  let settingsDraft: HostSettingsDraft = {
-    default_provider: state.requestDraft.provider,
-    default_model: state.requestDraft.model,
-    default_mode: state.requestDraft.mode,
-    default_style: state.requestDraft.style,
-    scene_policy: state.requestDraft.scene_policy,
-    clipboard_policy: "manual",
-    hotkey: "Ctrl+Alt+R"
-  };
+  let settingsDraft: HostSettingsDraft = createDefaultSettingsDraft(state.requestDraft);
   let activeRun: AbortController | null = null;
   let persistedConfig: AppConfig | null = null;
   let secretInput = "";
@@ -250,16 +265,9 @@
     settingsBusy = true;
     settingsNotice = null;
     try {
-      const saved = await settingsApi.saveConfig({
-        ...persistedConfig,
-        provider: settingsDraft.default_provider ?? "minimax",
-        model: settingsDraft.default_model ?? "MiniMax-M2.7-highspeed",
-        mode: settingsDraft.default_mode,
-        style: settingsDraft.default_style,
-        scene_policy: settingsDraft.scene_policy,
-        clipboard_policy: settingsDraft.clipboard_policy,
-        hotkey: settingsDraft.hotkey
-      });
+      const saved = await settingsApi.saveConfig(
+        configFromSettingsDraft(persistedConfig, settingsDraft)
+      );
       persistedConfig = saved;
       settingsDraft = settingsDraftFromConfig(saved);
       state = applySettingsDraft(applyPersistedConfig(state, saved), settingsDraft);
@@ -277,15 +285,7 @@
     state = cancelSettings(state);
     settingsDraft = persistedConfig
       ? settingsDraftFromConfig(persistedConfig)
-      : {
-          default_provider: state.requestDraft.provider,
-          default_model: state.requestDraft.model,
-          default_mode: state.requestDraft.mode,
-          default_style: state.requestDraft.style,
-          scene_policy: state.requestDraft.scene_policy,
-          clipboard_policy: "manual",
-          hotkey: "Ctrl+Alt+R"
-        };
+      : createDefaultSettingsDraft(state.requestDraft);
     secretInput = "";
     settingsNotice = null;
     secretNotice = null;
@@ -378,18 +378,6 @@
       secretInput = "";
       secretBusy = false;
     }
-  }
-
-  function settingsDraftFromConfig(config: AppConfig): HostSettingsDraft {
-    return {
-      default_provider: config.provider,
-      default_model: config.model,
-      default_mode: config.mode,
-      default_style: config.style,
-      scene_policy: config.scene_policy,
-      clipboard_policy: config.clipboard_policy,
-      hotkey: config.hotkey
-    };
   }
 
   function showToast(message: string) {
@@ -521,6 +509,29 @@
 
   function managePluginSettings() {
     beginSettings();
+    settingsSection = "plugins";
+  }
+
+  function setHistoryEnabled(enabled: boolean) {
+    settingsDraft = updateHistorySettingsDraft(settingsDraft, {
+      history_enabled: enabled
+    });
+  }
+
+  function setPrivacyMode(enabled: boolean) {
+    settingsDraft = updateHistorySettingsDraft(settingsDraft, {
+      privacy_mode: enabled
+    });
+  }
+
+  function setHistoryRedaction(value: HostSettingsDraft["history_redaction"]) {
+    settingsDraft = updateHistorySettingsDraft(settingsDraft, {
+      history_redaction: value
+    });
+  }
+
+  function setPluginEnabled(pluginId: SettingsPluginId, enabled: boolean) {
+    settingsDraft = updatePluginSettingsDraft(settingsDraft, pluginId, enabled);
   }
 
   function closeOverlay() {
@@ -945,12 +956,66 @@
                   </div>
                   <p class="warning-note">自动替换会覆盖当前剪贴板内容，首次使用仍需确认。</p>
                 </div>
-              {:else}
+              {:else if settingsSection === "privacy"}
                 <h3>安全与隐私</h3>
-                <div class="privacy-row">
-                  <span>密钥保存在系统安全存储</span>
-                  <span>日志不记录完整输入</span>
-                  <span>服务错误会隐藏敏感内容</span>
+                <div class="settings-choice-list">
+                  <label class="settings-toggle">
+                    <span>
+                      <strong>保存历史记录</strong>
+                      <small>记录优化结果，便于稍后查看</small>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={settingsDraft.history_enabled}
+                      disabled={settingsBusy}
+                      on:change={(event) => setHistoryEnabled(event.currentTarget.checked)}
+                    />
+                  </label>
+                  <label class="settings-toggle">
+                    <span>
+                      <strong>隐私模式</strong>
+                      <small>减少本地内容保留</small>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={settingsDraft.privacy_mode}
+                      disabled={settingsBusy}
+                      on:change={(event) => setPrivacyMode(event.currentTarget.checked)}
+                    />
+                  </label>
+                </div>
+                <div class="settings-block">
+                  <span class="field-label">历史内容处理</span>
+                  <div class="segments compact">
+                    {#each historyRedactionOptions as item}
+                      <button
+                        type="button"
+                        class:active={settingsDraft.history_redaction === item.id}
+                        disabled={settingsBusy}
+                        on:click={() => setHistoryRedaction(item.id)}
+                      >
+                        {item.label}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              {:else}
+                <h3>插件</h3>
+                <div class="settings-choice-list">
+                  {#each settingsPlugins as plugin}
+                    <label class="settings-toggle">
+                      <span>
+                        <strong>{plugin.label}</strong>
+                        <small>{plugin.description}</small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={settingsDraft.enabled_plugins.includes(plugin.id)}
+                        disabled={settingsBusy}
+                        on:change={(event) => setPluginEnabled(plugin.id, event.currentTarget.checked)}
+                      />
+                    </label>
+                  {/each}
                 </div>
               {/if}
             </div>

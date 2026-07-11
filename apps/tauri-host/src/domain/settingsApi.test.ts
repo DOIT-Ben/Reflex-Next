@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createSettingsApi, type AppConfig } from "./settingsApi";
 
 const config: AppConfig = {
-  version: 1,
+  version: 2,
   provider: "minimax",
   model: "MiniMax-M2.7-highspeed",
   mode: "content",
@@ -10,8 +10,10 @@ const config: AppConfig = {
   scene_policy: "auto",
   clipboard_policy: "manual",
   clipboard_replace_confirmed: false,
-  history_enabled: true,
+  history_enabled: false,
   privacy_mode: false,
+  history_redaction: "secrets",
+  enabled_plugins: ["translator", "markdown-preview"],
   language: "zh-CN",
   theme: "system",
   hotkey: "Ctrl+Alt+R",
@@ -48,24 +50,24 @@ describe("settings api", () => {
           provider_id: "minimax",
           configured: true,
           masked_tail: "9xyz",
-          secret: "must-not-cross-adapter"
+          secret: "provider-fixture-key"
         };
       },
       listen: async () => () => undefined
     });
 
-    const status = await api.saveProviderSecret("minimax", "temporary-value");
+    const status = await api.saveProviderSecret("minimax", "provider-fixture-key");
 
     expect(status).toEqual({
       providerId: "minimax",
       configured: true,
       maskedTail: "9xyz"
     });
-    expect(JSON.stringify(status)).not.toContain("must-not-cross-adapter");
+    expect(JSON.stringify(status)).not.toContain("provider-fixture-key");
     expect(calls).toEqual([
       {
         command: "save_provider_secret",
-        args: { providerId: "minimax", secret: "temporary-value" }
+        args: { providerId: "minimax", secret: "provider-fixture-key" }
       }
     ]);
   });
@@ -92,5 +94,66 @@ describe("settings api", () => {
       { command: "provider_secret_status", args: { providerId: "minimax" } },
       { command: "delete_provider_secret", args: { providerId: "minimax" } }
     ]);
+  });
+
+  it("normalizes legacy history consent and filters invalid plugin values", async () => {
+    const api = createSettingsApi({
+      invoke: async () => ({
+        version: 1,
+        history_enabled: true,
+        history_redaction: "none",
+        enabled_plugins: ["translator", "history-sqlite", "../unsafe"],
+        api_key: "history-fixture-key"
+      }),
+      listen: async () => () => undefined
+    });
+
+    await expect(api.loadConfig()).resolves.toMatchObject({
+      version: 2,
+      history_enabled: false,
+      history_redaction: "secrets",
+      enabled_plugins: ["translator"]
+    });
+    await expect(api.loadConfig()).resolves.not.toHaveProperty("api_key");
+  });
+
+  it("preserves explicit v2 history policy and removes duplicate plugins", async () => {
+    const api = createSettingsApi({
+      invoke: async () => ({
+        version: 2,
+        history_enabled: true,
+        privacy_mode: true,
+        history_redaction: "none",
+        enabled_plugins: ["markdown-preview", "translator", "translator"]
+      }),
+      listen: async () => () => undefined
+    });
+
+    await expect(api.loadConfig()).resolves.toMatchObject({
+      version: 2,
+      history_enabled: true,
+      privacy_mode: true,
+      history_redaction: "none",
+      enabled_plugins: ["translator", "markdown-preview"]
+    });
+  });
+
+  it("drops an unknown extension when it contains nested secret-like fields", async () => {
+    const api = createSettingsApi({
+      invoke: async () => ({
+        version: 2,
+        future_flag: true,
+        future_provider: {
+          credentials: { token: "history-fixture-key" }
+        }
+      }),
+      listen: async () => () => undefined
+    });
+
+    const normalized = await api.loadConfig();
+
+    expect(normalized.future_flag).toBe(true);
+    expect(normalized).not.toHaveProperty("future_provider");
+    expect(JSON.stringify(normalized)).not.toContain("history-fixture-key");
   });
 });
