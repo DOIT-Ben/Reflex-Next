@@ -989,6 +989,13 @@ pre {
 .history-head { justify-content: space-between; padding: 0 22px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .history-head span { margin-left: 10px; color: var(--muted); font-size: 13px; }
 .history-actions button, .detail-actions button, .history-tools button, .more { min-height: 32px; padding: 0 12px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.history-menu { position: relative; }
+.history-menu summary { min-width: 64px; padding: 8px 12px; list-style: none; cursor: pointer; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; text-align: center; }
+.history-menu summary::-webkit-details-marker { display: none; }
+.history-menu-panel { position: absolute; z-index: 10; top: calc(100% + 8px); right: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 360px; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14); }
+.history-menu-panel label { display: grid; grid-column: 1 / -1; gap: 5px; color: var(--muted); font-size: 12px; }
+.history-menu-panel select { width: 100%; min-width: 0; }
+.history-menu-panel button.danger { color: var(--danger); }
 .history-tools { display: grid; grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(120px, 1fr)) auto; align-items: center; gap: 10px; min-width: 0; padding: 10px 22px; overflow: hidden; border-bottom: 1px solid var(--line); }
 .history-tools input, .history-tools select { width: 100%; min-width: 0; }
 .history-tools input { height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); outline: none; }

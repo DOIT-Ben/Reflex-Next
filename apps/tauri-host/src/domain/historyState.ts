@@ -10,6 +10,7 @@ export type HistorySummary = {
 export type HistoryPage = { items: HistorySummary[]; next_cursor: string | null };
 export type HistoryQuery = { search?: string; scene?: string; style?: string; provider?: string };
 export type HistoryPhase = "loading" | "loading-more" | "empty" | "error" | "ready";
+export type HistoryBackup = { id: string; created_at: string; record_count: number };
 
 export type HistoryState = {
   phase: HistoryPhase;
@@ -72,6 +73,54 @@ export function removeHistoryItem(state: HistoryState, id: string): HistoryState
   return { ...state, items, selectedId, phase: items.length ? "ready" : "empty" };
 }
 
+export function historyExportFilters(query: HistoryQuery): Record<string, string> | null {
+  if (query.search?.trim()) return null;
+  const { scene, style, provider } = cleanQuery(query);
+  return Object.fromEntries(Object.entries({ scene, style, provider }).filter(([, value]) => value)) as Record<string, string>;
+}
+
+export function normalizeHistoryBackups(value: unknown): HistoryBackup[] {
+  if (!isRecord(value) || !Array.isArray(value.items)) return [];
+  return value.items.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const id = item.id;
+    const createdAt = item.created_at;
+    const recordCount = item.record_count;
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return [];
+    if (typeof createdAt !== "string" || !createdAt.endsWith("Z") || createdAt.length > 40) return [];
+    if (!Number.isInteger(recordCount) || (recordCount as number) < 0) return [];
+    return [{ id, created_at: createdAt, record_count: recordCount as number }];
+  });
+}
+
+export function historyElapsedLabel(detail: Record<string, unknown>): string {
+  const elapsed = detail.elapsed_ms;
+  return typeof elapsed === "number" && Number.isFinite(elapsed) && elapsed >= 0 ? `${Math.round(elapsed)} ms` : "-";
+}
+
+export function historyScanMessage(value: unknown): string {
+  if (!isRecord(value) || !Number.isInteger(value.corrupted_records) || (value.corrupted_records as number) < 0) {
+    return "历史记录检查结果暂时不可用。";
+  }
+  const corrupted = value.corrupted_records as number;
+  return corrupted > 0 ? `发现 ${corrupted} 条需要修复的记录。` : "历史记录检查完成，未发现问题。";
+}
+
+export function applyHistoryRatingToDetail(
+  state: HistoryState,
+  detail: Record<string, unknown> | null,
+  expectedId: string,
+  expectedRequest: number,
+  rating: number
+): Record<string, unknown> | null {
+  if (!detail || state.selectedId !== expectedId || state.detailRequest !== expectedRequest) return detail;
+  return { ...detail, rating };
+}
+
 function cleanQuery(query: HistoryQuery): HistoryQuery {
   return Object.fromEntries(Object.entries(query).filter(([, value]) => typeof value === "string" && value.trim())) as HistoryQuery;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

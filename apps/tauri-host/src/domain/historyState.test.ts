@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { appendHistoryPage, createHistoryState, failHistoryQuery, finishHistoryOperation, removeHistoryItem, selectHistoryItem, setHistoryDetail, startHistoryOperation, startHistoryQuery, updateHistoryRating } from "./historyState";
+import { appendHistoryPage, applyHistoryRatingToDetail, createHistoryState, failHistoryQuery, finishHistoryOperation, historyElapsedLabel, historyExportFilters, historyScanMessage, normalizeHistoryBackups, removeHistoryItem, selectHistoryItem, setHistoryDetail, startHistoryOperation, startHistoryQuery, updateHistoryRating } from "./historyState";
 
 describe("history state", () => {
   it("resets the cursor and ignores an old response after filters change", () => {
@@ -89,5 +89,45 @@ describe("history state", () => {
     const first = startHistoryQuery(createHistoryState(), { search: "old" });
     const current = startHistoryQuery(first.state, { search: "new" });
     expect(failHistoryQuery(current.state, first.request, "固定错误")).toBe(current.state);
+  });
+
+  it("exports only supported metadata filters and rejects active text search", () => {
+    expect(historyExportFilters({ scene: "email", style: "concise", provider: "minimax" })).toEqual({ scene: "email", style: "concise", provider: "minimax" });
+    expect(historyExportFilters({ search: "private phrase", scene: "email" })).toBeNull();
+  });
+
+  it("accepts only safe backup summaries from the plugin result", () => {
+    expect(normalizeHistoryBackups({ items: [
+      { id: "backup-20260711-abc", created_at: "2026-07-11T12:00:00Z", record_count: 12 },
+      { id: "../outside", created_at: "2026-07-11T12:00:00Z", record_count: 99 },
+      { id: "backup-missing-date", record_count: 1 }
+    ] })).toEqual([
+      { id: "backup-20260711-abc", created_at: "2026-07-11T12:00:00Z", record_count: 12 }
+    ]);
+  });
+
+  it("uses the encrypted history elapsed field for the visible duration", () => {
+    expect(historyElapsedLabel({ elapsed_ms: 1250 })).toBe("1250 ms");
+    expect(historyElapsedLabel({ duration_ms: 1250 })).toBe("-");
+  });
+
+  it("uses the plugin scan contract and never hides corrupted records", () => {
+    expect(historyScanMessage({ corrupted_records: 2 })).toBe("发现 2 条需要修复的记录。");
+    expect(historyScanMessage({ corrupted_records: 0 })).toBe("历史记录检查完成，未发现问题。");
+    expect(historyScanMessage({ corrupted: 9 })).toBe("历史记录检查结果暂时不可用。");
+  });
+
+  it("does not apply a late rating response to a newly selected detail", () => {
+    const listed = appendHistoryPage(startHistoryQuery(createHistoryState(), {}).state, 1, { items: [
+      { id: "one", created_at: "a", scene: "general", style: "balanced", provider: "minimax", rating: null },
+      { id: "two", created_at: "b", scene: "email", style: "concise", provider: "other", rating: null }
+    ], next_cursor: null });
+    const one = selectHistoryItem(listed, "one");
+    const oneRequest = one.detailRequest;
+    const two = selectHistoryItem(one, "two");
+    const twoDetail = { id: "two", rating: null };
+
+    expect(applyHistoryRatingToDetail(two, twoDetail, "one", oneRequest, 5)).toBe(twoDetail);
+    expect(applyHistoryRatingToDetail(one, { id: "one", rating: null }, "one", oneRequest, 5)).toEqual({ id: "one", rating: 5 });
   });
 });
