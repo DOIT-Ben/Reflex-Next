@@ -12,7 +12,7 @@ from typing import Any
 from .plugin_contracts import PluginDescriptor, PluginFailure
 
 PLUGIN_UNAVAILABLE_MESSAGE = "Provider plugin unavailable."
-DEFAULT_ALLOWED_PROVIDER_IDS = frozenset({"minimax"})
+DEFAULT_ALLOWED_PROVIDER_IDS = frozenset({"minimax", "deepseek", "qwen", "zhipu", "siliconflow"})
 
 
 @dataclass(frozen=True)

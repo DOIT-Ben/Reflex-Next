@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reflex-provider-openai-compatible"
+version = "0.1.0"
+description = "OpenAI-compatible provider plugins for Reflex Next."
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.28,<0.29", "reflex-core", "reflex-provider-minimax"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.entry-points."reflex.providers"]
+deepseek = "reflex_provider_openai_compatible:deepseek"
+qwen = "reflex_provider_openai_compatible:qwen"
+zhipu = "reflex_provider_openai_compatible:zhipu"
+siliconflow = "reflex_provider_openai_compatible:siliconflow"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "../../packages/reflex-core/src", "../provider-minimax/src"]
+
+[tool.uv.sources]
+reflex-core = { path = "../../packages/reflex-core", editable = true }
+reflex-provider-minimax = { path = "../provider-minimax", editable = true }
