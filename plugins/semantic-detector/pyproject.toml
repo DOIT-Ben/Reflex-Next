@@ -7,6 +7,18 @@ dependencies = [
   "reflex-core",
 ]
 
-[project.entry-points."reflex.scene_detectors"]
-semantic = "reflex_semantic_detector:plugin"
+[project.optional-dependencies]
+semantic = [
+  "sentence-transformers>=3,<6",
+]
+dev = ["pytest"]
 
+[project.entry-points."reflex.scene_detectors"]
+semantic-detector = "reflex_semantic_detector:plugin"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "../../packages/reflex-core/src"]
+
+[tool.uv.sources]
+reflex-core = { path = "../../packages/reflex-core", editable = true }

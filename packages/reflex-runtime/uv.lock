@@ -346,6 +346,22 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
+name = "reflex-plugin-semantic-detector"
+version = "0.1.0"
+source = { editable = "../../plugins/semantic-detector" }
+dependencies = [
+    { name = "reflex-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "reflex-core", editable = "../reflex-core" },
+    { name = "sentence-transformers", marker = "extra == 'semantic'", specifier = ">=3,<6" },
+]
+provides-extras = ["semantic", "dev"]
+
+[[package]]
 name = "reflex-runtime"
 version = "0.1.0"
 source = { editable = "." }
@@ -357,6 +373,7 @@ dependencies = [
 builtins = [
     { name = "reflex-history-sqlite" },
     { name = "reflex-markdown-preview" },
+    { name = "reflex-plugin-semantic-detector" },
     { name = "reflex-translator" },
 ]
 dev = [
@@ -369,6 +386,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "reflex-history-sqlite", marker = "extra == 'builtins'", editable = "../../plugins/history-sqlite" },
     { name = "reflex-markdown-preview", marker = "extra == 'builtins'", editable = "../../plugins/markdown-preview" },
+    { name = "reflex-plugin-semantic-detector", marker = "extra == 'builtins'", editable = "../../plugins/semantic-detector" },
     { name = "reflex-translator", marker = "extra == 'builtins'", editable = "../../plugins/translator" },
 ]
 provides-extras = ["builtins", "dev"]

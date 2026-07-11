@@ -1250,7 +1250,7 @@ where
             .map_err(str::to_string)?,
         );
     }
-    for plugin_id in ["translator", "markdown-preview"] {
+    for plugin_id in ["translator", "markdown-preview", "semantic-detector"] {
         let enabled = persisted
             .enabled_plugins
             .iter()
@@ -1557,6 +1557,7 @@ mod tests {
                 CommandKind::ConfigureProvider,
                 CommandKind::ConfigurePlugin,
                 CommandKind::ConfigurePlugin,
+                CommandKind::ConfigurePlugin,
                 CommandKind::ConfigureHistoryPath,
                 CommandKind::ConfigureHistoryKeys,
                 CommandKind::ConfigureHistoryPolicy,
@@ -1577,17 +1578,24 @@ mod tests {
                 "enabled": false
             })
         );
-        assert_eq!(sequence[3].kind, CommandKind::ConfigureHistoryPath);
         assert_eq!(
-            sequence[3].payload["database_path"],
+            sequence[3].payload,
+            json!({
+                "plugin_id": "semantic-detector",
+                "enabled": false
+            })
+        );
+        assert_eq!(sequence[4].kind, CommandKind::ConfigureHistoryPath);
+        assert_eq!(
+            sequence[4].payload["database_path"],
             super::history_database_path(&directory)
                 .to_string_lossy()
                 .as_ref()
         );
-        assert!(sequence[4].payload["keys"]["v1"].is_string());
-        assert_eq!(sequence[5].payload["history_enabled"], true);
-        assert_eq!(sequence[5].payload["privacy_mode"], true);
-        assert_eq!(sequence[5].payload["history_redaction"], "none");
+        assert!(sequence[5].payload["keys"]["v1"].is_string());
+        assert_eq!(sequence[6].payload["history_enabled"], true);
+        assert_eq!(sequence[6].payload["privacy_mode"], true);
+        assert_eq!(sequence[6].payload["history_redaction"], "none");
         assert!(!sequence.iter().any(|command| {
             command
                 .payload
@@ -1978,9 +1986,9 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        assert_eq!(sequence[4].kind, CommandKind::ConfigureHistoryKeys);
-        assert!(sequence[4].payload["keys"]["v1"].is_string());
-        assert_eq!(sequence[5].payload["history_enabled"], false);
+        assert_eq!(sequence[5].kind, CommandKind::ConfigureHistoryKeys);
+        assert!(sequence[5].payload["keys"]["v1"].is_string());
+        assert_eq!(sequence[6].payload["history_enabled"], false);
         assert!(history_store.status().unwrap().configured);
         let _ = std::fs::remove_dir_all(directory);
     }
@@ -2015,8 +2023,8 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        assert_eq!(sequence[4].payload["keys"], json!({}));
-        assert_eq!(sequence[5].payload["history_enabled"], false);
+        assert_eq!(sequence[5].payload["keys"], json!({}));
+        assert_eq!(sequence[6].payload["history_enabled"], false);
         assert_eq!(sequence.last().unwrap().kind, CommandKind::Optimize);
         let _ = std::fs::remove_dir_all(directory);
     }
@@ -2055,11 +2063,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(sequence[0].kind, CommandKind::ConfigureProvider);
-        assert_eq!(sequence[3].kind, CommandKind::ConfigureHistoryPath);
-        assert_eq!(sequence[4].kind, CommandKind::ConfigureHistoryKeys);
-        assert_eq!(sequence[4].payload["keys"], json!({}));
-        assert_eq!(sequence[5].kind, CommandKind::ConfigureHistoryPolicy);
-        assert_eq!(sequence[5].payload["history_enabled"], true);
+        assert_eq!(sequence[4].kind, CommandKind::ConfigureHistoryPath);
+        assert_eq!(sequence[5].kind, CommandKind::ConfigureHistoryKeys);
+        assert_eq!(sequence[5].payload["keys"], json!({}));
+        assert_eq!(sequence[6].kind, CommandKind::ConfigureHistoryPolicy);
+        assert_eq!(sequence[6].payload["history_enabled"], true);
         assert_eq!(sequence.last().unwrap().kind, CommandKind::Optimize);
         let _ = std::fs::remove_dir_all(directory);
     }

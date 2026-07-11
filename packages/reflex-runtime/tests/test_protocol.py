@@ -74,6 +74,7 @@ def test_parse_private_provider_configuration_command():
             },
         ),
         ("configure_plugin", {"plugin_id": "translator", "enabled": True}),
+        ("configure_plugin", {"plugin_id": "semantic-detector", "enabled": False}),
         (
             "configure_history_keys",
             {"keys": {"v1": "11" * 32}},

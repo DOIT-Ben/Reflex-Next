@@ -47,7 +47,7 @@ CONFIGURE_HISTORY_POLICY_FIELDS = frozenset(
 CONFIGURE_HISTORY_PATH_FIELDS = frozenset({"database_path"})
 EMPTY_PAYLOAD_COMMANDS = frozenset({"cancel", "ping", "shutdown", "list_plugins"})
 BUILTIN_CAPABILITY_IDS = frozenset(
-    {"history-sqlite", "translator", "markdown-preview"}
+    {"history-sqlite", "translator", "markdown-preview", "semantic-detector"}
 )
 PRIVATE_FIELD_NAMES = frozenset(
     {"key", "keys", "path", "admin", "private", "secret", "token"}
@@ -176,7 +176,11 @@ def _validate_plugin_call(payload: dict[str, Any], *, public: bool) -> None:
 def _validate_plugin_configuration(payload: dict[str, Any]) -> None:
     message = "invalid plugin configuration command"
     _require_fields(payload, CONFIGURE_PLUGIN_FIELDS, message)
-    if payload.get("plugin_id") not in {"translator", "markdown-preview"}:
+    if payload.get("plugin_id") not in {
+        "translator",
+        "markdown-preview",
+        "semantic-detector",
+    }:
         raise ProtocolError(message)
     if not isinstance(payload.get("enabled"), bool):
         raise ProtocolError(message)

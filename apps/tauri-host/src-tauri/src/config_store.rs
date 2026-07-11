@@ -416,7 +416,7 @@ fn normalized_plugins(value: Option<&Value>, fallback: &[String]) -> Vec<String>
     let Some(values) = value.and_then(Value::as_array) else {
         return fallback.to_vec();
     };
-    ["translator", "markdown-preview"]
+    ["translator", "markdown-preview", "semantic-detector"]
         .into_iter()
         .filter(|allowed| values.iter().any(|value| value.as_str() == Some(*allowed)))
         .map(str::to_string)
@@ -585,14 +585,17 @@ mod tests {
             "history_enabled": true,
             "privacy_mode": true,
             "history_redaction": "none",
-            "enabled_plugins": ["markdown-preview", "translator", "translator"]
+            "enabled_plugins": ["semantic-detector", "markdown-preview", "translator", "translator"]
         }))
         .unwrap();
 
         assert!(config.history_enabled);
         assert!(config.privacy_mode);
         assert_eq!(config.history_redaction, "none");
-        assert_eq!(config.enabled_plugins, ["translator", "markdown-preview"]);
+        assert_eq!(
+            config.enabled_plugins,
+            ["translator", "markdown-preview", "semantic-detector"]
+        );
     }
 
     #[test]

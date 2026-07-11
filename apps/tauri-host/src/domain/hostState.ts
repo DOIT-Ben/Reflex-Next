@@ -96,7 +96,7 @@ export type HostSettingsDraft = {
   enabled_plugins: AppConfig["enabled_plugins"];
 };
 
-export const SETTINGS_PLUGIN_IDS = ["translator", "markdown-preview"] as const;
+export const SETTINGS_PLUGIN_IDS = ["translator", "markdown-preview", "semantic-detector"] as const;
 export type SettingsPluginId = (typeof SETTINGS_PLUGIN_IDS)[number];
 
 export type HostState = {

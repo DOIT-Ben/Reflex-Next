@@ -25,6 +25,7 @@ def test_capability_plugins_are_only_explicit_local_builtin_extras():
     assert config["project"]["optional-dependencies"]["builtins"] == [
         "reflex-history-sqlite",
         "reflex-markdown-preview",
+        "reflex-plugin-semantic-detector",
         "reflex-translator",
     ]
     assert config["tool"]["uv"]["sources"]["reflex-history-sqlite"] == {
@@ -39,6 +40,42 @@ def test_capability_plugins_are_only_explicit_local_builtin_extras():
         "path": "../../plugins/markdown-preview",
         "editable": True,
     }
+    assert config["tool"]["uv"]["sources"]["reflex-plugin-semantic-detector"] == {
+        "path": "../../plugins/semantic-detector",
+        "editable": True,
+    }
+
+
+def test_installed_semantic_detector_is_disabled_without_importing_optional_model_packages(
+    tmp_path, monkeypatch
+):
+    if importlib.util.find_spec("reflex_semantic_detector") is None:
+        pytest.skip("builtins extra is not installed in this environment")
+    monkeypatch.chdir(tmp_path)
+
+    manager = PluginManager()
+    result = manager.discover_scene_detector()
+
+    assert result.detector is None
+    assert result.failure is None
+    assert "sentence_transformers" not in sys.modules
+    assert "torch" not in sys.modules
+
+
+def test_installed_semantic_detector_can_be_discovered_without_loading_its_model(
+    tmp_path, monkeypatch
+):
+    if importlib.util.find_spec("reflex_semantic_detector") is None:
+        pytest.skip("builtins extra is not installed in this environment")
+    monkeypatch.chdir(tmp_path)
+
+    result = PluginManager(enabled_plugins={"semantic-detector"}).discover_scene_detector()
+
+    assert result.detector is not None
+    assert result.detector.descriptor.permissions == ("model_cache",)
+    assert "sentence_transformers" not in sys.modules
+    assert "torch" not in sys.modules
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_default_runtime_package_import_does_not_load_storage_dependencies(tmp_path):

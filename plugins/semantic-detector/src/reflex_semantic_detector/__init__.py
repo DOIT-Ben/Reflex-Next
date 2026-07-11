@@ -1,7 +1,5 @@
-"""Semantic detector plugin placeholder."""
+"""Optional lazy local semantic scene detector."""
 
+from .plugin import SemanticSceneDetector, plugin
 
-def plugin():
-    """Return the semantic detector plugin instance after implementation."""
-    raise NotImplementedError("Semantic detector plugin is not implemented yet.")
-
+__all__ = ["SemanticSceneDetector", "plugin"]

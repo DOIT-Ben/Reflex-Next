@@ -132,7 +132,8 @@
     description: string;
   }> = [
     { id: SETTINGS_PLUGIN_IDS[0], label: "翻译", description: "跨语言转换" },
-    { id: SETTINGS_PLUGIN_IDS[1], label: "Markdown 预览", description: "渲染 Markdown 内容" }
+    { id: SETTINGS_PLUGIN_IDS[1], label: "Markdown 预览", description: "渲染 Markdown 内容" },
+    { id: SETTINGS_PLUGIN_IDS[2], label: "语义识别", description: "使用已安装的本地模型增强场景识别" }
   ];
   const settingsSections = [
     { id: "provider", label: "模型与 Provider" },

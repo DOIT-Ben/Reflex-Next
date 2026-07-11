@@ -14,7 +14,7 @@ export type AppConfig = {
   history_enabled: boolean;
   privacy_mode: boolean;
   history_redaction: "secrets" | "none";
-  enabled_plugins: Array<"translator" | "markdown-preview">;
+  enabled_plugins: Array<"translator" | "markdown-preview" | "semantic-detector">;
   language: "zh-CN" | "en-US";
   theme: "light" | "dark" | "system";
   hotkey: string;
@@ -147,7 +147,7 @@ function enabledPluginsValue(
   fallback: AppConfig["enabled_plugins"]
 ): AppConfig["enabled_plugins"] {
   if (!Array.isArray(value)) return [...fallback];
-  return (["translator", "markdown-preview"] as const).filter((pluginId) =>
+  return (["translator", "markdown-preview", "semantic-detector"] as const).filter((pluginId) =>
     value.includes(pluginId)
   );
 }

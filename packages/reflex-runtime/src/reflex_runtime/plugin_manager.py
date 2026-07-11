@@ -28,11 +28,18 @@ class CapabilityDiscoveryResult:
     failures: tuple[PluginFailure, ...]
 
 
+@dataclass(frozen=True)
+class SceneDetectorDiscoveryResult:
+    detector: Any | None
+    failure: PluginFailure | None = None
+
+
 CAPABILITY_GROUPS = {
     "reflex.storage": frozenset({"history-sqlite"}),
     "reflex.transformers": frozenset({"translator"}),
     "reflex.commands": frozenset({"markdown-preview"}),
 }
+SEMANTIC_DETECTOR_ID = "semantic-detector"
 BUILTIN_CAPABILITY_DESCRIPTORS = {
     "history-sqlite": PluginDescriptor(
         plugin_id="history-sqlite",
@@ -104,7 +111,7 @@ class PluginManager:
         self._capability_cache: dict[str, tuple[PluginDescriptor, Any]] = {}
 
     def configure_enabled_plugin(self, plugin_id: str, enabled: bool) -> None:
-        if plugin_id not in {"translator", "markdown-preview"}:
+        if plugin_id not in {"translator", "markdown-preview", SEMANTIC_DETECTOR_ID}:
             raise ValueError("plugin configuration denied")
         if not isinstance(enabled, bool):
             raise ValueError("plugin configuration denied")
@@ -227,6 +234,34 @@ class PluginManager:
             descriptors=tuple(descriptors),
             failures=tuple(failures),
         )
+
+    def discover_scene_detector(self) -> SceneDetectorDiscoveryResult:
+        if SEMANTIC_DETECTOR_ID not in self._enabled_plugins:
+            return SceneDetectorDiscoveryResult(None)
+        candidates = [
+            entry_point
+            for entry_point in self._capability_entry_points_loader("reflex.scene_detectors")
+            if _safe_source_id(getattr(entry_point, "name", "unknown")) == SEMANTIC_DETECTOR_ID
+        ]
+        if len(candidates) != 1:
+            return SceneDetectorDiscoveryResult(
+                None, PluginFailure(SEMANTIC_DETECTOR_ID, "plugin_unavailable")
+            )
+        try:
+            detector = _materialize_capability(candidates[0].load())
+            descriptor = getattr(detector, "descriptor", None)
+            if (
+                getattr(descriptor, "plugin_id", None) != SEMANTIC_DETECTOR_ID
+                or getattr(descriptor, "kind", None) != "scene_detector"
+                or getattr(descriptor, "permissions", None) != ("model_cache",)
+                or not callable(getattr(detector, "detect", None))
+            ):
+                raise ValueError
+        except Exception:
+            return SceneDetectorDiscoveryResult(
+                None, PluginFailure(SEMANTIC_DETECTOR_ID, "plugin_unavailable")
+            )
+        return SceneDetectorDiscoveryResult(detector)
 
     def _load_capability_candidate(self, candidate: Any) -> Any:
         if isinstance(candidate, _DevelopmentCapability):

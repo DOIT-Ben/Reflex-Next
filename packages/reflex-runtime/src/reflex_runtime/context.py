@@ -72,6 +72,24 @@ def _safe_plugin_error_code(error: BaseException) -> str | None:
     return code if is_safe_id(code) else None
 
 
+class _FallbackSceneDetector:
+    """Use the enabled L1 detector only when it returns a trusted result."""
+
+    def __init__(self, semantic_detector: Any | None, fallback: RuleSceneDetector) -> None:
+        self._semantic_detector = semantic_detector
+        self._fallback = fallback
+
+    def detect(self, text: str, request: OptimizeRequest):
+        if self._semantic_detector is not None:
+            try:
+                result = self._semantic_detector.detect(text, request)
+                if result is not None:
+                    return result
+            except Exception:
+                pass
+        return self._fallback.detect(text, request)
+
+
 class RuntimeContext:
     def __init__(
         self,
@@ -132,7 +150,10 @@ class RuntimeContext:
         self._capability_descriptors = tuple(capability_descriptors or ())
         self._services = {} if services is None else services
         self._mock_provider = MockProvider() if self._development else None
-        self._scene_detector = RuleSceneDetector()
+        self._scene_detector = _FallbackSceneDetector(
+            plugin_manager.discover_scene_detector().detector,
+            RuleSceneDetector(),
+        )
         self._template_resolver = template_resolver or _builtin_template_resolver()
 
     def __repr__(self) -> str:
@@ -233,6 +254,10 @@ class RuntimeContext:
                     known_descriptors=discovery.descriptors,
                 )
                 self._capability_descriptors = discovery.descriptors
+                self._scene_detector = _FallbackSceneDetector(
+                    self._plugin_manager.discover_scene_detector().detector,
+                    RuleSceneDetector(),
+                )
         except (CapabilityDenied, ValueError) as error:
             code = getattr(error, "code", "plugin_configuration_denied")
             self.emit_error(command.request_id, code, "Plugin configuration failed.")
