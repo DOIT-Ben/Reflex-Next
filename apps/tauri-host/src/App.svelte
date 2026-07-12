@@ -137,6 +137,13 @@
     resolveProviderAvailability,
     type ProviderAvailability
   } from "./domain/providerCatalog";
+  import {
+    applySemanticModelEvent,
+    beginSemanticModelOperation,
+    createSemanticModelState,
+    failSemanticModelOperation,
+    semanticModelSizeLabel
+  } from "./domain/semanticModelState";
   import { t, translate } from "./domain/i18n";
   import { resultMarkdownContent, resultMarkdownFilename } from "./domain/resultExport";
   import {
@@ -236,6 +243,8 @@
   let markdownPreviewCloseButton: HTMLButtonElement | null = null;
   let batch = createBatchState();
   let batchRun: AbortController | null = null;
+  let semanticModel = createSemanticModelState();
+  let semanticModelRun: AbortController | null = null;
   let batchCloseButton: HTMLButtonElement | null = null;
   let batchFileInput: HTMLInputElement | null = null;
   let batchFileNotice: string | null = null;
@@ -342,6 +351,7 @@
       translationRun?.abort();
       markdownPreviewRun?.abort();
       batchRun?.abort();
+      semanticModelRun?.abort();
     };
   });
 
@@ -360,6 +370,7 @@
   $: markdownPreviewEnabled = persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
   $: batchRunnerEnabled = persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
   $: semanticDetectorEnabled = settingsDraft.enabled_plugins.includes("semantic-detector");
+  $: semanticDetectorActive = persistedConfig?.enabled_plugins.includes("semantic-detector") ?? false;
   $: uiLanguage = settingsDraft.language === "en-US" || persistedConfig?.language === "en-US"
     ? "en-US"
     : "zh-CN";
@@ -460,6 +471,12 @@
       draft = { ...state.requestDraft };
       await refreshDesktopStatus();
       await refreshProviderSecretStatus(saved.provider);
+      if (saved.enabled_plugins.includes("semantic-detector")) {
+        await runSemanticModelOperation("status");
+      } else {
+        semanticModelRun?.abort();
+        semanticModel = createSemanticModelState();
+      }
       showToast("✓ 设置已保存");
     } catch (error) {
       settingsNotice = safeDesktopSettingsError(error);
@@ -1260,6 +1277,7 @@
   function managePluginSettings() {
     beginSettings();
     settingsSection = "plugins";
+    void refreshSemanticModelStatus();
   }
 
   function setHistoryEnabled(enabled: boolean) {
@@ -1282,6 +1300,15 @@
 
   function setPluginEnabled(pluginId: SettingsPluginId, enabled: boolean) {
     settingsDraft = updatePluginSettingsDraft(settingsDraft, pluginId, enabled);
+    if (pluginId === "semantic-detector" && !enabled) {
+      semanticModelRun?.abort();
+      semanticModel = createSemanticModelState();
+    }
+  }
+
+  function selectSettingsSection(section: SettingsSection) {
+    settingsSection = section;
+    if (section === "plugins") void refreshSemanticModelStatus();
   }
 
   function pluginDescription(plugin: (typeof settingsPlugins)[number]): string {
@@ -1289,6 +1316,75 @@
     return semanticDetectorEnabled
       ? "已启用。仅在优化时检查已安装的本地模型；模型不可用时自动回退通用场景。"
       : "未启用。启用后只检查本地已安装模型，不会自动下载。";
+  }
+
+  async function refreshSemanticModelStatus() {
+    if (!persistedConfig?.enabled_plugins.includes("semantic-detector")) return;
+    await runSemanticModelOperation("status");
+  }
+
+  async function downloadSemanticModel() {
+    await runSemanticModelOperation("download");
+  }
+
+  async function deleteSemanticModel() {
+    if (!window.confirm(tr("删除本地语义模型？之后仍可重新下载。"))) return;
+    await runSemanticModelOperation("delete");
+  }
+
+  function cancelSemanticModelDownload() {
+    semanticModelRun?.abort();
+  }
+
+  async function runSemanticModelOperation(operation: "status" | "download" | "delete") {
+    const bridge = capabilityBridge;
+    if (!bridge || !persistedConfig?.enabled_plugins.includes("semantic-detector")) return;
+    semanticModelRun?.abort();
+    const controller = new AbortController();
+    semanticModelRun = controller;
+    semanticModel = beginSemanticModelOperation(semanticModel, operation);
+    try {
+      for await (const event of bridge.invoke("semantic-detector", operation, {}, {
+        signal: controller.signal,
+        timeoutMs: operation === "download" ? 1_800_000 : 30_000
+      })) {
+        if (semanticModelRun !== controller || controller.signal.aborted) return;
+        semanticModel = applySemanticModelEvent(semanticModel, event);
+      }
+    } catch {
+      if (semanticModelRun !== controller) return;
+      semanticModel = controller.signal.aborted
+        ? {
+            ...semanticModel,
+            phase: semanticModel.sizeBytes > 0 ? "ready" : "missing",
+            percent: 0,
+            errorCode: null
+          }
+        : failSemanticModelOperation(semanticModel);
+    } finally {
+      if (semanticModelRun === controller) semanticModelRun = null;
+    }
+  }
+
+  function semanticModelStatusText(): string {
+    if (!semanticDetectorActive && semanticDetectorEnabled) return "保存设置后即可管理本地模型。";
+    if (semanticModel.phase === "loading") return "正在检查本地模型…";
+    if (semanticModel.phase === "downloading") return tr("正在下载 {percent}%", { percent: semanticModel.percent });
+    if (semanticModel.phase === "deleting") return "正在删除本地模型…";
+    if (semanticModel.phase === "ready") return tr("模型已就绪 · {size}", { size: semanticModelSizeLabel(semanticModel.sizeBytes) });
+    if (semanticModel.phase === "missing") {
+      return semanticModel.runtimeReady
+        ? "尚未下载本地语义模型。"
+        : "本地语义运行组件尚未安装。";
+    }
+    if (semanticModel.phase === "error") {
+      if (semanticModel.errorCode === "model_runtime_missing") return "缺少本地模型下载组件。";
+      if (semanticModel.errorCode === "model_download_failed") return "模型下载失败，请检查网络后重试。";
+      if (semanticModel.errorCode === "model_download_incomplete") return "模型文件不完整，请重新下载。";
+      if (semanticModel.errorCode === "model_delete_failed") return "本地模型删除失败。";
+      return "本地模型状态暂时不可用。";
+    }
+    return "检查本地模型后可启用更准确的场景识别。";
   }
 
   function closeOverlay() {
@@ -2052,7 +2148,7 @@
                   type="button"
                   class:active={settingsSection === section.id}
                   aria-pressed={settingsSection === section.id}
-                  on:click={() => (settingsSection = section.id)}
+                  on:click={() => selectSettingsSection(section.id)}
                 >
                   {tr(section.label)}
                 </button>
@@ -2256,6 +2352,37 @@
                     </label>
                   {/each}
                 </div>
+                {#if semanticDetectorEnabled}
+                  <section class="semantic-model-card" aria-label={tr("本地语义模型")}>
+                    <div>
+                      <strong>{tr("本地语义模型")}</strong>
+                      <p role="status" aria-live="polite">{tr(semanticModelStatusText())}</p>
+                    </div>
+                    {#if semanticModel.phase === "downloading"}
+                      <progress max="100" value={semanticModel.percent} aria-label={tr("模型下载进度")}></progress>
+                    {/if}
+                    <div class="semantic-model-actions">
+                      <button
+                        class="outline"
+                        type="button"
+                        disabled={!semanticDetectorActive || ["loading", "downloading", "deleting"].includes(semanticModel.phase)}
+                        on:click={refreshSemanticModelStatus}
+                      >{tr("检查状态")}</button>
+                      {#if semanticModel.phase === "downloading"}
+                        <button class="outline" type="button" on:click={cancelSemanticModelDownload}>{tr("取消下载")}</button>
+                      {:else if semanticModel.phase === "ready"}
+                        <button class="outline danger" type="button" disabled={!semanticDetectorActive} on:click={deleteSemanticModel}>{tr("删除模型")}</button>
+                      {:else}
+                        <button
+                          class="primary small"
+                          type="button"
+                          disabled={!semanticDetectorActive || ["loading", "deleting"].includes(semanticModel.phase)}
+                          on:click={downloadSemanticModel}
+                        >{tr("下载模型")}</button>
+                      {/if}
+                    </div>
+                  </section>
+                {/if}
               {/if}
             </div>
           </div>
