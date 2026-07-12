@@ -1588,8 +1588,9 @@ def test_list_plugins_emits_capability_list_instead_of_core_event():
                 "history-sqlite",
                 "batch-runner",
                 "translator",
-            "markdown-preview",
-        }
+                "markdown-preview",
+                "semantic-detector",
+            }
         listed = {plugin["id"]: plugin for plugin in envelope["plugins"]}
         assert listed["history-sqlite"]["public_operations"] == [
             "list",

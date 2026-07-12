@@ -63,7 +63,12 @@ class SemanticSceneDetector:
         if not isinstance(min_confidence, (int, float)) or not 0.0 <= min_confidence <= 1.0:
             raise ValueError("invalid minimum confidence")
         self._model_id = model_id.strip()
-        self._cache_dir = Path(cache_dir) if cache_dir is not None else None
+        if cache_dir is None:
+            from .model_manager import default_cache_dir
+
+            self._cache_dir = default_cache_dir()
+        else:
+            self._cache_dir = Path(cache_dir)
         self._min_confidence = float(min_confidence)
         self._model_factory = model_factory
         self._scene_examples = dict(scene_examples or _SCENE_EXAMPLES)
@@ -112,8 +117,7 @@ class SemanticSceneDetector:
             factory = SentenceTransformer
         try:
             kwargs: dict[str, Any] = {"local_files_only": True}
-            if self._cache_dir is not None:
-                kwargs["cache_folder"] = str(self._cache_dir)
+            kwargs["cache_folder"] = str(self._cache_dir)
             self._model = factory(self._model_id, **kwargs)
         except Exception:
             return None

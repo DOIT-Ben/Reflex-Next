@@ -52,6 +52,7 @@ def capability_descriptor(
         "history-sqlite": "History",
         "translator": "Translator",
         "markdown-preview": "Markdown Preview",
+        "semantic-detector": "Semantic Detector",
     }
     return PluginDescriptor(
         plugin_id=plugin_id,
@@ -353,6 +354,7 @@ def test_capability_groups_load_valid_builtins_and_represent_absent_history():
         "reflex.storage": [],
         "reflex.transformers": [FakeEntryPoint("translator", translator)],
         "reflex.commands": [FakeEntryPoint("markdown-preview", markdown)],
+        "reflex.model_managers": [],
     }
     manager = PluginManager(
         capability_entry_points_loader=lambda group: by_group[group],
@@ -369,6 +371,7 @@ def test_capability_groups_load_valid_builtins_and_represent_absent_history():
     assert states == {
         "history-sqlite": "absent",
         "batch-runner": "absent",
+        "semantic-detector": "absent",
         "translator": "available",
         "markdown-preview": "available",
     }
@@ -376,6 +379,34 @@ def test_capability_groups_load_valid_builtins_and_represent_absent_history():
         item for item in result.descriptors if item.plugin_id == "translator"
     )
     assert translator_descriptor.permissions == ("network-via-provider",)
+
+
+def test_semantic_model_manager_is_loaded_only_when_enabled():
+    semantic = FakeCapability(
+        capability_descriptor(
+            "semantic-detector",
+            "command",
+            ("status", "download", "delete"),
+            permissions=("model_cache", "network"),
+        )
+    )
+    loader = lambda group: (
+        [FakeEntryPoint("semantic-detector", semantic)]
+        if group == "reflex.model_managers"
+        else []
+    )
+
+    disabled = PluginManager(capability_entry_points_loader=loader).discover_capabilities()
+    enabled = PluginManager(
+        capability_entry_points_loader=loader,
+        enabled_plugins={"semantic-detector"},
+    ).discover_capabilities()
+
+    assert "semantic-detector" not in disabled.plugins
+    assert next(
+        item for item in disabled.descriptors if item.plugin_id == "semantic-detector"
+    ).state == "disabled"
+    assert enabled.plugins["semantic-detector"] is semantic
 
 
 def test_conforming_history_plugin_loads_with_the_canonical_operation_contract():

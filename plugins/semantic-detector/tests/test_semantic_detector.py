@@ -3,8 +3,11 @@ from __future__ import annotations
 import sys
 from importlib.metadata import entry_points
 
-from reflex_core import OptimizeRequest
-from reflex_semantic_detector import SemanticSceneDetector
+import pytest
+
+from reflex_core import OperationCancelled, OptimizeRequest
+from reflex_semantic_detector import SemanticModelManager, SemanticSceneDetector
+from reflex_semantic_detector.model_manager import SemanticModelError
 
 
 class FakeModel:
@@ -37,6 +40,14 @@ def test_entry_point_uses_the_runtime_allowlist_id() -> None:
     ]
     assert len(matches) == 1
     assert matches[0].load()().descriptor.plugin_id == "semantic-detector"
+
+    managers = [
+        item
+        for item in entry_points(group="reflex.model_managers")
+        if item.name == "semantic-detector"
+    ]
+    assert len(managers) == 1
+    assert managers[0].load()().descriptor.operations == ("status", "download", "delete")
 
 
 def test_detects_with_an_injected_local_model_without_network() -> None:
@@ -73,3 +84,112 @@ def test_low_confidence_and_empty_input_return_no_result() -> None:
 
     assert detector.detect("unknown input", OptimizeRequest("input")) is None
     assert detector.detect("", OptimizeRequest("input")) is None
+
+
+class ActiveCancellation:
+    is_cancelled = False
+
+
+class Cancelled:
+    is_cancelled = True
+
+
+def test_model_manager_reports_runtime_and_cache_state(tmp_path) -> None:
+    manager = SemanticModelManager(
+        cache_dir=tmp_path,
+        module_available=lambda name: name == "sentence_transformers",
+    )
+
+    missing = manager.invoke("status", {}, None, ActiveCancellation())
+
+    assert missing["model_state"] == "missing"
+    assert missing["runtime_state"] == "ready"
+    assert missing["size_bytes"] == 0
+
+    snapshot = (
+        tmp_path
+        / "models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2"
+        / "snapshots"
+        / "fixture"
+    )
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_text("{}", encoding="utf-8")
+    (snapshot / "model.safetensors").write_bytes(b"weights")
+
+    ready = manager.invoke("status", {}, None, ActiveCancellation())
+
+    assert ready["model_state"] == "ready"
+    assert ready["size_bytes"] > 0
+
+
+def test_model_manager_downloads_selected_files_with_bounded_progress(tmp_path) -> None:
+    downloaded: list[str] = []
+
+    def download_file(*, repo_id, filename, cache_dir):
+        downloaded.append(filename)
+        snapshot = (
+            tmp_path
+            / f"models--{repo_id.replace('/', '--')}"
+            / "snapshots"
+            / "fixture"
+        )
+        path = snapshot / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"fixture")
+
+    manager = SemanticModelManager(
+        cache_dir=tmp_path,
+        module_available=lambda _name: True,
+        list_repo_files=lambda _model_id: [
+            "README.md",
+            "config.json",
+            "model.safetensors",
+            "onnx/model.onnx",
+        ],
+        download_file=download_file,
+    )
+
+    events = list(manager.invoke("download", {}, None, ActiveCancellation()))
+
+    assert downloaded == ["config.json", "model.safetensors"]
+    assert [event["status"] for event in events] == ["progress", "progress", "result"]
+    assert events[-1]["data"]["model_state"] == "ready"
+    assert events[-1]["data"]["runtime_state"] == "ready"
+
+
+def test_model_manager_uses_safe_errors_and_deletes_only_its_model_cache(tmp_path) -> None:
+    manager = SemanticModelManager(
+        cache_dir=tmp_path,
+        module_available=lambda _name: False,
+    )
+
+    with pytest.raises(SemanticModelError) as caught:
+        list(manager.invoke("download", {}, None, ActiveCancellation()))
+    assert caught.value.code == "model_runtime_missing"
+
+    model_root = (
+        tmp_path
+        / "models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2"
+    )
+    model_root.mkdir()
+    (model_root / "partial.bin").write_bytes(b"partial")
+    unrelated = tmp_path / "keep.txt"
+    unrelated.write_text("keep", encoding="utf-8")
+
+    result = manager.invoke("delete", {}, None, ActiveCancellation())
+
+    assert result["model_state"] == "missing"
+    assert not model_root.exists()
+    assert unrelated.read_text(encoding="utf-8") == "keep"
+
+
+def test_model_manager_honors_cancellation_before_network_access(tmp_path) -> None:
+    manager = SemanticModelManager(
+        cache_dir=tmp_path,
+        module_available=lambda _name: True,
+        list_repo_files=lambda _model_id: (_ for _ in ()).throw(AssertionError()),
+        download_file=lambda **_kwargs: (_ for _ in ()).throw(AssertionError()),
+    )
+
+    with pytest.raises(OperationCancelled):
+        list(manager.invoke("download", {}, None, Cancelled()))

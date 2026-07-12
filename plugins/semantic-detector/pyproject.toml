@@ -16,6 +16,9 @@ dev = ["pytest"]
 [project.entry-points."reflex.scene_detectors"]
 semantic-detector = "reflex_semantic_detector:plugin"
 
+[project.entry-points."reflex.model_managers"]
+semantic-detector = "reflex_semantic_detector:manager"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "../../packages/reflex-core/src"]

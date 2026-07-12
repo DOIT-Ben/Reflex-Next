@@ -38,6 +38,7 @@ CAPABILITY_GROUPS = {
     "reflex.storage": frozenset({"history-sqlite"}),
     "reflex.transformers": frozenset({"translator"}),
     "reflex.commands": frozenset({"markdown-preview", "batch-runner"}),
+    "reflex.model_managers": frozenset({"semantic-detector"}),
 }
 SEMANTIC_DETECTOR_ID = "semantic-detector"
 BUILTIN_CAPABILITY_DESCRIPTORS = {
@@ -86,6 +87,15 @@ BUILTIN_CAPABILITY_DESCRIPTORS = {
         plugin_id="batch-runner", display_name="Batch Runner", version="1", kind="command",
         permissions=(), operations=("parse", "export", "template"),
         public_operations=("parse", "export", "template"),
+    ),
+    "semantic-detector": PluginDescriptor(
+        plugin_id="semantic-detector",
+        display_name="Semantic Detector",
+        version="1",
+        kind="command",
+        permissions=("model_cache", "network"),
+        operations=("status", "download", "delete"),
+        public_operations=("status", "download", "delete"),
     ),
 }
 
@@ -204,7 +214,7 @@ class PluginManager:
             if candidate is None:
                 descriptors.append(replace(builtin, enabled=False, state="absent"))
                 continue
-            if plugin_id in {"translator", "markdown-preview", "batch-runner"} and (
+            if plugin_id in {"translator", "markdown-preview", "batch-runner", SEMANTIC_DETECTOR_ID} and (
                 plugin_id not in self._enabled_plugins
             ):
                 descriptors.append(replace(builtin, enabled=False, state="disabled"))

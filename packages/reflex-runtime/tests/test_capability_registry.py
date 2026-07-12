@@ -274,6 +274,26 @@ def test_disabled_optional_plugin_is_not_invoked():
     assert plugin.calls == []
 
 
+def test_enabled_semantic_model_manager_uses_the_public_model_cache_allowlist():
+    plugin = RecordingPlugin()
+    semantic = descriptor(
+        "semantic-detector",
+        "command",
+        ("status", "download", "delete"),
+        ("model_cache", "network"),
+    )
+    registry = CapabilityRegistry(
+        [(semantic, plugin)], enabled_plugins={"semantic-detector"}
+    )
+
+    result = registry.invoke_public(
+        "semantic-detector", "status", {}, {}, CancellationToken()
+    )
+
+    assert result == {"ok": True}
+    assert plugin.calls[0][0] == "status"
+
+
 def test_history_state_is_derived_only_from_keys_and_policy():
     plugin = RecordingPlugin()
     registry = CapabilityRegistry([(history_descriptor(), plugin)])
