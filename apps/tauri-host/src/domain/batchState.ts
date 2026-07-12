@@ -65,12 +65,25 @@ export function setBatchFormat(state: BatchState, format: BatchFormat): BatchSta
   if (state.phase === "parsing" || state.phase === "running" || (format !== "csv" && format !== "txt")) {
     return state;
   }
-  return { ...state, format, error: null };
+  if (state.format === format) return { ...state, error: null };
+  return {
+    ...state,
+    phase: state.phase === "closed" ? "closed" : "idle",
+    format,
+    items: [],
+    error: null
+  };
 }
 
 export function setBatchSourceText(state: BatchState, sourceText: string): BatchState {
   if (state.phase === "parsing" || state.phase === "running") return state;
-  return { ...state, sourceText: sourceText.slice(0, 2_000_000), error: null };
+  return {
+    ...state,
+    phase: state.phase === "closed" ? "closed" : "idle",
+    sourceText: sourceText.slice(0, 2_000_000),
+    items: [],
+    error: null
+  };
 }
 
 export function setBatchStyle(state: BatchState, style: OptimizeStyle): BatchState {

@@ -17,5 +17,8 @@ describe("ui messages", () => {
     expect(translate("en-US", "历史记录")).toBe("History");
     expect(translate("en-US", "对比原文")).toBe("Compare original");
     expect(translate("en-US", "当前结果没有可用原文")).toBe("This result has no original text available");
+    expect(translate("en-US", "导入文件")).toBe("Import file");
+    expect(translate("en-US", "已从 {name} 导入 {count} 条提示词", { name: "prompts.csv", count: 2 }))
+      .toBe("Imported 2 prompts from prompts.csv");
   });
 });

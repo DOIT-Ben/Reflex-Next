@@ -116,6 +116,11 @@
     type BatchFormat
   } from "./domain/batchState";
   import {
+    batchTemplateContent,
+    readBatchImportFile,
+    type BatchImportFailure
+  } from "./domain/batchFileImport";
+  import {
     createTemplateDraft,
     filterTemplates,
     readCustomTemplates,
@@ -227,6 +232,8 @@
   let batch = createBatchState();
   let batchRun: AbortController | null = null;
   let batchCloseButton: HTMLButtonElement | null = null;
+  let batchFileInput: HTMLInputElement | null = null;
+  let batchFileNotice: string | null = null;
   let customTemplates: PromptTemplate[] = [];
   let templateDraft: TemplateDraft = createTemplateDraft();
   let selectedTemplateId: string | null = null;
@@ -805,6 +812,7 @@
     if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
     if (translation.phase !== "closed") closeTranslationView();
     batch = openBatch(batch);
+    batchFileNotice = null;
     window.setTimeout(() => batchCloseButton?.focus());
   }
 
@@ -812,6 +820,7 @@
     batchRun?.abort();
     batchRun = null;
     batch = closeBatch(batch);
+    batchFileNotice = null;
     if (restoreFocus) window.setTimeout(() => moreActionsButton?.focus());
   }
 
@@ -921,6 +930,56 @@
     } catch {
       batch = failBatchParse(batch, started.request, "批处理暂时不可用，请重试。");
     }
+  }
+
+  function requestBatchFileImport() {
+    if (batch.phase === "parsing" || batch.phase === "running") return;
+    batchFileInput?.click();
+  }
+
+  async function importBatchFile(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file || batch.phase === "parsing" || batch.phase === "running") return;
+
+    const imported = await readBatchImportFile(file);
+    if (!imported.ok) {
+      batchFileNotice = batchImportFailureMessage(imported.reason);
+      return;
+    }
+
+    batch = setBatchFormat(batch, imported.format);
+    batch = setBatchSourceText(batch, imported.content);
+    batchFileNotice = null;
+    await parseBatchSource();
+    if (batch.phase === "ready") {
+      showToast(tr("已从 {name} 导入 {count} 条提示词", { name: file.name, count: batch.items.length }));
+    }
+  }
+
+  function downloadBatchTemplate() {
+    const content = batchTemplateContent(batch.format);
+    const type = batch.format === "csv" ? "text/csv;charset=utf-8" : "text/plain;charset=utf-8";
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `reflex-batch-template.${batch.format}`;
+    anchor.style.display = "none";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function batchImportFailureMessage(reason: BatchImportFailure): string {
+    const messages: Record<BatchImportFailure, string> = {
+      unsupported_file: "请选择 CSV 或 TXT 文件。",
+      file_too_large: "文件超过 200 万字符限制。",
+      empty_file: "文件中没有可导入的内容。",
+      read_failed: "无法读取该文件，请重试。"
+    };
+    return messages[reason];
   }
 
   async function runBatch() {
@@ -1640,13 +1699,27 @@
               placeholder={batch.format === "csv" ? "prompt\nWrite a business email" : tr("写一封商务邮件\n解释什么是机器学习")}
             ></textarea>
           </label>
+          <input
+            class="batch-file-input"
+            type="file"
+            accept=".csv,text/csv,.txt,text/plain"
+            tabindex="-1"
+            bind:this={batchFileInput}
+            on:change={importBatchFile}
+          />
 
           <div class="batch-action-row">
-            <button class="outline" type="button" disabled={batch.phase === "parsing" || batch.phase === "running" || !batch.sourceText.trim()} on:click={parseBatchSource}>
-              {tr(batch.phase === "parsing" ? "正在解析" : "解析内容")}
-            </button>
+            <div class="batch-import-actions">
+              <button class="outline" type="button" disabled={batch.phase === "parsing" || batch.phase === "running"} on:click={requestBatchFileImport}>{tr("导入文件")}</button>
+              <button class="outline" type="button" disabled={batch.phase === "parsing" || batch.phase === "running"} on:click={downloadBatchTemplate}>{tr("下载模板")}</button>
+              <button class="outline" type="button" disabled={batch.phase === "parsing" || batch.phase === "running" || !batch.sourceText.trim()} on:click={parseBatchSource}>
+                {tr(batch.phase === "parsing" ? "正在解析" : "解析内容")}
+              </button>
+            </div>
             <p aria-live="polite">
-              {#if batch.phase === "running"}
+              {#if batchFileNotice}
+                <span class="error">{tr(batchFileNotice)}</span>
+              {:else if batch.phase === "running"}
                 {tr("正在处理 {processed}/{total}，已完成 {completed} 条", { processed: batchProcessedCount(batch), total: batch.items.length, completed: batchCompletedCount(batch) })}
               {:else if batch.phase === "completed"}
                 {tr("已完成 {completed}/{total} 条", { completed: batchCompletedCount(batch), total: batch.items.length })}

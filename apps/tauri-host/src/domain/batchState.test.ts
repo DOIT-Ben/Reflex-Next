@@ -11,6 +11,7 @@ import {
   finalizeBatchRun,
   runBatchWorkerPool,
   setBatchConcurrency,
+  setBatchFormat,
   setBatchSourceText,
   startBatchItem
 } from "./batchState";
@@ -43,6 +44,20 @@ describe("batch state", () => {
     expect(batchCanExport(state)).toBe(true);
     expect(completeBatchItem(state, started.request - 1, 2, "late")).toBe(state);
     expect(cancelBatch(state).items.map((item) => item.status)).toEqual(["completed", "cancelled"]);
+  });
+
+  it("clears parsed items before accepting a different source or format", () => {
+    const ready = completeBatchParse(
+      beginBatchParse({ ...createBatchState(), phase: "idle", sourceText: "first" })!.state,
+      1,
+      { items: [{ id: 1, prompt: "first" }] }
+    );
+
+    const changedSource = setBatchSourceText(ready, "second");
+    expect(changedSource).toMatchObject({ phase: "idle", sourceText: "second", items: [] });
+
+    const changedFormat = setBatchFormat(ready, "csv");
+    expect(changedFormat).toMatchObject({ phase: "idle", format: "csv", items: [] });
   });
 
   it("runs no more than four workers and does not launch work after cancellation", async () => {

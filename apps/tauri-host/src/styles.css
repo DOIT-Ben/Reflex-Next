@@ -704,10 +704,26 @@ pre {
   line-height: 1.55;
 }
 
+.batch-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .batch-action-row {
   justify-content: space-between;
   gap: 14px;
   min-height: 46px;
+}
+
+.batch-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .batch-action-row p {
