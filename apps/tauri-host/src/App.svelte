@@ -128,6 +128,7 @@
   } from "./domain/templateLibrary";
   import { providerCatalog, providerModels } from "./domain/providerCatalog";
   import { t, translate } from "./domain/i18n";
+  import { resultMarkdownContent, resultMarkdownFilename } from "./domain/resultExport";
   import {
     listSceneOptions,
     type OptimizeMode,
@@ -194,6 +195,11 @@
   const uiLanguages: Array<{ id: AppConfig["language"]; label: string }> = [
     { id: "zh-CN", label: "简体中文" },
     { id: "en-US", label: "English" }
+  ];
+  const themes: Array<{ id: AppConfig["theme"]; label: string }> = [
+    { id: "system", label: "跟随系统" },
+    { id: "light", label: "浅色" },
+    { id: "dark", label: "深色" }
   ];
   const batchFormats: Array<{ id: BatchFormat; label: string }> = [
     { id: "txt", label: "TXT 每行一条" },
@@ -349,6 +355,10 @@
 
   function setInput(value: string) {
     state = updateInput(state, value);
+  }
+
+  function clearInput() {
+    setInput("");
   }
 
   async function readClipboard() {
@@ -592,6 +602,21 @@
     window.setTimeout(() => {
       state = { ...state, copied: false };
     }, 1400);
+  }
+
+  function exportResultMarkdown() {
+    if (!state.output) return;
+    const content = resultMarkdownContent(state.output);
+    const url = URL.createObjectURL(new Blob([content], { type: "text/markdown;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = resultMarkdownFilename();
+    anchor.style.display = "none";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    showToast("结果已导出为 Markdown");
   }
 
   function openTranslationView() {
@@ -1259,7 +1284,7 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-<main class="app-shell" data-phase={state.phase}>
+<main class="app-shell" data-phase={state.phase} data-theme={settingsDraft.theme}>
   <section class="window" aria-label="Reflex quick window">
     <header class="top-bar">
       <div class="brand">
@@ -1368,6 +1393,7 @@
                 <button role="menuitem" on:click={() => runFromMoreActions("regenerate")}>{tr("重新生成")}</button>
                 <button role="menuitem" on:click={() => runFromMoreActions("adjust")}>{t(uiLanguage, "adjust")}</button>
                 <button role="menuitem" on:click={openTemplateManager}>{tr("模板管理")}</button>
+                <button role="menuitem" on:click={exportResultMarkdown}>{tr("导出 Markdown")}</button>
                 <button
                   role="menuitem"
                   disabled={!translatorEnabled || !state.currentResult?.output}
@@ -1440,9 +1466,12 @@
             placeholder={t(uiLanguage, "paste")}
           ></textarea>
           <div class="input-tools">
-            <button type="button" disabled={clipboardReading} on:click={readClipboard}>
-              {clipboardReading ? t(uiLanguage, "generating") : t(uiLanguage, "readClipboard")}
-            </button>
+            <div class="input-actions">
+              <button type="button" disabled={clipboardReading} on:click={readClipboard}>
+                {clipboardReading ? t(uiLanguage, "generating") : t(uiLanguage, "readClipboard")}
+              </button>
+              <button class="icon-button" type="button" aria-label={tr("清空输入")} disabled={!state.inputText} on:click={clearInput}>×</button>
+            </div>
             <span>{inputCount}</span>
           </div>
         </div>
@@ -1941,6 +1970,16 @@
                     {#each uiLanguages as language}
                       <button type="button" class:active={settingsDraft.language === language.id} on:click={() => (settingsDraft = { ...settingsDraft, language: language.id })}>
                         {tr(language.label)}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+                <div class="settings-block">
+                  <span class="field-label">{tr("界面主题")}</span>
+                  <div class="segments compact">
+                    {#each themes as theme}
+                      <button type="button" class:active={settingsDraft.theme === theme.id} on:click={() => (settingsDraft = { ...settingsDraft, theme: theme.id })}>
+                        {tr(theme.label)}
                       </button>
                     {/each}
                   </div>

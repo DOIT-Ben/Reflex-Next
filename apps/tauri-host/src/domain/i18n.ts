@@ -11,6 +11,8 @@ const messages = {
 
 const translations: Record<string, string> = {
   "取消": "Cancel", "重试": "Retry", "中文": "Chinese", "正在保存": "Saving", "✓ 源码已复制": "Source copied", "写一封商务邮件\n解释什么是机器学习": "Write a business email\nExplain machine learning", "通义千问": "Qwen", "智谱 GLM": "Zhipu GLM", "M2.7 高速版": "M2.7 Highspeed",
+  "清空输入": "Clear input", "导出 Markdown": "Export Markdown", "结果已导出为 Markdown": "Result exported as Markdown",
+  "界面主题": "Appearance", "跟随系统": "System", "浅色": "Light", "深色": "Dark",
   "内容优化": "Content optimization", "提示词生成": "Prompt generation", "简洁": "Concise", "平衡": "Balanced", "详细": "Detailed", "创意": "Creative", "精准": "Precise",
   "启动时读取": "Read on startup", "仅手动读取": "Read manually", "生成后自动替换": "Replace after generation", "自动": "Auto", "每次询问": "Ask every time", "手动固定": "Manual", "隐藏敏感内容": "Redact sensitive content", "保留原文": "Keep original text",
   "翻译": "Translate", "跨语言转换": "Cross-language conversion", "Markdown 预览": "Markdown preview", "渲染 Markdown 内容": "Render Markdown content", "批量处理": "Batch processing", "导入与导出批量提示词": "Import and export prompt batches", "语义识别": "Semantic detection", "使用已安装的本地模型增强场景识别": "Use installed local models to improve scene detection",

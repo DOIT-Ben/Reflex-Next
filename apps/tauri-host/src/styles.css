@@ -22,6 +22,44 @@
   --danger-line: #f4caca;
 }
 
+.app-shell[data-theme="dark"] {
+  color: #eef0f4;
+  --page: #17191e;
+  --window: #20232a;
+  --surface: #292d35;
+  --line: #3b404a;
+  --line-strong: #4c535f;
+  --text: #f2f4f7;
+  --muted: #b2b8c2;
+  --weak: #838b98;
+  --accent: #8592ff;
+  --accent-soft: #293052;
+  --success: #6ec18c;
+  --danger: #ff7b7b;
+  --danger-soft: #40242a;
+  --danger-line: #74414a;
+}
+
+@media (prefers-color-scheme: dark) {
+  .app-shell[data-theme="system"] {
+    color: #eef0f4;
+    --page: #17191e;
+    --window: #20232a;
+    --surface: #292d35;
+    --line: #3b404a;
+    --line-strong: #4c535f;
+    --text: #f2f4f7;
+    --muted: #b2b8c2;
+    --weak: #838b98;
+    --accent: #8592ff;
+    --accent-soft: #293052;
+    --success: #6ec18c;
+    --danger: #ff7b7b;
+    --danger-soft: #40242a;
+    --danger-line: #74414a;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -203,12 +241,26 @@ textarea {
   border-top: 1px solid var(--line);
 }
 
+.input-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .input-tools button {
   padding: 0;
   color: var(--muted);
   background: transparent;
   font-size: 13px;
   font-weight: 650;
+}
+
+.input-tools .icon-button {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
 }
 
 .input-tools span,

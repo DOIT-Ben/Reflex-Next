@@ -67,7 +67,8 @@ describe("host state", () => {
       privacy_mode: false,
       history_redaction: "secrets",
       enabled_plugins: ["translator", "markdown-preview"],
-      language: "zh-CN"
+      language: "zh-CN",
+      theme: "system"
     });
   });
 
@@ -576,7 +577,8 @@ describe("host state", () => {
       history_enabled: false,
       privacy_mode: false,
       history_redaction: "secrets",
-      enabled_plugins: ["translator", "markdown-preview"]
+      enabled_plugins: ["translator", "markdown-preview"],
+      theme: "system"
     });
     expect(settings).not.toHaveProperty("apiKey");
 
@@ -591,7 +593,9 @@ describe("host state", () => {
       history_enabled: true,
       privacy_mode: true,
       history_redaction: "none",
-      enabled_plugins: ["translator"]
+      enabled_plugins: ["translator"],
+      language: "zh-CN",
+      theme: "system"
     });
 
     expect(saved.overlay).toBeNull();
