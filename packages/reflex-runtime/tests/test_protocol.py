@@ -126,6 +126,22 @@ def test_public_plugin_call_rejects_private_fields_recursively(private_input):
     assert "fixture-private" not in str(caught.value)
 
 
+@pytest.mark.parametrize("operation", ["status", "download", "delete"])
+def test_semantic_model_management_operations_are_public(operation):
+    parsed = parse_command(
+        command(
+            "plugin_call",
+            {
+                "plugin_id": "semantic-detector",
+                "operation": operation,
+                "input": {},
+            },
+        )
+    )
+
+    assert parsed.payload["operation"] == operation
+
+
 def test_history_key_command_repr_and_str_do_not_expose_private_payload():
     private_value = "11" * 32
     parsed = parse_command(

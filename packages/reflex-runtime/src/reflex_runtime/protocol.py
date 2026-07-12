@@ -66,6 +66,7 @@ PUBLIC_PLUGIN_OPERATIONS = {
     "translator": frozenset({"translate"}),
     "markdown-preview": frozenset({"preview"}),
     "batch-runner": frozenset({"parse", "export", "template"}),
+    "semantic-detector": frozenset({"status", "download", "delete"}),
 }
 ADMIN_PLUGIN_OPERATIONS = {
     "history-sqlite": frozenset(

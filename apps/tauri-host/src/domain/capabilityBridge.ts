@@ -3,6 +3,7 @@ import type { TauriHostApi } from "./coreBridge";
 export const CAPABILITY_UNAVAILABLE_MESSAGE = "插件能力暂不可用，请稍后重试。";
 const DEFAULT_LIST_TIMEOUT_MS = 10_000;
 const DEFAULT_PLUGIN_TIMEOUT_MS = 10_000;
+const LISTENER_SETUP_TIMEOUT_MS = 5_000;
 
 export type PluginKind = "storage" | "transformer" | "command";
 export type PluginState =
@@ -105,7 +106,7 @@ export class CapabilityBridge {
         resolveResult = resolve;
         rejectResult = reject;
       });
-      unlisten = await this.host.listen<unknown>(
+      unlisten = await listenWithTimeout(this.host.listen<unknown>(
         "reflex://capability-list",
         (event) => {
           if (settled || !isRecord(event.payload)) return;
@@ -120,7 +121,7 @@ export class CapabilityBridge {
             rejectResult(createSafeError());
           }
         }
-      );
+      ), LISTENER_SETUP_TIMEOUT_MS);
       failListRequest = () => {
         if (settled) return;
         settled = true;
@@ -215,7 +216,7 @@ export class CapabilityBridge {
     const abort = () => failRequest();
 
     try {
-      unlisten = await this.host.listen<unknown>("reflex://plugin-event", (event) => {
+      unlisten = await listenWithTimeout(this.host.listen<unknown>("reflex://plugin-event", (event) => {
         if (finished || !isRecord(event.payload)) return;
         if (
           event.payload.request_id !== requestId ||
@@ -241,7 +242,7 @@ export class CapabilityBridge {
         } catch {
           failRequest();
         }
-      });
+      }), LISTENER_SETUP_TIMEOUT_MS);
 
       if (options.signal?.aborted) {
         failRequest();
@@ -514,6 +515,42 @@ function isTerminalStatus(value: PluginEventStatus): boolean {
 
 function createSafeError(): Error {
   return new Error(CAPABILITY_UNAVAILABLE_MESSAGE);
+}
+
+function listenWithTimeout(
+  listener: Promise<() => void>,
+  timeoutMs: number
+): Promise<() => void> {
+  let settled = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      if (timeout !== undefined) clearTimeout(timeout);
+      timeout = undefined;
+    };
+    timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(createSafeError());
+    }, timeoutMs);
+    listener.then(
+      (unlisten) => {
+        if (settled) {
+          try { unlisten(); } catch { /* Best-effort late cleanup. */ }
+          return;
+        }
+        settled = true;
+        finish();
+        resolve(unlisten);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        finish();
+        reject(error);
+      }
+    );
+  });
 }
 
 function createRequestId(): string {

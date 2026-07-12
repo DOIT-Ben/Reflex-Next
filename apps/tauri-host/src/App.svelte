@@ -1684,7 +1684,7 @@
           <button class="outline" disabled={!state.diagnosticId} on:click={copyDiagnosticId}>{tr("复制诊断 ID")}</button>
         </div>
         <p class="recent">
-          {state.errorCode ? tr("错误代码：{code}", { code: state.errorCode }) : tr("错误信息已脱敏")}
+          {tr("诊断信息已隐藏，可复制诊断 ID 提供给支持人员。")}
         </p>
         {#if toastVisible}
           <div class="toast">{toastText}</div>

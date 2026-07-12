@@ -30,6 +30,7 @@ pub fn authorize_public_plugin_call(
             ("history-sqlite", "rate")
                 | ("translator", "translate")
                 | ("markdown-preview", "preview")
+                | ("semantic-detector", "status" | "download" | "delete")
         ),
         "history" => matches!(
             (plugin_id, operation),
@@ -85,6 +86,9 @@ mod tests {
             ("history-sqlite", "rate"),
             ("translator", "translate"),
             ("markdown-preview", "preview"),
+            ("semantic-detector", "status"),
+            ("semantic-detector", "download"),
+            ("semantic-detector", "delete"),
         ] {
             assert!(authorize_public_plugin_call("main", plugin_id, operation).is_ok());
         }

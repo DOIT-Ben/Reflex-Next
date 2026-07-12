@@ -309,7 +309,7 @@ pub async fn runtime_plugin_call(
             command,
         );
     }
-    send_configured_plugin_call_to(
+    let result = send_configured_plugin_call_to(
         state.runtime(),
         &config_store,
         &secret_store,
@@ -320,7 +320,8 @@ pub async fn runtime_plugin_call(
             .map_err(|_| "应用数据目录不可用。".to_string())?,
         window.label(),
         command,
-    )
+    );
+    result
 }
 
 #[tauri::command]
