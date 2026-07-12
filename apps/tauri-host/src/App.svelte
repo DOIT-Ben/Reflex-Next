@@ -131,7 +131,12 @@
     type PromptTemplate,
     type TemplateDraft
   } from "./domain/templateLibrary";
-  import { providerCatalog, providerModels } from "./domain/providerCatalog";
+  import {
+    providerCatalog,
+    providerModels,
+    resolveProviderAvailability,
+    type ProviderAvailability
+  } from "./domain/providerCatalog";
   import { t, translate } from "./domain/i18n";
   import { resultMarkdownContent, resultMarkdownFilename } from "./domain/resultExport";
   import {
@@ -255,6 +260,10 @@
   let settingsSection: SettingsSection = "provider";
   let settingsBusy = false;
   let secretBusy = false;
+  let providerStatusError = false;
+  let providerStatus: ProviderAvailability = "checking";
+  let activeProviderId = "minimax";
+  let providerStatusText = "";
   let settingsNotice: string | null = null;
   let secretNotice: string | null = null;
   let clipboardReading = false;
@@ -359,6 +368,14 @@
   $: visibleTemplates = filterTemplates(customTemplates, templateQuery, templateCategory);
   $: settingsProviderModels = providerModels(settingsDraft.default_provider);
   $: draftProviderModels = providerModels(draft.provider);
+  $: activeProviderId = (state.requestDraft.provider ?? "minimax").trim().toLowerCase();
+  $: providerStatus = resolveProviderAvailability(
+    activeProviderId,
+    secretStatus,
+    persistedConfig !== null,
+    providerStatusError
+  );
+  $: providerStatusText = providerAvailabilityLabel(providerStatus);
 
   function setInput(value: string) {
     state = updateInput(state, value);
@@ -442,6 +459,7 @@
       state = applySettingsDraft(applyPersistedConfig(state, saved), settingsDraft);
       draft = { ...state.requestDraft };
       await refreshDesktopStatus();
+      await refreshProviderSecretStatus(saved.provider);
       showToast("✓ 设置已保存");
     } catch (error) {
       settingsNotice = safeDesktopSettingsError(error);
@@ -458,11 +476,13 @@
     secretInput = "";
     settingsNotice = null;
     secretNotice = null;
+    void refreshProviderSecretStatus(state.requestDraft.provider ?? "minimax");
   }
 
   async function hydrateSettings() {
     if (!settingsApi) return;
     settingsBusy = true;
+    providerStatusError = false;
     settingsNotice = null;
     secretNotice = null;
     let config: AppConfig;
@@ -473,17 +493,13 @@
       state = applyPersistedConfig(state, config);
       settingsDraft = settingsDraftFromConfig(config);
     } catch {
+      providerStatusError = true;
       settingsNotice = "设置加载失败，请重试。";
       settingsBusy = false;
       return;
     }
-    try {
-      secretStatus = await settingsApi.getProviderSecretStatus(config.provider);
-    } catch {
-      secretNotice = "密钥状态读取失败，请重试。";
-    } finally {
-      settingsBusy = false;
-    }
+    await refreshProviderSecretStatus(config.provider);
+    settingsBusy = false;
   }
 
   async function refreshDesktopStatus() {
@@ -495,6 +511,19 @@
         ...desktopStatus,
         message: "快捷键状态暂不可用。"
       };
+    }
+  }
+
+  async function refreshProviderSecretStatus(providerId: string) {
+    const api = settingsApi;
+    if (!api) return;
+    try {
+      secretStatus = await api.getProviderSecretStatus(providerId);
+      providerStatusError = false;
+    } catch {
+      providerStatusError = true;
+      secretStatus = { providerId, configured: false, maskedTail: null };
+      secretNotice = "密钥状态读取失败，请重试。";
     }
   }
 
@@ -518,8 +547,10 @@
         settingsDraft.default_provider ?? "minimax",
         value
       );
+      providerStatusError = false;
       secretNotice = "密钥已安全保存。";
     } catch {
+      providerStatusError = true;
       secretNotice = "密钥保存失败，请重试。";
     } finally {
       secretInput = "";
@@ -541,8 +572,10 @@
       secretStatus = await api.deleteProviderSecret(
         settingsDraft.default_provider ?? "minimax"
       );
+      providerStatusError = false;
       secretNotice = "密钥已删除。";
     } catch {
+      providerStatusError = true;
       secretNotice = "密钥删除失败，请重试。";
     } finally {
       secretInput = "";
@@ -555,9 +588,7 @@
     settingsDraft = { ...settingsDraft, default_provider: provider, default_model: models[0].id };
     secretInput = "";
     secretNotice = null;
-    if (!settingsApi) return;
-    try { secretStatus = await settingsApi.getProviderSecretStatus(provider); }
-    catch { secretStatus = { providerId: provider, configured: false, maskedTail: null }; }
+    await refreshProviderSecretStatus(provider);
   }
 
   function showToast(message: string) {
@@ -1334,6 +1365,20 @@
     return phase === "analyzing_scene" || phase === "connecting_provider" || phase === "streaming";
   }
 
+  function providerAvailabilityLabel(value: ProviderAvailability): string {
+    if (value === "ready") return tr("已配置");
+    if (value === "missing") return tr("未配置");
+    if (value === "unavailable") return tr("暂不可用");
+    return tr("检查中");
+  }
+
+  function providerStatusAriaLabel(): string {
+    return tr("Provider：{provider}，{status}", {
+      provider: tr(providerDisplayName(state.requestDraft.provider)),
+      status: providerStatusText
+    });
+  }
+
   function modeLabel(value: OptimizeMode): string {
     return tr(modes.find((item) => item.id === value)?.label ?? "内容优化");
   }
@@ -1367,7 +1412,21 @@
         <span class="brand-mark">R</span>
         <strong>Reflex</strong>
       </div>
-      <div class="provider-pill"><span></span>{tr(providerDisplayName(state.requestDraft.provider))}</div>
+      <button
+        class="provider-pill"
+        class:checking={providerStatus === "checking"}
+        class:ready={providerStatus === "ready"}
+        class:missing={providerStatus === "missing"}
+        class:unavailable={providerStatus === "unavailable"}
+        type="button"
+        aria-label={providerStatusAriaLabel()}
+        title={providerStatusText}
+        on:click={beginSettings}
+      >
+        <span class="provider-dot" aria-hidden="true"></span>
+        <span class="provider-name">{tr(providerDisplayName(state.requestDraft.provider))}</span>
+        <span class="provider-state-label">{providerStatusText}</span>
+      </button>
       <button class="icon-button" aria-label={t(uiLanguage, "settings")} on:click={beginSettings}>⚙</button>
     </header>
 
@@ -1442,7 +1501,7 @@
         </article>
         <div class="footer-meta">
           <span>{state.phase === "analyzing_scene" ? t(uiLanguage, "analyzing") : state.phase === "connecting_provider" ? t(uiLanguage, "connecting") : t(uiLanguage, "streaming")}</span>
-          <button class="outline" on:click={cancelRun}>{t(uiLanguage, "cancel")}</button>
+          <button class="outline" on:click={cancelRun}>{t(uiLanguage, "cancelGeneration")}</button>
         </div>
       </section>
     {:else if state.phase === "completed"}

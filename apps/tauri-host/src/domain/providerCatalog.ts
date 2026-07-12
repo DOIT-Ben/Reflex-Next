@@ -1,5 +1,7 @@
 export type ProviderOption = { id: string; label: string; models: Array<{ id: string; label: string }> };
 
+export type ProviderAvailability = "checking" | "ready" | "missing" | "unavailable";
+
 export const providerCatalog: ProviderOption[] = [
   { id: "minimax", label: "MiniMax", models: [{ id: "MiniMax-M2.7-highspeed", label: "M2.7 高速版" }] },
   { id: "deepseek", label: "DeepSeek", models: [{ id: "deepseek-chat", label: "DeepSeek Chat" }, { id: "deepseek-reasoner", label: "DeepSeek Reasoner" }] },
@@ -14,4 +16,19 @@ export function providerModels(providerId: string | null): ProviderOption["model
 
 export function providerName(providerId: string | null): string {
   return providerCatalog.find((provider) => provider.id === providerId)?.label ?? providerId ?? "未配置";
+}
+
+export function resolveProviderAvailability(
+  providerId: string | null,
+  secretStatus: { providerId: string; configured: boolean } | null,
+  settingsReady: boolean,
+  statusError: boolean
+): ProviderAvailability {
+  if (statusError) return "unavailable";
+  if (!settingsReady || !providerId || !secretStatus) return "checking";
+
+  const activeId = providerId.trim().toLowerCase();
+  const statusId = secretStatus.providerId.trim().toLowerCase();
+  if (!activeId || activeId !== statusId) return "checking";
+  return secretStatus.configured ? "ready" : "missing";
 }

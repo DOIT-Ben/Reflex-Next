@@ -6,6 +6,7 @@ describe("ui messages", () => {
     expect(t("zh-CN", "optimize")).toBe("优化文本");
     expect(t("en-US", "optimize")).toBe("Optimize text");
     expect(t("en-US", "cancel")).toBe("Cancel");
+    expect(t("en-US", "cancelGeneration")).toBe("Cancel generation");
   });
 
   it("localizes dynamic and secondary feature text without leaking Chinese in English mode", () => {

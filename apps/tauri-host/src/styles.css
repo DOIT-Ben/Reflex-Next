@@ -152,13 +152,47 @@ button:disabled {
   border-radius: 10px;
   font-size: 12px;
   font-weight: 560;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
-.provider-pill span {
+.provider-pill:hover {
+  border-color: var(--line-strong);
+  background: var(--accent-soft);
+}
+
+.provider-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.provider-pill .provider-dot {
   width: 9px;
   height: 9px;
+  flex: 0 0 9px;
   background: var(--success);
   border-radius: 50%;
+}
+
+.provider-pill.checking .provider-dot {
+  background: var(--weak);
+}
+
+.provider-pill.missing .provider-dot {
+  background: #d97706;
+}
+
+.provider-pill.unavailable .provider-dot {
+  background: var(--danger);
+}
+
+.provider-pill .provider-name {
+  color: var(--muted);
+}
+
+.provider-pill .provider-state-label {
+  color: var(--weak);
+  font-size: 11px;
 }
 
 .icon-button {
@@ -1222,7 +1256,9 @@ pre {
   display: flex;
   flex-direction: column;
   width: min(704px, 100%);
+  height: min(504px, calc(100vh - 36px));
   max-height: 504px;
+  min-height: 0;
   padding: 18px;
   overflow: hidden;
   background: #f6f7f9;
@@ -1621,6 +1657,10 @@ pre {
     min-width: auto;
   }
 
+  .provider-pill .provider-state-label {
+    font-size: 10px;
+  }
+
   .default-view,
   .adjust-view,
   .generation-view,
@@ -1662,28 +1702,66 @@ pre {
   }
 
   .settings-dialog {
-    max-height: calc(100vh - 20px);
+    height: calc(100vh - 20px);
+    max-height: none;
     padding: 14px;
   }
 
   .settings-layout {
     grid-template-columns: 1fr;
-    overflow: auto;
+    overflow: hidden;
   }
 
   .settings-nav {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
     padding: 0 0 10px;
     border-right: 0;
     border-bottom: 1px solid #e0e3e8;
   }
 
   .settings-nav button {
+    flex: 0 0 auto;
+    min-width: 96px;
+    height: 38px;
     padding: 0 8px;
     text-align: center;
   }
 
+  .settings-head {
+    margin-bottom: 10px;
+  }
+
+  .settings-head h2 {
+    font-size: 20px;
+  }
+
+  .settings-head p {
+    margin-top: 4px;
+  }
+
+  .settings-content {
+    padding: 2px 4px 14px 2px;
+  }
+
+  .settings-content h3 {
+    margin-bottom: 12px;
+    font-size: 18px;
+  }
+
+  .settings-grid {
+    gap: 10px 12px;
+    margin-bottom: 10px;
+  }
+
+  .api-key-row {
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
   .settings-footer {
+    padding-top: 8px;
     flex-wrap: wrap;
   }
 
@@ -1856,9 +1934,12 @@ pre {
     flex: 1 1 120px;
   }
 
-  .settings-grid,
   .api-key-row {
     grid-template-columns: 1fr;
+  }
+
+  .settings-nav button {
+    min-width: 84px;
   }
 
   .markdown-toolbar {
@@ -1878,6 +1959,12 @@ pre {
   .markdown-rendered {
     border-top: 1px solid #dfe2e8;
     border-left: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
   }
 }
 
