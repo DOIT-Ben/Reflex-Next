@@ -619,6 +619,23 @@
     showToast("结果已导出为 Markdown");
   }
 
+  function openResultCompare() {
+    if (!state.output || !state.currentResult?.sourceText?.trim()) return;
+    closeMoreActions();
+    state = { ...state, overlay: "result_compare" };
+  }
+
+  async function copyComparisonSource() {
+    const source = state.currentResult?.sourceText;
+    if (!source) return;
+    await writeClipboardValue(source, tr("原文已复制"));
+  }
+
+  async function copyComparisonResult() {
+    if (!state.output) return;
+    await writeClipboardValue(state.output, tr("优化结果已复制"));
+  }
+
   function openTranslationView() {
     const source = state.currentResult;
     if (!source?.output.trim() || !translatorEnabled) return;
@@ -1393,6 +1410,12 @@
                 <button role="menuitem" on:click={() => runFromMoreActions("regenerate")}>{tr("重新生成")}</button>
                 <button role="menuitem" on:click={() => runFromMoreActions("adjust")}>{t(uiLanguage, "adjust")}</button>
                 <button role="menuitem" on:click={openTemplateManager}>{tr("模板管理")}</button>
+                <button
+                  role="menuitem"
+                  disabled={!state.currentResult?.sourceText?.trim()}
+                  title={!state.currentResult?.sourceText?.trim() ? tr("当前结果没有可用原文") : undefined}
+                  on:click={openResultCompare}
+                >{tr("对比原文")}</button>
                 <button role="menuitem" on:click={exportResultMarkdown}>{tr("导出 Markdown")}</button>
                 <button
                   role="menuitem"
@@ -1804,6 +1827,38 @@
             <button class="primary small" on:click={confirmReplaceClipboard}>{tr("确认替换")}</button>
           </div>
         </section>
+      </div>
+    {/if}
+
+    {#if state.overlay === "result_compare"}
+      <div class="translation-layer" role="presentation">
+        <div class="translation-dialog" role="dialog" aria-modal="true" aria-label={tr("结果对比")}>
+          <div class="translation-head">
+            <div><h2>{tr("结果对比")}</h2></div>
+            <button class="icon-button" aria-label={tr("关闭结果对比")} on:click={closeOverlay}>×</button>
+          </div>
+          <div class="translation-content">
+            <section class="translation-pane" aria-label={tr("原文")}>
+              <div class="translation-pane-head">
+                <h3>{tr("原文")}</h3>
+                <button class="outline small" type="button" on:click={copyComparisonSource}>{tr("复制")}</button>
+              </div>
+              {#if state.currentResult?.sourceText}
+                <pre>{state.currentResult.sourceText}</pre>
+              {/if}
+            </section>
+            <section class="translation-pane translated" aria-label={tr("优化结果")}>
+              <div class="translation-pane-head">
+                <h3>{tr("优化结果")}</h3>
+                <button class="outline small" type="button" on:click={copyComparisonResult}>{tr("复制")}</button>
+              </div>
+              <pre>{state.output}</pre>
+            </section>
+          </div>
+          <div class="translation-footer">
+            <button class="primary small" type="button" on:click={closeOverlay}>{tr("关闭")}</button>
+          </div>
+        </div>
       </div>
     {/if}
 

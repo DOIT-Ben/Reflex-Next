@@ -15,5 +15,7 @@ describe("ui messages", () => {
       completed: 1
     })).toBe("Processing 2/4, 1 complete");
     expect(translate("en-US", "历史记录")).toBe("History");
+    expect(translate("en-US", "对比原文")).toBe("Compare original");
+    expect(translate("en-US", "当前结果没有可用原文")).toBe("This result has no original text available");
   });
 });

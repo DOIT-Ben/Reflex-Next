@@ -25,7 +25,7 @@ export type HostPhase =
   | "cancelled"
   | "error";
 
-export type Overlay = null | "clipboard_confirm" | "settings" | "plugin_manager" | "template_manager";
+export type Overlay = null | "clipboard_confirm" | "settings" | "plugin_manager" | "template_manager" | "result_compare";
 
 export type HostShortcutAction =
   | "none"
@@ -57,6 +57,7 @@ export type ResultStyle = OptimizeStyle | "precise";
 export type CurrentResult = {
   requestId: string;
   historyId: string | null;
+  sourceText: string | null;
   output: string;
   scene: string | null;
   style: ResultStyle;
@@ -640,6 +641,7 @@ export function applyTranslationAsCurrentResult(
   const currentResult: CurrentResult = {
     requestId: `translation-${source.requestId}-${requestSequence}`,
     historyId: null,
+    sourceText: source.output,
     output,
     scene: "doc_translation",
     style: "precise",
@@ -702,6 +704,7 @@ export function applyHistoryReuseIntent(
   const currentResult: CurrentResult = {
     requestId: `history-reuse-${intent.history_id}`,
     historyId: intent.history_id,
+    sourceText: null,
     output: intent.text,
     scene: intent.scene ?? null,
     style: intent.style,
@@ -731,6 +734,7 @@ function createCurrentResult(
   return {
     requestId: state.activeRequestId ?? "",
     historyId: stringOrNull(data.history_id),
+    sourceText: state.inputText.trim() || null,
     output,
     scene: stringFrom(data.scene, state.detectedScene ?? "general"),
     style: styleFrom(data.style, state.requestDraft.style),

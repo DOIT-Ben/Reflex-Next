@@ -95,6 +95,7 @@ describe("host state", () => {
     expect(translated.currentResult).toEqual({
       requestId: "translation-history-reuse-history-translation-source-3",
       historyId: null,
+      sourceText: "source result",
       output: "translated result",
       scene: "doc_translation",
       style: "precise",
@@ -330,6 +331,7 @@ describe("host state", () => {
     expect(completed.currentResult).toEqual({
       requestId: "req-current",
       historyId: null,
+      sourceText: "写一封邮件",
       output: "完成内容",
       scene: "email",
       style: "concise",
@@ -364,6 +366,22 @@ describe("host state", () => {
       elapsedMs: 140
     });
     expect(saved.recentResult).toEqual(saved.currentResult);
+  });
+
+  it("keeps the generation source when the user edits the input after completion", () => {
+    const completed = applyCoreEnvelope(
+      startGeneration(updateInput(createHostState(), "生成时的原文"), "req-source"),
+      {
+        version: 1,
+        request_id: "req-source",
+        event: { type: "done", data: { text: "优化后的结果" } }
+      }
+    );
+
+    const edited = updateInput(completed, "后来输入的另一段文本");
+
+    expect(edited.currentResult?.sourceText).toBe("生成时的原文");
+    expect(edited.inputText).toBe("后来输入的另一段文本");
   });
 
   it("rates only the currently saved result", () => {
@@ -434,6 +452,7 @@ describe("host state", () => {
     expect(loadedResult).toMatchObject({ phase: "completed", output: "历史结果" });
     expect(loadedResult.currentResult).toMatchObject({
       historyId: "history-2",
+      sourceText: null,
       output: "历史结果",
       scene: "email",
       style: "detailed",
