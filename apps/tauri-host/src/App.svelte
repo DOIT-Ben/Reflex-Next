@@ -127,7 +127,7 @@
     type TemplateDraft
   } from "./domain/templateLibrary";
   import { providerCatalog, providerModels } from "./domain/providerCatalog";
-  import { t } from "./domain/i18n";
+  import { t, translate } from "./domain/i18n";
   import {
     listSceneOptions,
     type OptimizeMode,
@@ -257,6 +257,8 @@
   let moreActionsOpen = false;
   let moreActionsButton: HTMLButtonElement | null = null;
   let resultRatingBusy = false;
+  let summary = "";
+  let tr: (source: string, values?: Record<string, string | number>) => string = (source) => source;
 
   onMount(() => {
     let disposed = false;
@@ -321,18 +323,25 @@
     };
   });
 
-  $: summary = [
-    modeLabel(state.requestDraft.mode),
-    styleLabel(state.requestDraft.style),
-    sceneLabel(state.requestDraft.scene),
-    providerDisplayName(state.requestDraft.provider)
-  ].join(" · ");
-  $: inputCount = `${state.inputText.trim().length} 字`;
+  $: {
+    uiLanguage;
+    summary = [
+      modeLabel(state.requestDraft.mode),
+      styleLabel(state.requestDraft.style),
+      sceneLabel(state.requestDraft.scene),
+      tr(providerDisplayName(state.requestDraft.provider))
+    ].join(" · ");
+  }
+  $: inputCount = tr("{count} 字", { count: state.inputText.trim().length });
   $: canGenerate = state.canGenerate && !isGenerating(state.phase);
   $: translatorEnabled = persistedConfig?.enabled_plugins.includes("translator") ?? true;
   $: markdownPreviewEnabled = persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
   $: batchRunnerEnabled = persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
-  $: uiLanguage = persistedConfig?.language === "en-US" ? "en-US" : "zh-CN";
+  $: semanticDetectorEnabled = settingsDraft.enabled_plugins.includes("semantic-detector");
+  $: uiLanguage = settingsDraft.language === "en-US" || persistedConfig?.language === "en-US"
+    ? "en-US"
+    : "zh-CN";
+  $: tr = (source, values = {}) => translate(uiLanguage, source, values);
   $: templateCategories = [...new Set(customTemplates.map((template) => template.category))].sort((left, right) => left.localeCompare(right, "zh-CN"));
   $: visibleTemplates = filterTemplates(customTemplates, templateQuery, templateCategory);
   $: settingsProviderModels = providerModels(settingsDraft.default_provider);
@@ -535,7 +544,7 @@
   }
 
   function showToast(message: string) {
-    toastText = message;
+    toastText = tr(message);
     toastVisible = true;
     window.setTimeout(() => {
       toastVisible = false;
@@ -1143,6 +1152,13 @@
     settingsDraft = updatePluginSettingsDraft(settingsDraft, pluginId, enabled);
   }
 
+  function pluginDescription(plugin: (typeof settingsPlugins)[number]): string {
+    if (plugin.id !== "semantic-detector") return plugin.description;
+    return semanticDetectorEnabled
+      ? "已启用。仅在优化时检查已安装的本地模型；模型不可用时自动回退通用场景。"
+      : "未启用。启用后只检查本地已安装模型，不会自动下载。";
+  }
+
   function closeOverlay() {
     if (state.overlay === "settings") {
       cancelSettingsView();
@@ -1218,22 +1234,22 @@
   }
 
   function modeLabel(value: OptimizeMode): string {
-    return modes.find((item) => item.id === value)?.label ?? "内容优化";
+    return tr(modes.find((item) => item.id === value)?.label ?? "内容优化");
   }
 
   function styleLabel(value: ResultStyle): string {
-    if (value === "precise") return "精准";
-    return styles.find((item) => item.id === value)?.label ?? "平衡";
+    if (value === "precise") return tr("精准");
+    return tr(styles.find((item) => item.id === value)?.label ?? "平衡");
   }
 
   function sceneLabel(value: string | null): string {
-    return scenes.find((item) => item.id === value)?.label ?? "自动识别";
+    return tr(scenes.find((item) => item.id === value)?.label ?? "自动识别");
   }
 
   function translationLanguageLabel(value: TranslationLanguage | null): string {
-    if (value === "zh") return "中文";
+    if (value === "zh") return tr("中文");
     if (value === "en") return "English";
-    return "自动识别";
+    return tr("自动识别");
   }
 
   function chooseDraftScene(value: string) {
@@ -1250,67 +1266,67 @@
         <span class="brand-mark">R</span>
         <strong>Reflex</strong>
       </div>
-      <div class="provider-pill"><span></span>{providerDisplayName(state.requestDraft.provider)}</div>
+      <div class="provider-pill"><span></span>{tr(providerDisplayName(state.requestDraft.provider))}</div>
       <button class="icon-button" aria-label={t(uiLanguage, "settings")} on:click={beginSettings}>⚙</button>
     </header>
 
     {#if state.phase === "adjusting"}
-      <section class="adjust-view" aria-label="生成设置">
-        <div class="badge">当前方案</div>
-        <h1>生成设置</h1>
+      <section class="adjust-view" aria-label={tr("生成设置")}>
+        <div class="badge">{t(uiLanguage, "current")}</div>
+        <h1>{tr("生成设置")}</h1>
 
         <div class="settings-panel">
           <div class="setting-row">
-            <span>模式</span>
+            <span>{tr("模式")}</span>
             <div class="segments">
               {#each modes as item}
                 <button class:active={draft.mode === item.id} on:click={() => (draft = { ...draft, mode: item.id })}>
-                  {item.label}
+                  {tr(item.label)}
                 </button>
               {/each}
             </div>
           </div>
 
           <div class="setting-row">
-            <span>风格</span>
+            <span>{tr("风格")}</span>
             <div class="segments compact">
               {#each styles as item}
                 <button class:active={draft.style === item.id} on:click={() => (draft = { ...draft, style: item.id })}>
-                  {item.label}
+                  {tr(item.label)}
                 </button>
               {/each}
             </div>
           </div>
 
           <label class="setting-row">
-            <span>场景</span>
+            <span>{tr("场景")}</span>
             <select
               value={draft.scene ?? ""}
               on:change={(event) => chooseDraftScene(event.currentTarget.value)}
             >
-              <option value="">自动识别</option>
+              <option value="">{tr("自动识别")}</option>
               {#each scenes as scene}
-                <option value={scene.id}>{scene.label}</option>
+                <option value={scene.id}>{tr(scene.label)}</option>
               {/each}
             </select>
           </label>
 
           <label class="setting-row">
-            <span>模型</span>
+            <span>{tr("模型")}</span>
             <select bind:value={draft.model}>
-              {#each draftProviderModels as model}<option value={model.id}>{model.label}</option>{/each}
+              {#each draftProviderModels as model}<option value={model.id}>{tr(model.label)}</option>{/each}
             </select>
           </label>
 
           <div class="setting-row current-input">
-            <span>当前输入</span>
+            <span>{tr("当前输入")}</span>
             <p>{state.inputText}</p>
           </div>
         </div>
 
         <div class="footer-actions">
-          <button class="outline" on:click={cancelAdjustView}>取消</button>
-          <button class="primary small" on:click={applyAdjust}>应用</button>
+          <button class="outline" on:click={cancelAdjustView}>{t(uiLanguage, "cancel")}</button>
+          <button class="primary small" on:click={applyAdjust}>{tr("应用")}</button>
         </div>
       </section>
     {:else if isGenerating(state.phase)}
@@ -1332,7 +1348,7 @@
       <section class="complete-view" aria-label={t(uiLanguage, "completed")}>
         <div class="badge">{t(uiLanguage, "current")}</div>
         <h1>{t(uiLanguage, "completed")}</h1>
-        <p class="subline">{sceneLabel(state.currentResult?.scene ?? null)} · {styleLabel(state.currentResult?.style ?? state.requestDraft.style)} · 约 {state.output.length} 字</p>
+        <p class="subline">{sceneLabel(state.currentResult?.scene ?? null)} · {styleLabel(state.currentResult?.style ?? state.requestDraft.style)} · {tr("约 {count} 字", { count: state.output.length })}</p>
         <article class="result-card">
           <pre>{state.output}</pre>
         </article>
@@ -1341,34 +1357,34 @@
           <div class="more-actions">
             <button
               class="icon-button more-button"
-              aria-label="更多操作"
+              aria-label={tr("更多操作")}
               aria-expanded={moreActionsOpen}
               bind:this={moreActionsButton}
               on:click={toggleMoreActions}
             >⋯</button>
             {#if moreActionsOpen}
-              <div class="result-menu" role="menu" aria-label="结果操作">
-                <button role="menuitem" on:click={() => runFromMoreActions("replace")}>替换剪贴板</button>
-                <button role="menuitem" on:click={() => runFromMoreActions("regenerate")}>重新生成</button>
-                <button role="menuitem" on:click={() => runFromMoreActions("adjust")}>调整</button>
-                <button role="menuitem" on:click={openTemplateManager}>模板管理</button>
+              <div class="result-menu" role="menu" aria-label={tr("结果操作")}>
+                <button role="menuitem" on:click={() => runFromMoreActions("replace")}>{tr("替换剪贴板")}</button>
+                <button role="menuitem" on:click={() => runFromMoreActions("regenerate")}>{tr("重新生成")}</button>
+                <button role="menuitem" on:click={() => runFromMoreActions("adjust")}>{t(uiLanguage, "adjust")}</button>
+                <button role="menuitem" on:click={openTemplateManager}>{tr("模板管理")}</button>
                 <button
                   role="menuitem"
                   disabled={!translatorEnabled || !state.currentResult?.output}
                   on:click={openTranslationView}
-                >翻译</button>
+                >{tr("翻译")}</button>
                 <button
                   role="menuitem"
                   disabled={!markdownPreviewEnabled || !state.currentResult?.output}
                   on:click={openMarkdownPreviewView}
-                >Markdown 预览</button>
-                <button role="menuitem" disabled={!batchRunnerEnabled} on:click={openBatchView}>批量处理</button>
-                <div class="rating-menu" aria-label="评分">
-                  <span>评分</span>
+                >{tr("Markdown 预览")}</button>
+                <button role="menuitem" disabled={!batchRunnerEnabled} on:click={openBatchView}>{tr("批量处理")}</button>
+                <div class="rating-menu" aria-label={tr("评分")}>
+                  <span>{tr("评分")}</span>
                   <div>
                     {#each [1, 2, 3, 4, 5] as score}
                       <button
-                        aria-label={`评分 ${score}`}
+                        aria-label={`${tr("评分")} ${score}`}
                         aria-pressed={state.currentResult?.rating === score}
                         disabled={state.currentResult?.saveStatus !== "saved" || resultRatingBusy}
                         on:click={() => rateCurrentResult(score)}
@@ -1376,7 +1392,7 @@
                     {/each}
                   </div>
                 </div>
-                <button role="menuitem" on:click={openHistoryWindow}>查看历史</button>
+                <button role="menuitem" on:click={openHistoryWindow}>{tr("查看历史")}</button>
               </div>
             {/if}
           </div>
@@ -1392,9 +1408,9 @@
         <h1>{t(uiLanguage, "failed")}</h1>
         <p class="subline">{summary}</p>
         <article class="error-panel">
-          <strong>{state.errorMessage ?? t(uiLanguage, "noProvider")}</strong>
+          <strong>{state.errorMessage ? tr(state.errorMessage) : t(uiLanguage, "noProvider")}</strong>
           <span>
-            {state.errorRecoverable ? "可以稍后重试，或检查当前 Provider 设置。" : "请检查文本或设置后再试。"}
+            {tr(state.errorRecoverable ? "可以稍后重试，或检查当前 Provider 设置。" : "请检查文本或设置后再试。")}
           </span>
         </article>
         <div class="error-actions">
@@ -1402,10 +1418,10 @@
             <button class="primary small" on:click={retryRun}>{t(uiLanguage, "retry")}</button>
           {/if}
           <button class="outline" on:click={openSettingsView}>{t(uiLanguage, "openSettings")}</button>
-          <button class="outline" disabled={!state.diagnosticId} on:click={copyDiagnosticId}>复制诊断 ID</button>
+          <button class="outline" disabled={!state.diagnosticId} on:click={copyDiagnosticId}>{tr("复制诊断 ID")}</button>
         </div>
         <p class="recent">
-          {state.errorCode ? `错误代码：${state.errorCode}` : "错误信息已脱敏"}
+          {state.errorCode ? tr("错误代码：{code}", { code: state.errorCode }) : tr("错误信息已脱敏")}
         </p>
         {#if toastVisible}
           <div class="toast">{toastText}</div>
@@ -1431,7 +1447,7 @@
           </div>
         </div>
         {#if state.inputNotice}
-          <p class="input-notice">{state.inputNotice}</p>
+          <p class="input-notice">{tr(state.inputNotice)}</p>
         {/if}
 
         <div class="summary-row">
@@ -1452,47 +1468,47 @@
 
     {#if state.overlay === "template_manager"}
       <div class="template-layer" role="presentation">
-        <div class="template-dialog" role="dialog" aria-modal="true" aria-label="模板管理">
+        <div class="template-dialog" role="dialog" aria-modal="true" aria-label={tr("模板管理")}>
           <div class="template-head">
-            <div><h2>模板管理</h2><p>自定义模板仅保存在本机配置中。</p></div>
-            <button class="icon-button" aria-label="关闭模板管理" bind:this={templateCloseButton} on:click={() => closeTemplateManager(true)}>×</button>
+            <div><h2>{tr("模板管理")}</h2><p>{tr("自定义模板仅保存在本机配置中。")}</p></div>
+            <button class="icon-button" aria-label={tr("关闭模板管理")} bind:this={templateCloseButton} on:click={() => closeTemplateManager(true)}>×</button>
           </div>
           <div class="template-layout">
             <aside class="template-list">
-              <input aria-label="搜索模板" bind:value={templateQuery} placeholder="搜索名称、分类或标签" />
-              <select aria-label="模板分类" bind:value={templateCategory}>
-                <option value={null}>全部分类</option>
+              <input aria-label={tr("搜索模板")} bind:value={templateQuery} placeholder={tr("搜索名称、分类或标签")} />
+              <select aria-label={tr("模板分类")} bind:value={templateCategory}>
+                <option value={null}>{tr("全部分类")}</option>
                 {#each templateCategories as category}<option value={category}>{category}</option>{/each}
               </select>
-              <button class="outline" type="button" on:click={() => { selectedTemplateId = null; templateDraft = createTemplateDraft(); templateValues = {}; templateNotice = null; }}>新建模板</button>
+              <button class="outline" type="button" on:click={() => { selectedTemplateId = null; templateDraft = createTemplateDraft(); templateValues = {}; templateNotice = null; }}>{tr("新建模板")}</button>
               <div class="template-list-items">
                 {#each visibleTemplates as template}
                   <button class:active={selectedTemplateId === template.id} type="button" on:click={() => selectTemplate(template)}>
                     <strong>{template.name}</strong><span>{template.category}{template.tags.length ? ` · ${template.tags.join("、")}` : ""}</span>
                   </button>
-                {:else}<p>还没有符合条件的模板。</p>{/each}
+                {:else}<p>{tr("还没有符合条件的模板。")}</p>{/each}
               </div>
             </aside>
             <section class="template-editor">
               <div class="template-fields">
-                <label><span>名称</span><input bind:value={templateDraft.name} disabled={templateBusy} /></label>
-                <label><span>分类</span><input bind:value={templateDraft.category} disabled={templateBusy} /></label>
-                <label class="wide"><span>标签（用逗号分隔）</span><input value={templateDraft.tags.join(", ")} disabled={templateBusy} on:input={(event) => templateDraft = { ...templateDraft, tags: event.currentTarget.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean) }} /></label>
-                <label class="wide"><span>说明</span><input bind:value={templateDraft.description} disabled={templateBusy} /></label>
-                <label class="wide"><span>模板内容</span><textarea bind:value={templateDraft.content} disabled={templateBusy} placeholder={"使用 {变量名} 插入需要填写的内容"}></textarea></label>
+                <label><span>{tr("名称")}</span><input bind:value={templateDraft.name} disabled={templateBusy} /></label>
+                <label><span>{tr("分类")}</span><input bind:value={templateDraft.category} disabled={templateBusy} /></label>
+                <label class="wide"><span>{tr("标签（用逗号分隔）")}</span><input value={templateDraft.tags.join(", ")} disabled={templateBusy} on:input={(event) => templateDraft = { ...templateDraft, tags: event.currentTarget.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean) }} /></label>
+                <label class="wide"><span>{tr("说明")}</span><input bind:value={templateDraft.description} disabled={templateBusy} /></label>
+                <label class="wide"><span>{tr("模板内容")}</span><textarea bind:value={templateDraft.content} disabled={templateBusy} placeholder={tr("使用 {变量名} 插入需要填写的内容")}></textarea></label>
               </div>
               {#if templateVariables(templateDraft.content).length}
                 <div class="template-variables">
-                  <h3>填写变量</h3>
+                  <h3>{tr("填写变量")}</h3>
                   {#each templateVariables(templateDraft.content) as variable}
                     <label><span>{variable}</span><input value={templateValues[variable] ?? ""} on:input={(event) => templateValues = { ...templateValues, [variable]: event.currentTarget.value }} /></label>
                   {/each}
                 </div>
               {/if}
-              <p class="template-notice" aria-live="polite">{templateNotice ?? ""}</p>
+              <p class="template-notice" aria-live="polite">{templateNotice ? tr(templateNotice) : ""}</p>
               <div class="template-footer">
-                <button class="outline danger" type="button" disabled={!selectedTemplateId || templateBusy} on:click={deleteTemplate}>删除</button>
-                <span></span><button class="outline" type="button" disabled={templateBusy} on:click={saveTemplate}>保存模板</button><button class="primary small" type="button" on:click={applyTemplate}>应用到输入区</button>
+                <button class="outline danger" type="button" disabled={!selectedTemplateId || templateBusy} on:click={deleteTemplate}>{tr("删除")}</button>
+                <span></span><button class="outline" type="button" disabled={templateBusy} on:click={saveTemplate}>{tr("保存模板")}</button><button class="primary small" type="button" on:click={applyTemplate}>{tr("应用到输入区")}</button>
               </div>
             </section>
           </div>
@@ -1502,17 +1518,17 @@
 
     {#if batch.phase !== "closed"}
       <div class="batch-layer" role="presentation">
-        <div class="batch-dialog" role="dialog" aria-modal="true" aria-label="批量处理">
+        <div class="batch-dialog" role="dialog" aria-modal="true" aria-label={tr("批量处理")}>
           <div class="batch-head">
             <div>
-              <h2>批量处理</h2>
-              <p>最多导入 200 条提示词，结果在本机导出。</p>
+              <h2>{tr("批量处理")}</h2>
+              <p>{tr("最多导入 200 条提示词，结果在本机导出。")}</p>
             </div>
-            <button class="icon-button" aria-label="关闭批量处理" bind:this={batchCloseButton} on:click={() => closeBatchView(true)}>×</button>
+            <button class="icon-button" aria-label={tr("关闭批量处理")} bind:this={batchCloseButton} on:click={() => closeBatchView(true)}>×</button>
           </div>
 
           <div class="batch-controls">
-            <div class="batch-format" role="group" aria-label="导入格式">
+            <div class="batch-format" role="group" aria-label={tr("导入格式")}>
               {#each batchFormats as item}
                 <button
                   type="button"
@@ -1520,36 +1536,36 @@
                   aria-pressed={batch.format === item.id}
                   disabled={batch.phase === "parsing" || batch.phase === "running"}
                   on:click={() => batch = setBatchFormat(batch, item.id)}
-                >{item.label}</button>
+                >{tr(item.label)}</button>
               {/each}
             </div>
             <label>
-              <span>处理风格</span>
+              <span>{tr("处理风格")}</span>
               <select
                 value={batch.style}
                 disabled={batch.phase === "running"}
                 on:change={(event) => batch = setBatchStyle(batch, event.currentTarget.value as OptimizeStyle)}
               >
                 {#each styles as item}
-                  <option value={item.id}>{item.label}</option>
+                  <option value={item.id}>{tr(item.label)}</option>
                 {/each}
               </select>
             </label>
             <label>
-              <span>场景</span>
+              <span>{tr("场景")}</span>
               <select
                 value={batch.scene ?? ""}
                 disabled={batch.phase === "running"}
                 on:change={(event) => batch = setBatchScene(batch, event.currentTarget.value)}
               >
-                <option value="">自动识别</option>
+                <option value="">{tr("自动识别")}</option>
                 {#each scenes as scene}
-                  <option value={scene.id}>{scene.label}</option>
+                  <option value={scene.id}>{tr(scene.label)}</option>
                 {/each}
               </select>
             </label>
             <label>
-              <span>并发数</span>
+              <span>{tr("并发数")}</span>
               <select
                 value={batch.concurrency}
                 disabled={batch.phase === "running"}
@@ -1563,38 +1579,38 @@
           </div>
 
           <label class="batch-source">
-            <span>{batch.format === "csv" ? "粘贴 CSV，需包含 prompt 或 提示词 列" : "粘贴文本，每行一条提示词"}</span>
+            <span>{tr(batch.format === "csv" ? "粘贴 CSV，需包含 prompt 或 提示词 列" : "粘贴文本，每行一条提示词")}</span>
             <textarea
-              aria-label="批量输入内容"
+              aria-label={tr("批量输入内容")}
               value={batch.sourceText}
               disabled={batch.phase === "parsing" || batch.phase === "running"}
               on:input={(event) => batch = setBatchSourceText(batch, event.currentTarget.value)}
-              placeholder={batch.format === "csv" ? "prompt\n写一封商务邮件" : "写一封商务邮件\n解释什么是机器学习"}
+              placeholder={batch.format === "csv" ? "prompt\nWrite a business email" : tr("写一封商务邮件\n解释什么是机器学习")}
             ></textarea>
           </label>
 
           <div class="batch-action-row">
             <button class="outline" type="button" disabled={batch.phase === "parsing" || batch.phase === "running" || !batch.sourceText.trim()} on:click={parseBatchSource}>
-              {batch.phase === "parsing" ? "正在解析" : "解析内容"}
+              {tr(batch.phase === "parsing" ? "正在解析" : "解析内容")}
             </button>
             <p aria-live="polite">
               {#if batch.phase === "running"}
-                正在处理 {batchProcessedCount(batch)}/{batch.items.length}，已完成 {batchCompletedCount(batch)} 条
+                {tr("正在处理 {processed}/{total}，已完成 {completed} 条", { processed: batchProcessedCount(batch), total: batch.items.length, completed: batchCompletedCount(batch) })}
               {:else if batch.phase === "completed"}
-                已完成 {batchCompletedCount(batch)}/{batch.items.length} 条
+                {tr("已完成 {completed}/{total} 条", { completed: batchCompletedCount(batch), total: batch.items.length })}
               {:else if batch.phase === "cancelled"}
-                已停止，已完成 {batchCompletedCount(batch)} 条
+                {tr("已停止，已完成 {completed} 条", { completed: batchCompletedCount(batch) })}
               {:else if batch.error}
-                <span class="error">{batch.error}</span>
+                <span class="error">{tr(batch.error)}</span>
               {:else if batch.items.length}
-                已解析 {batch.items.length} 条提示词
+                {tr("已解析 {count} 条提示词", { count: batch.items.length })}
               {:else}
-                等待导入内容
+                {tr("等待导入内容")}
               {/if}
             </p>
           </div>
 
-          <div class="batch-list" aria-label="批处理列表">
+          <div class="batch-list" aria-label={tr("批处理列表")}>
             {#if batch.items.length}
               {#each batch.items as item}
                 <article class:completed={item.status === "completed"} class:failed={item.status === "failed"} class:running={item.status === "running"} class="batch-item">
@@ -1602,22 +1618,22 @@
                   <div>
                     <strong>{item.prompt}</strong>
                     {#if item.result}<p>{item.result}</p>{/if}
-                    {#if item.error}<p class="error">{item.error}</p>{/if}
+                    {#if item.error}<p class="error">{tr(item.error)}</p>{/if}
                   </div>
-                  <span class="batch-status">{item.status === "pending" ? "等待" : item.status === "running" ? "处理中" : item.status === "completed" ? "已完成" : item.status === "cancelled" ? "已停止" : "失败"}</span>
+                  <span class="batch-status">{tr(item.status === "pending" ? "等待" : item.status === "running" ? "处理中" : item.status === "completed" ? "已完成" : item.status === "cancelled" ? "已停止" : "失败")}</span>
                 </article>
               {/each}
             {:else}
-              <p class="batch-empty">解析后将在这里显示待处理的提示词。</p>
+              <p class="batch-empty">{tr("解析后将在这里显示待处理的提示词。")}</p>
             {/if}
           </div>
 
           <div class="batch-footer">
             {#if batch.phase === "running"}
-              <button class="outline" type="button" on:click={cancelBatchRun}>停止</button>
+              <button class="outline" type="button" on:click={cancelBatchRun}>{tr("停止")}</button>
             {:else}
-              <button class="outline" type="button" disabled={!batchCanExport(batch)} on:click={exportBatch}>导出结果</button>
-              <button class="primary small" type="button" disabled={!batch.items.length} on:click={runBatch}>开始处理</button>
+              <button class="outline" type="button" disabled={!batchCanExport(batch)} on:click={exportBatch}>{tr("导出结果")}</button>
+              <button class="primary small" type="button" disabled={!batch.items.length} on:click={runBatch}>{tr("开始处理")}</button>
             {/if}
           </div>
         </div>
@@ -1626,25 +1642,25 @@
 
     {#if translation.phase !== "closed"}
       <div class="translation-layer" role="presentation">
-        <div class="translation-dialog" role="dialog" aria-modal="true" aria-label="翻译结果">
+        <div class="translation-dialog" role="dialog" aria-modal="true" aria-label={tr("翻译结果")}>
           <div class="translation-head">
             <div>
-              <h2>翻译结果</h2>
+              <h2>{tr("翻译结果")}</h2>
               {#if translation.sourceLanguage && translation.targetLanguage}
                 <p>{translationLanguageLabel(translation.sourceLanguage)} → {translationLanguageLabel(translation.targetLanguage)}</p>
               {/if}
             </div>
             <button
               class="icon-button"
-              aria-label="关闭翻译"
+              aria-label={tr("关闭翻译")}
               bind:this={translationCloseButton}
               on:click={() => closeTranslationView(true)}
             >×</button>
           </div>
 
           <div class="translation-toolbar">
-            <span>目标语言</span>
-            <div class="translation-segments" role="group" aria-label="目标语言">
+            <span>{tr("目标语言")}</span>
+            <div class="translation-segments" role="group" aria-label={tr("目标语言")}>
               {#each translationTargets as item}
                 <button
                   type="button"
@@ -1652,43 +1668,43 @@
                   aria-pressed={translation.target === item.id}
                   disabled={translation.phase === "streaming"}
                   on:click={() => chooseTranslationTarget(item.id)}
-                >{item.label}</button>
+                >{tr(item.label)}</button>
               {/each}
             </div>
           </div>
 
           <div class="translation-content">
-            <section class="translation-pane" aria-label="原文">
-              <h3>原文</h3>
+            <section class="translation-pane" aria-label={tr("原文")}>
+              <h3>{tr("原文")}</h3>
               <pre>{translation.sourceText}</pre>
             </section>
-            <section class="translation-pane translated" aria-label="译文" aria-live="polite">
-              <h3>译文</h3>
+            <section class="translation-pane translated" aria-label={tr("译文")} aria-live="polite">
+              <h3>{tr("译文")}</h3>
               {#if translation.phase === "error"}
-                <p class="translation-message error">{translation.error}</p>
+                <p class="translation-message error">{tr(translation.error)}</p>
               {:else if translation.phase === "cancelled" && !translation.translatedText}
-                <p class="translation-message">翻译已取消。</p>
+                <p class="translation-message">{tr("翻译已取消。")}</p>
               {:else if translation.translatedText}
                 <pre>{translation.translatedText}</pre>
               {:else if translation.phase === "streaming"}
-                <p class="translation-message">正在翻译…</p>
+                <p class="translation-message">{tr("正在翻译…")}</p>
               {:else}
-                <p class="translation-message">准备翻译</p>
+                <p class="translation-message">{tr("准备翻译")}</p>
               {/if}
             </section>
           </div>
 
           <div class="translation-footer">
             {#if translation.phase === "streaming"}
-              <button class="outline" type="button" on:click={cancelTranslationRun}>取消翻译</button>
+              <button class="outline" type="button" on:click={cancelTranslationRun}>{tr("取消翻译")}</button>
             {:else}
               <button class="outline" type="button" on:click={runTranslation}>
-                {translation.phase === "completed" ? "重新翻译" : "重试"}
+                {tr(translation.phase === "completed" ? "重新翻译" : "重试")}
               </button>
             {/if}
             {#if translation.phase === "completed"}
-              <button class="outline" type="button" on:click={copyTranslation}>复制译文</button>
-              <button class="primary small" type="button" on:click={useTranslationAsCurrentResult}>作为当前结果</button>
+              <button class="outline" type="button" on:click={copyTranslation}>{tr("复制译文")}</button>
+              <button class="primary small" type="button" on:click={useTranslationAsCurrentResult}>{tr("作为当前结果")}</button>
             {/if}
           </div>
         </div>
@@ -1697,40 +1713,40 @@
 
     {#if markdownPreview.phase !== "closed"}
       <div class="markdown-layer" role="presentation">
-        <div class="markdown-dialog" role="dialog" aria-modal="true" aria-label="Markdown 预览">
+        <div class="markdown-dialog" role="dialog" aria-modal="true" aria-label={tr("Markdown 预览")}>
           <div class="markdown-head">
-            <h2>Markdown 预览</h2>
+            <h2>{tr("Markdown 预览")}</h2>
             <button
               class="icon-button"
-              aria-label="关闭 Markdown 预览"
+              aria-label={tr("关闭 Markdown 预览")}
               bind:this={markdownPreviewCloseButton}
               on:click={() => closeMarkdownPreviewView(true)}
             >×</button>
           </div>
           <div class="markdown-toolbar">
-            <div class="markdown-segments" role="group" aria-label="预览方式">
+            <div class="markdown-segments" role="group" aria-label={tr("预览方式")}>
               {#each markdownPreviewModes as item}
                 <button
                   type="button"
                   class:active={markdownPreview.mode === item.id}
                   aria-pressed={markdownPreview.mode === item.id}
                   on:click={() => markdownPreview = selectMarkdownPreviewMode(markdownPreview, item.id)}
-                >{item.label}</button>
+                >{tr(item.label)}</button>
               {/each}
             </div>
-            <button class="outline" type="button" on:click={() => writeClipboardValue(markdownPreview.sourceText, "✓ 源码已复制")}>复制源码</button>
+            <button class="outline" type="button" on:click={() => writeClipboardValue(markdownPreview.sourceText, "✓ 源码已复制")}>{tr("复制源码")}</button>
           </div>
           <div class:source-only={markdownPreview.mode === "source"} class:preview-only={markdownPreview.mode === "preview"} class="markdown-content">
-            <section class="markdown-source" aria-label="Markdown 源码">
-              <h3>源码</h3>
+            <section class="markdown-source" aria-label={tr("Markdown 源码")}>
+              <h3>{tr("源码")}</h3>
               <pre>{markdownPreview.sourceText}</pre>
             </section>
-            <section class="markdown-rendered" aria-label="渲染预览" aria-live="polite">
-              <h3>预览</h3>
+            <section class="markdown-rendered" aria-label={tr("渲染预览")} aria-live="polite">
+              <h3>{tr("预览")}</h3>
               {#if markdownPreview.phase === "loading"}
-                <p class="markdown-message">正在渲染…</p>
+                <p class="markdown-message">{tr("正在渲染…")}</p>
               {:else if markdownPreview.phase === "error"}
-                <p class="markdown-message error">{markdownPreview.error}</p>
+                <p class="markdown-message error">{tr(markdownPreview.error)}</p>
               {:else}
                 <article>{@html markdownPreview.html}</article>
               {/if}
@@ -1738,9 +1754,9 @@
           </div>
           <div class="markdown-footer">
             {#if markdownPreview.phase === "error"}
-              <button class="outline" type="button" on:click={runMarkdownPreview}>重试</button>
+              <button class="outline" type="button" on:click={runMarkdownPreview}>{t(uiLanguage, "retry")}</button>
             {/if}
-            <button class="primary small" type="button" on:click={() => closeMarkdownPreviewView(true)}>关闭</button>
+            <button class="primary small" type="button" on:click={() => closeMarkdownPreviewView(true)}>{tr("关闭")}</button>
           </div>
         </div>
       </div>
@@ -1748,15 +1764,15 @@
 
     {#if state.overlay === "clipboard_confirm"}
       <div class="modal-layer" role="presentation">
-        <section class="clipboard-modal" aria-label="替换剪贴板确认">
-          <h2>替换当前剪贴板内容？</h2>
-          <p>原剪贴板内容会被本次结果覆盖。首次使用需要确认，之后可在设置中修改。</p>
+        <section class="clipboard-modal" aria-label={tr("替换剪贴板确认")}>
+          <h2>{tr("替换当前剪贴板内容？")}</h2>
+          <p>{tr("原剪贴板内容会被本次结果覆盖。首次使用需要确认，之后可在设置中修改。")}</p>
           {#if clipboardNotice}
-            <p class="clipboard-feedback" aria-live="polite">{clipboardNotice}</p>
+            <p class="clipboard-feedback" aria-live="polite">{tr(clipboardNotice)}</p>
           {/if}
           <div>
-            <button class="outline" on:click={closeOverlay}>取消</button>
-            <button class="primary small" on:click={confirmReplaceClipboard}>确认替换</button>
+            <button class="outline" on:click={closeOverlay}>{t(uiLanguage, "cancel")}</button>
+            <button class="primary small" on:click={confirmReplaceClipboard}>{tr("确认替换")}</button>
           </div>
         </section>
       </div>
@@ -1764,40 +1780,40 @@
 
     {#if state.overlay === "plugin_manager"}
       <div class="settings-layer" role="presentation">
-        <section class="plugin-dialog" aria-label="插件">
+        <section class="plugin-dialog" aria-label={tr("插件")}>
           <div class="settings-head">
             <div>
-              <h2>插件</h2>
-              <p>查看当前可用能力及其访问范围。</p>
+              <h2>{tr("插件")}</h2>
+              <p>{tr("查看当前可用能力及其访问范围。")}</p>
             </div>
-            <button class="icon-button" aria-label="关闭插件" on:click={closeOverlay}>×</button>
+            <button class="icon-button" aria-label={tr("关闭插件")} on:click={closeOverlay}>×</button>
           </div>
           <div class="plugin-list">
             <article class="plugin-row">
               <div>
-                <strong>MiniMax 模型服务</strong>
-                <span>生成与优化文本</span>
+                <strong>{tr("MiniMax 模型服务")}</strong>
+                <span>{tr("生成与优化文本")}</span>
               </div>
-              <span class="permission-badge">网络访问</span>
+              <span class="permission-badge">{tr("网络访问")}</span>
             </article>
             <article class="plugin-row">
               <div>
-                <strong>内置模板</strong>
-                <span>提供场景、风格与语言模板</span>
+                <strong>{tr("内置模板")}</strong>
+                <span>{tr("提供场景、风格与语言模板")}</span>
               </div>
-              <span class="permission-badge">本地内容</span>
+              <span class="permission-badge">{tr("本地内容")}</span>
             </article>
             <article class="plugin-row">
               <div>
-                <strong>场景识别</strong>
-                <span>根据当前文本选择适合的处理方式</span>
+                <strong>{tr("场景识别")}</strong>
+                <span>{tr("根据当前文本选择适合的处理方式")}</span>
               </div>
-              <span class="permission-badge">本地文本</span>
+              <span class="permission-badge">{tr("本地文本")}</span>
             </article>
           </div>
           <div class="plugin-footer">
-            <span>3 项内置能力</span>
-            <button class="primary small" type="button" on:click={managePluginSettings}>管理设置</button>
+            <span>{tr("3 项内置能力")}</span>
+            <button class="primary small" type="button" on:click={managePluginSettings}>{tr("管理设置")}</button>
           </div>
         </section>
       </div>
@@ -1805,17 +1821,17 @@
 
     {#if state.overlay === "settings"}
       <div class="settings-layer" role="presentation">
-        <section class="settings-dialog" aria-label="设置">
+        <section class="settings-dialog" aria-label={t(uiLanguage, "settings")}>
           <div class="settings-head">
             <div>
-              <h2>设置</h2>
-              <p>管理模型、默认行为和本地隐私。</p>
+              <h2>{t(uiLanguage, "settings")}</h2>
+              <p>{tr("管理模型、默认行为和本地隐私。")}</p>
             </div>
-            <button class="icon-button" aria-label="关闭设置" on:click={cancelSettingsView}>×</button>
+            <button class="icon-button" aria-label={tr("关闭设置")} on:click={cancelSettingsView}>×</button>
           </div>
 
           <div class="settings-layout">
-            <nav class="settings-nav" aria-label="设置分类">
+            <nav class="settings-nav" aria-label={tr("设置分类")}>
               {#each settingsSections as section}
                 <button
                   type="button"
@@ -1823,25 +1839,25 @@
                   aria-pressed={settingsSection === section.id}
                   on:click={() => (settingsSection = section.id)}
                 >
-                  {section.label}
+                  {tr(section.label)}
                 </button>
               {/each}
             </nav>
 
             <div class="settings-content">
               {#if settingsSection === "provider"}
-                <h3>模型与 Provider</h3>
+                <h3>{tr("模型与 Provider")}</h3>
                 <div class="settings-grid">
                   <label>
-                    <span>默认 Provider</span>
+                    <span>{tr("默认 Provider")}</span>
                     <select value={settingsDraft.default_provider ?? "minimax"} disabled={settingsBusy} on:change={(event) => selectSettingsProvider(event.currentTarget.value)}>
-                      {#each providerCatalog as provider}<option value={provider.id}>{provider.label}</option>{/each}
+                      {#each providerCatalog as provider}<option value={provider.id}>{tr(provider.label)}</option>{/each}
                     </select>
                   </label>
                   <label>
-                    <span>默认模型</span>
+                    <span>{tr("默认模型")}</span>
                     <select bind:value={settingsDraft.default_model} disabled={settingsBusy}>
-                      {#each settingsProviderModels as model}<option value={model.id}>{model.label}</option>{/each}
+                      {#each settingsProviderModels as model}<option value={model.id}>{tr(model.label)}</option>{/each}
                     </select>
                   </label>
                 </div>
@@ -1855,12 +1871,12 @@
                       autocomplete="off"
                       spellcheck="false"
                       disabled={secretBusy}
-                      placeholder="输入新的 API Key"
+                      placeholder={tr("输入新的 API Key")}
                       aria-describedby="secret-feedback"
                     />
                   </label>
                   <button class="outline" type="button" disabled={secretBusy} on:click={saveSecret}>
-                    {secretBusy ? "正在保存" : "保存密钥"}
+                    {tr(secretBusy ? "正在保存" : "保存密钥")}
                   </button>
                   <button
                     class="outline danger"
@@ -1868,69 +1884,69 @@
                     disabled={secretBusy || !secretStatus.configured}
                     on:click={deleteSecret}
                   >
-                    删除密钥
+                    {tr("删除密钥")}
                   </button>
                 </div>
                 <p id="secret-feedback" class="settings-feedback" aria-live="polite">
-                  {secretNotice ?? "密钥只保存在系统安全存储中，输入不会保留。"}
+                  {tr(secretNotice ?? "密钥只保存在系统安全存储中，输入不会保留。")}
                 </p>
                 <div class="credential-status" class:configured={secretStatus.configured}>
                   <span class="status-dot" aria-hidden="true"></span>
                   <div>
-                    <strong>{secretStatus.configured ? "密钥已保存" : "尚未配置密钥"}</strong>
+                    <strong>{tr(secretStatus.configured ? "密钥已保存" : "尚未配置密钥")}</strong>
                     <span>
                       {secretStatus.configured && secretStatus.maskedTail
-                        ? `尾号 ${secretStatus.maskedTail}`
-                        : "保存后即可使用当前 Provider"}
+                        ? tr("尾号 {tail}", { tail: secretStatus.maskedTail })
+                        : tr("保存后即可使用当前 Provider")}
                     </span>
                   </div>
                 </div>
               {:else if settingsSection === "defaults"}
-                <h3>默认行为</h3>
+                <h3>{tr("默认行为")}</h3>
                 <div class="settings-grid">
                   <div>
-                    <span class="field-label">默认模式</span>
+                    <span class="field-label">{tr("默认模式")}</span>
                     <div class="segments compact">
                       {#each modes as item}
                         <button type="button" class:active={settingsDraft.default_mode === item.id} on:click={() => (settingsDraft = { ...settingsDraft, default_mode: item.id })}>
-                          {item.label}
+                          {tr(item.label)}
                         </button>
                       {/each}
                     </div>
                   </div>
                   <div>
-                    <span class="field-label">默认风格</span>
+                    <span class="field-label">{tr("默认风格")}</span>
                     <div class="segments compact">
                       {#each styles as item}
                         <button type="button" class:active={settingsDraft.default_style === item.id} on:click={() => (settingsDraft = { ...settingsDraft, default_style: item.id })}>
-                          {item.label}
+                          {tr(item.label)}
                         </button>
                       {/each}
                     </div>
                   </div>
                 </div>
                 <div class="settings-block">
-                  <span class="field-label">场景识别策略</span>
+                  <span class="field-label">{tr("场景识别策略")}</span>
                   <div class="segments compact">
                     {#each scenePolicies as item}
                       <button type="button" class:active={settingsDraft.scene_policy === item.id} on:click={() => (settingsDraft = { ...settingsDraft, scene_policy: item.id })}>
-                        {item.label}
+                        {tr(item.label)}
                       </button>
                     {/each}
                   </div>
                 </div>
                 <div class="settings-block">
-                  <span class="field-label">界面与输出语言</span>
+                  <span class="field-label">{tr("界面与输出语言")}</span>
                   <div class="segments compact">
                     {#each uiLanguages as language}
                       <button type="button" class:active={settingsDraft.language === language.id} on:click={() => (settingsDraft = { ...settingsDraft, language: language.id })}>
-                        {language.label}
+                        {tr(language.label)}
                       </button>
                     {/each}
                   </div>
                 </div>
                 <label class="desktop-hotkey">
-                  <span>全局快捷键</span>
+                  <span>{tr("全局快捷键")}</span>
                   <input
                     bind:value={settingsDraft.hotkey}
                     disabled={settingsBusy}
@@ -1938,29 +1954,29 @@
                     spellcheck="false"
                   />
                   <small class:available={desktopStatus.hotkeyActive}>
-                    {desktopStatus.message ?? (desktopStatus.hotkeyActive ? "当前快捷键已启用" : "保存后启用快捷键")}
+                    {tr(desktopStatus.message ?? (desktopStatus.hotkeyActive ? "当前快捷键已启用" : "保存后启用快捷键"))}
                   </small>
                 </label>
               {:else if settingsSection === "clipboard"}
-                <h3>剪贴板</h3>
+                <h3>{tr("剪贴板")}</h3>
                 <div class="settings-block">
-                  <span class="field-label">读取与替换策略</span>
+                  <span class="field-label">{tr("读取与替换策略")}</span>
                   <div class="segments compact">
                     {#each clipboardPolicies as item}
                       <button type="button" class:active={settingsDraft.clipboard_policy === item.id} on:click={() => (settingsDraft = { ...settingsDraft, clipboard_policy: item.id })}>
-                        {item.label}
+                        {tr(item.label)}
                       </button>
                     {/each}
                   </div>
-                  <p class="warning-note">自动替换会覆盖当前剪贴板内容，首次使用仍需确认。</p>
+                  <p class="warning-note">{tr("自动替换会覆盖当前剪贴板内容，首次使用仍需确认。")}</p>
                 </div>
               {:else if settingsSection === "privacy"}
-                <h3>安全与隐私</h3>
+                <h3>{tr("安全与隐私")}</h3>
                 <div class="settings-choice-list">
                   <label class="settings-toggle">
                     <span>
-                      <strong>保存历史记录</strong>
-                      <small>记录优化结果，便于稍后查看</small>
+                      <strong>{tr("保存历史记录")}</strong>
+                      <small>{tr("记录优化结果，便于稍后查看")}</small>
                     </span>
                     <input
                       type="checkbox"
@@ -1971,8 +1987,8 @@
                   </label>
                   <label class="settings-toggle">
                     <span>
-                      <strong>隐私模式</strong>
-                      <small>减少本地内容保留</small>
+                      <strong>{tr("隐私模式")}</strong>
+                      <small>{tr("减少本地内容保留")}</small>
                     </span>
                     <input
                       type="checkbox"
@@ -1983,7 +1999,7 @@
                   </label>
                 </div>
                 <div class="settings-block">
-                  <span class="field-label">历史内容处理</span>
+                  <span class="field-label">{tr("历史内容处理")}</span>
                   <div class="segments compact">
                     {#each historyRedactionOptions as item}
                       <button
@@ -1992,19 +2008,19 @@
                         disabled={settingsBusy}
                         on:click={() => setHistoryRedaction(item.id)}
                       >
-                        {item.label}
+                        {tr(item.label)}
                       </button>
                     {/each}
                   </div>
                 </div>
               {:else}
-                <h3>插件</h3>
+                <h3>{tr("插件")}</h3>
                 <div class="settings-choice-list">
                   {#each settingsPlugins as plugin}
                     <label class="settings-toggle">
                       <span>
-                        <strong>{plugin.label}</strong>
-                        <small>{plugin.description}</small>
+                        <strong>{tr(plugin.label)}</strong>
+                        <small>{tr(pluginDescription(plugin))}</small>
                       </span>
                       <input
                         type="checkbox"
@@ -2020,10 +2036,10 @@
           </div>
 
           <div class="settings-footer">
-            <p class="settings-save-notice" aria-live="polite">{settingsNotice ?? ""}</p>
-            <button class="outline" type="button" disabled={settingsBusy} on:click={cancelSettingsView}>取消</button>
+            <p class="settings-save-notice" aria-live="polite">{settingsNotice ? tr(settingsNotice) : ""}</p>
+            <button class="outline" type="button" disabled={settingsBusy} on:click={cancelSettingsView}>{t(uiLanguage, "cancel")}</button>
             <button class="primary small" type="button" disabled={settingsBusy} on:click={saveSettings}>
-              {settingsBusy ? "正在保存" : "保存设置"}
+              {tr(settingsBusy ? "正在保存" : "保存设置")}
             </button>
           </div>
         </section>
