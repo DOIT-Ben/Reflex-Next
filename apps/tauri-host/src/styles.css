@@ -1511,10 +1511,24 @@ pre {
   border-radius: 10px;
 }
 
+.semantic-model-card.semantic-model-ready {
+  border-color: #b8dfc4;
+  background: #fbfefc;
+}
+
+.semantic-model-card.semantic-model-error {
+  border-color: #efc4bf;
+  background: #fffafa;
+}
+
 .semantic-model-card p {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+.semantic-model-card .semantic-model-status-error {
+  color: #b42318;
 }
 
 .semantic-model-card progress {

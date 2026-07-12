@@ -2353,10 +2353,16 @@
                   {/each}
                 </div>
                 {#if semanticDetectorEnabled}
-                  <section class="semantic-model-card" aria-label={tr("本地语义模型")}>
+                  <section
+                    class="semantic-model-card"
+                    class:semantic-model-ready={semanticModel.phase === "ready"}
+                    class:semantic-model-error={semanticModel.phase === "error"}
+                    aria-label={tr("本地语义模型")}
+                    aria-busy={semanticModel.phase === "loading" || semanticModel.phase === "downloading" || semanticModel.phase === "deleting"}
+                  >
                     <div>
                       <strong>{tr("本地语义模型")}</strong>
-                      <p role="status" aria-live="polite">{tr(semanticModelStatusText())}</p>
+                      <p class:semantic-model-status-error={semanticModel.phase === "error"} role={semanticModel.phase === "error" ? "alert" : "status"} aria-live="polite">{tr(semanticModelStatusText())}</p>
                     </div>
                     {#if semanticModel.phase === "downloading"}
                       <progress max="100" value={semanticModel.percent} aria-label={tr("模型下载进度")}></progress>
