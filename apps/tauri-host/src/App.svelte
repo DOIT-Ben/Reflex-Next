@@ -1251,7 +1251,7 @@
         <strong>Reflex</strong>
       </div>
       <div class="provider-pill"><span></span>{providerDisplayName(state.requestDraft.provider)}</div>
-      <button class="icon-button" aria-label="设置" on:click={beginSettings}>⚙</button>
+      <button class="icon-button" aria-label={t(uiLanguage, "settings")} on:click={beginSettings}>⚙</button>
     </header>
 
     {#if state.phase === "adjusting"}
@@ -1314,30 +1314,30 @@
         </div>
       </section>
     {:else if isGenerating(state.phase)}
-      <section class="generation-view" aria-label="正在生成">
-        <div class="badge">当前方案</div>
-        <h1>正在生成</h1>
+      <section class="generation-view" aria-label={t(uiLanguage, "generating")}>
+        <div class="badge">{t(uiLanguage, "current")}</div>
+        <h1>{t(uiLanguage, "generating")}</h1>
         <p class="subline">{summary}</p>
         <div class="progress"><span style={`width: ${state.phase === "streaming" ? 76 : 48}%`}></span></div>
         <article class="result-card streaming">
-          <pre>{state.output || "正在准备结果…"}</pre>
+          <pre>{state.output || t(uiLanguage, "generating")}</pre>
           <span class="cursor">▋</span>
         </article>
         <div class="footer-meta">
-          <span>{state.phase === "analyzing_scene" ? "正在分析场景" : state.phase === "connecting_provider" ? "正在连接模型" : "正在生成内容"}</span>
-          <button class="outline" on:click={cancelRun}>取消生成</button>
+          <span>{state.phase === "analyzing_scene" ? t(uiLanguage, "analyzing") : state.phase === "connecting_provider" ? t(uiLanguage, "connecting") : t(uiLanguage, "streaming")}</span>
+          <button class="outline" on:click={cancelRun}>{t(uiLanguage, "cancel")}</button>
         </div>
       </section>
     {:else if state.phase === "completed"}
-      <section class="complete-view" aria-label="优化完成">
-        <div class="badge">当前方案</div>
-        <h1>优化完成</h1>
+      <section class="complete-view" aria-label={t(uiLanguage, "completed")}>
+        <div class="badge">{t(uiLanguage, "current")}</div>
+        <h1>{t(uiLanguage, "completed")}</h1>
         <p class="subline">{sceneLabel(state.currentResult?.scene ?? null)} · {styleLabel(state.currentResult?.style ?? state.requestDraft.style)} · 约 {state.output.length} 字</p>
         <article class="result-card">
           <pre>{state.output}</pre>
         </article>
         <div class="result-actions">
-          <button class="primary small" on:click={copyResult}>复制结果</button>
+          <button class="primary small" on:click={copyResult}>{t(uiLanguage, "copy")}</button>
           <div class="more-actions">
             <button
               class="icon-button more-button"
@@ -1387,21 +1387,21 @@
         {/if}
       </section>
     {:else if state.phase === "error"}
-      <section class="error-view" aria-label="生成失败">
-        <div class="badge">当前方案</div>
-        <h1>生成失败</h1>
+      <section class="error-view" aria-label={t(uiLanguage, "failed")}>
+        <div class="badge">{t(uiLanguage, "current")}</div>
+        <h1>{t(uiLanguage, "failed")}</h1>
         <p class="subline">{summary}</p>
         <article class="error-panel">
-          <strong>{state.errorMessage ?? "模型服务暂时不可用"}</strong>
+          <strong>{state.errorMessage ?? t(uiLanguage, "noProvider")}</strong>
           <span>
             {state.errorRecoverable ? "可以稍后重试，或检查当前 Provider 设置。" : "请检查文本或设置后再试。"}
           </span>
         </article>
         <div class="error-actions">
           {#if state.errorRecoverable}
-            <button class="primary small" on:click={retryRun}>重试</button>
+            <button class="primary small" on:click={retryRun}>{t(uiLanguage, "retry")}</button>
           {/if}
-          <button class="outline" on:click={openSettingsView}>打开设置</button>
+          <button class="outline" on:click={openSettingsView}>{t(uiLanguage, "openSettings")}</button>
           <button class="outline" disabled={!state.diagnosticId} on:click={copyDiagnosticId}>复制诊断 ID</button>
         </div>
         <p class="recent">
@@ -1412,20 +1412,20 @@
         {/if}
       </section>
     {:else}
-      <section class="default-view" aria-label="输入内容">
-        <div class="badge">当前方案</div>
-        <label class="input-label" for="source-text">输入内容</label>
+      <section class="default-view" aria-label={t(uiLanguage, "input")}>
+        <div class="badge">{t(uiLanguage, "current")}</div>
+        <label class="input-label" for="source-text">{t(uiLanguage, "input")}</label>
         <div class="input-card">
           <textarea
             id="source-text"
-            aria-label="输入内容"
+            aria-label={t(uiLanguage, "input")}
             value={state.inputText}
             on:input={(event) => setInput(event.currentTarget.value)}
-            placeholder="粘贴文本、需求或提示词…"
+            placeholder={t(uiLanguage, "paste")}
           ></textarea>
           <div class="input-tools">
             <button type="button" disabled={clipboardReading} on:click={readClipboard}>
-              {clipboardReading ? "正在读取" : "读取剪贴板"}
+              {clipboardReading ? t(uiLanguage, "generating") : t(uiLanguage, "readClipboard")}
             </button>
             <span>{inputCount}</span>
           </div>
@@ -1437,14 +1437,14 @@
         <div class="summary-row">
           <span>{summary}</span>
           <div>
-            <button on:click={openTemplateManager}>模板</button>
-            <button disabled={!batchRunnerEnabled} on:click={openBatchView}>批量处理</button>
-            <button on:click={beginAdjust}>调整</button>
+            <button on:click={openTemplateManager}>{t(uiLanguage, "template")}</button>
+            <button disabled={!batchRunnerEnabled} on:click={openBatchView}>{t(uiLanguage, "batch")}</button>
+            <button on:click={beginAdjust}>{t(uiLanguage, "adjust")}</button>
           </div>
         </div>
 
         <button class="generate-button" disabled={!canGenerate} on:click={runOptimization}>
-          优化文本 <span>→</span>
+          {t(uiLanguage, "optimize")} <span>→</span>
         </button>
 
       </section>
