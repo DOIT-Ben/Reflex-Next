@@ -1700,10 +1700,9 @@
             ></textarea>
           </label>
           <input
-            class="batch-file-input"
             type="file"
             accept=".csv,text/csv,.txt,text/plain"
-            tabindex="-1"
+            hidden
             bind:this={batchFileInput}
             on:change={importBatchFile}
           />
