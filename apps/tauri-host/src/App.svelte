@@ -127,6 +127,7 @@
     type TemplateDraft
   } from "./domain/templateLibrary";
   import { providerCatalog, providerModels } from "./domain/providerCatalog";
+  import { t } from "./domain/i18n";
   import {
     listSceneOptions,
     type OptimizeMode,
@@ -331,6 +332,7 @@
   $: translatorEnabled = persistedConfig?.enabled_plugins.includes("translator") ?? true;
   $: markdownPreviewEnabled = persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
   $: batchRunnerEnabled = persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
+  $: uiLanguage = persistedConfig?.language === "en-US" ? "en-US" : "zh-CN";
   $: templateCategories = [...new Set(customTemplates.map((template) => template.category))].sort((left, right) => left.localeCompare(right, "zh-CN"));
   $: visibleTemplates = filterTemplates(customTemplates, templateQuery, templateCategory);
   $: settingsProviderModels = providerModels(settingsDraft.default_provider);
