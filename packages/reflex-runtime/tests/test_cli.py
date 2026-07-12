@@ -1822,6 +1822,23 @@ def test_ping_and_shutdown_use_versioned_event_envelopes():
         runtime.close()
 
 
+def test_cli_accepts_an_initial_utf8_bom():
+    runtime = RuntimeProcess()
+    try:
+        runtime.send(
+            "\ufeff"
+            + json.dumps(
+                {"version": 1, "request_id": "bom-ping", "type": "ping", "payload": {}}
+            )
+        )
+        ping = runtime.read_event()
+
+        assert ping["request_id"] == "bom-ping"
+        assert ping["event"]["data"]["message"] == "pong"
+    finally:
+        runtime.close()
+
+
 def test_optimize_streams_complete_mock_event_chain():
     runtime = RuntimeProcess()
     try:

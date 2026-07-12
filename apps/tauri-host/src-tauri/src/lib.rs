@@ -30,6 +30,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            configure_bundled_runtime(app);
             let app_data_dir = app.path().app_data_dir()?;
             history_export::cleanup_pending_export(&history_export::pending_export_journal(
                 &app_data_dir,
@@ -90,6 +91,21 @@ pub fn run() {
         }
         _ => {}
     })
+}
+
+fn configure_bundled_runtime(app: &tauri::App) {
+    use tauri::Manager;
+
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let Ok(resource_dir) = app.path().resource_dir() else {
+        return;
+    };
+    let executable = resource_dir.join("runtime").join("reflex-runtime.exe");
+    if executable.is_file() {
+        std::env::set_var("REFLEX_RUNTIME_EXECUTABLE", executable);
+    }
 }
 
 #[cfg(test)]

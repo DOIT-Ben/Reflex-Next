@@ -1010,8 +1010,13 @@ impl RuntimeController {
             .lock()
             .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
         if sidecar.is_none() {
-            let paths = resolve_runtime_paths()?;
-            let launch = build_launch_spec(resolve_python_launcher()?, &paths)?;
+            let launch = match bundled_launch_spec()? {
+                Some(launch) => launch,
+                None => {
+                    let paths = resolve_runtime_paths()?;
+                    build_launch_spec(resolve_python_launcher()?, &paths)?
+                }
+            };
             *sidecar = Some(Arc::new(RuntimeSidecar::new_with_registry(
                 OsProcessFactory::new(launch),
                 self.emitter.clone(),
@@ -1382,6 +1387,30 @@ pub fn resolve_python_launcher() -> Result<PythonLauncher, &'static str> {
     }
 }
 
+pub fn bundled_launch_spec() -> Result<Option<LaunchSpec>, &'static str> {
+    match std::env::var_os("REFLEX_RUNTIME_EXECUTABLE") {
+        Some(path) if !path.is_empty() => build_bundled_launch_spec(Path::new(&path)).map(Some),
+        Some(_) => Err(RUNTIME_UNAVAILABLE_MESSAGE),
+        None => Ok(None),
+    }
+}
+
+pub fn build_bundled_launch_spec(executable: &Path) -> Result<LaunchSpec, &'static str> {
+    if !executable.is_file() {
+        return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+    }
+    let current_dir = executable
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?;
+    Ok(LaunchSpec {
+        program: executable.to_path_buf(),
+        arguments: vec![],
+        current_dir,
+        python_path: vec![],
+    })
+}
+
 pub fn build_launch_spec(
     launcher: PythonLauncher,
     paths: &RuntimePaths,
@@ -1747,11 +1776,12 @@ mod tests {
     };
 
     use super::{
-        build_launch_spec, parse_event_envelope, parse_sidecar_event, resolve_runtime_paths_from,
-        route_parsed_event, serialize_command, spawn_stdout_reader, ChildProcess, EventEmitter,
-        HostRequestRegistry, OsProcessFactory, ParsedSidecarEvent, ProcessFactory, PythonLauncher,
-        RuntimeController, RuntimeSidecar, CAPABILITY_LIST_EVENT_NAME, CORE_EVENT_NAME,
-        PLUGIN_EVENT_NAME, RUNTIME_UNAVAILABLE_MESSAGE,
+        build_bundled_launch_spec, build_launch_spec, parse_event_envelope, parse_sidecar_event,
+        resolve_runtime_paths_from, route_parsed_event, serialize_command, spawn_stdout_reader,
+        ChildProcess, EventEmitter, HostRequestRegistry, OsProcessFactory, ParsedSidecarEvent,
+        ProcessFactory, PythonLauncher, RuntimeController, RuntimeSidecar,
+        CAPABILITY_LIST_EVENT_NAME, CORE_EVENT_NAME, PLUGIN_EVENT_NAME,
+        RUNTIME_UNAVAILABLE_MESSAGE,
     };
 
     #[test]
@@ -3134,6 +3164,16 @@ mod tests {
             launch.python_path,
             vec![paths.runtime_src, paths.core_src, paths.provider_plugin_src]
         );
+    }
+
+    #[test]
+    fn builds_a_resource_sidecar_launch_without_python_paths() {
+        let executable = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let launch = build_bundled_launch_spec(&executable).unwrap();
+
+        assert_eq!(launch.program, executable);
+        assert!(launch.arguments.is_empty());
+        assert!(launch.python_path.is_empty());
     }
 
     #[test]

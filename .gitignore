@@ -14,6 +14,8 @@ build/
 node_modules/
 src-tauri/target/
 apps/tauri-host/dist/
+apps/tauri-host/src-tauri/resources/runtime/
+tools/.runtime-sidecar-build/
 .superpowers/sdd/task-*-report.md
 
 # Local runtime data

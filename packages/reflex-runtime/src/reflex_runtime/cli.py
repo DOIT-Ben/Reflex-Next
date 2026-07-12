@@ -122,6 +122,8 @@ def main(fd_adapter: OsFdAdapter | None = None) -> int:
             if not keep_running:
                 break
             line = raw_line.strip()
+            if line.startswith("\ufeff"):
+                line = line[1:]
             if not line:
                 continue
             try:

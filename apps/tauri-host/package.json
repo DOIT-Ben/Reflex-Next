@@ -10,7 +10,9 @@
     "test": "vitest run",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "runtime:build": "powershell -ExecutionPolicy Bypass -File ../../tools/build_runtime_sidecar.ps1",
+    "package:windows": "npm run runtime:build && npm run tauri:build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
