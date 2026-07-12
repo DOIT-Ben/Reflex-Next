@@ -443,6 +443,14 @@ fn history_reuse_payload(
         }
         _ => return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
     };
+    let source_text = record
+        .get("input")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.trim().is_empty() && value.chars().count() <= 1_000_000 && !value.contains('\0')
+        })
+        .map(Value::from)
+        .unwrap_or(Value::Null);
 
     Ok(serde_json::json!({
         "version": 1,
@@ -450,6 +458,7 @@ fn history_reuse_payload(
         "history_id": intent.history_id,
         "kind": intent.kind,
         "text": text,
+        "source_text": source_text,
         "scene": scene,
         "style": style,
         "mode": mode,
@@ -2132,10 +2141,11 @@ mod tests {
             json!({
                 "version": 1,
                 "sequence": 2,
-                "history_id": "history-1",
-                "kind": "result",
-                "text": "plain output",
-                "scene": "email",
+            "history_id": "history-1",
+            "kind": "result",
+            "text": "plain output",
+            "source_text": "plain input",
+            "scene": "email",
                 "style": "detailed",
                 "mode": "prompt",
                 "provider": "minimax",

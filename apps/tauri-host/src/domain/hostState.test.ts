@@ -85,7 +85,8 @@ describe("host state", () => {
       provider: "minimax",
       model: "model-a",
       elapsed_ms: 900,
-      rating: 5
+      rating: 5,
+      source_text: "source input"
     });
 
     const translated = applyTranslationAsCurrentResult(reused, "translated result", 3);
@@ -447,12 +448,13 @@ describe("host state", () => {
       provider: "minimax",
       model: "MiniMax-M2.7-highspeed",
       elapsed_ms: 321,
-      rating: 4
+      rating: 4,
+      source_text: "历史原文"
     });
     expect(loadedResult).toMatchObject({ phase: "completed", output: "历史结果" });
     expect(loadedResult.currentResult).toMatchObject({
       historyId: "history-2",
-      sourceText: null,
+      sourceText: "历史原文",
       output: "历史结果",
       scene: "email",
       style: "detailed",
@@ -478,6 +480,22 @@ describe("host state", () => {
       kind: "result",
       text: "迟到结果"
     }).phase).toBe("analyzing_scene");
+
+    expect(applyHistoryReuseIntent(ready, {
+      version: 1,
+      sequence: 5,
+      history_id: "history-3",
+      kind: "result",
+      text: "结果",
+      scene: "email",
+      style: "balanced",
+      mode: "content",
+      provider: "minimax",
+      model: null,
+      elapsed_ms: 1,
+      rating: null,
+      source_text: "\u0000"
+    })).toBe(ready);
   });
 
   it("drops history reuse responses older than the latest host sequence", () => {

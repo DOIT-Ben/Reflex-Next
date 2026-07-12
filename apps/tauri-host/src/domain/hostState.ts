@@ -75,6 +75,7 @@ export type HistoryReuseIntent = {
   history_id: string;
   kind: "input" | "result";
   text: string;
+  source_text?: string | null;
   scene?: string | null;
   style?: ResultStyle;
   mode?: OptimizeMode;
@@ -701,10 +702,12 @@ export function applyHistoryReuseIntent(
   ) {
     return state;
   }
+  const sourceText = historySourceText(intent.source_text);
+  if (sourceText === undefined) return state;
   const currentResult: CurrentResult = {
     requestId: `history-reuse-${intent.history_id}`,
     historyId: intent.history_id,
-    sourceText: null,
+    sourceText,
     output: intent.text,
     scene: intent.scene ?? null,
     style: intent.style,
@@ -838,6 +841,19 @@ function boundedStringOrNull(value: unknown): value is string | null {
     value.length <= 128 &&
     !Array.from(value).some((character) => character < " ")
   );
+}
+
+function historySourceText(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) return null;
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value.length > 1_000_000 ||
+    value.includes("\u0000")
+  ) {
+    return undefined;
+  }
+  return value;
 }
 
 function integerOrNullValue(value: unknown): value is number | null {
