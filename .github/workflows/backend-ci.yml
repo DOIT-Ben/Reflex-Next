@@ -101,6 +101,8 @@ jobs:
             ~/.cargo/bin/cargo-audit.exe
             ~/.cargo/bin/cargo-license.exe
             ~/.cargo/bin/cargo-cyclonedx.exe
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
           key: cargo-tools-windows-audit-0.22.2-license-0.6.1-cyclonedx-0.5.9
 
       - name: Install pinned dependency audit tools
@@ -114,12 +116,10 @@ jobs:
       - name: Verify pinned Cargo tool versions
         shell: powershell
         run: |
-          $auditVersion = cargo audit --version
-          if ($LASTEXITCODE -ne 0 -or $auditVersion -notmatch "0\.22\.2") { throw "cargo-audit version mismatch" }
-          $licenseVersion = cargo license --version
-          if ($LASTEXITCODE -ne 0 -or $licenseVersion -notmatch "0\.6\.1") { throw "cargo-license version mismatch" }
-          $cycloneDxVersion = cargo cyclonedx --version
-          if ($LASTEXITCODE -ne 0 -or $cycloneDxVersion -notmatch "0\.5\.9") { throw "cargo-cyclonedx version mismatch" }
+          $installed = (cargo install --list) -join "`n"
+          if ($LASTEXITCODE -ne 0 -or $installed -notmatch "(?m)^cargo-audit v0\.22\.2:$") { throw "cargo-audit version mismatch" }
+          if ($installed -notmatch "(?m)^cargo-license v0\.6\.1:$") { throw "cargo-license version mismatch" }
+          if ($installed -notmatch "(?m)^cargo-cyclonedx v0\.5\.9:$") { throw "cargo-cyclonedx version mismatch" }
 
       - name: Verify backend script contract
         shell: powershell
