@@ -84,6 +84,14 @@ impl HostDiagnostics {
         self.emit(event, fields);
     }
 
+    pub fn emit_recovery(&self, event: &str, status: &str, code: Option<&str>) {
+        let mut fields = Map::new();
+        insert_identifier(&mut fields, "component", "host", 64);
+        insert_identifier(&mut fields, "status", status, 64);
+        insert_optional_identifier(&mut fields, "code", code, 128);
+        self.emit(event, fields);
+    }
+
     pub fn observe_runtime_event(&self, event_name: &str, payload: &Value) {
         if !self.enabled() {
             return;
@@ -157,6 +165,12 @@ impl HostDiagnostics {
                 &mut fields,
                 "plugin_id",
                 payload.get("plugin_id").and_then(Value::as_str),
+                64,
+            );
+            insert_optional_identifier(
+                &mut fields,
+                "operation",
+                payload.get("operation").and_then(Value::as_str),
                 64,
             );
             insert_optional_identifier(&mut fields, "status", status, 64);
@@ -424,6 +438,39 @@ mod tests {
         assert!(!serialized.contains("private-request-id"));
         assert!(!serialized.contains("private body"));
         assert!(!serialized.contains("private output"));
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn plugin_observer_keeps_operation_but_drops_result_data_and_request_id() {
+        let directory = temp_directory("plugin-terminal");
+        let _ = fs::remove_dir_all(&directory);
+        let diagnostics = HostDiagnostics::new(directory.clone(), true);
+        diagnostics.observe_runtime_event(
+            crate::sidecar::PLUGIN_EVENT_NAME,
+            &serde_json::json!({
+                "request_id": "private-history-request",
+                "plugin_id": "history-sqlite",
+                "operation": "restore",
+                "status": "result",
+                "data": {
+                    "backup_id": "private-backup-id",
+                    "path": "C:/private/history.sqlite3"
+                }
+            }),
+        );
+        diagnostics.close();
+
+        let records = records(&directory);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["event"], "plugin_terminal");
+        assert_eq!(records[0]["plugin_id"], "history-sqlite");
+        assert_eq!(records[0]["operation"], "restore");
+        assert_eq!(records[0]["status"], "result");
+        let serialized = serde_json::to_string(&records).unwrap();
+        assert!(!serialized.contains("private-history-request"));
+        assert!(!serialized.contains("private-backup-id"));
+        assert!(!serialized.contains("private/history.sqlite3"));
         let _ = fs::remove_dir_all(directory);
     }
 

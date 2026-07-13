@@ -448,6 +448,19 @@ class RuntimeContext:
         self,
         envelope: CapabilityListEnvelope | PluginEventEnvelope | ProviderCatalogEnvelope,
     ) -> None:
+        if isinstance(envelope, PluginEventEnvelope) and envelope.status in {
+            "result",
+            "cancelled",
+            "error",
+        }:
+            self._record_diagnostic(
+                "plugin_terminal",
+                component="runtime",
+                plugin_id=envelope.plugin_id,
+                operation=envelope.operation,
+                status=envelope.status,
+                code=envelope.code,
+            )
         with self._lock:
             print(
                 json.dumps(envelope.to_dict(), ensure_ascii=False),

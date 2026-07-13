@@ -41,6 +41,8 @@ _ALLOWED_FIELDS: Final = frozenset(
         "chunk_count",
         "cancel_latency_ms",
         "diagnostic_id",
+        "plugin_id",
+        "operation",
     }
 )
 _URL_PATTERN: Final = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)

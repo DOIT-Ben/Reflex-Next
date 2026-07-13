@@ -6,6 +6,7 @@ from io import StringIO
 
 from reflex_runtime.context import RuntimeContext
 from reflex_runtime.diagnostics import DiagnosticWriter
+from reflex_runtime.plugin_contracts import PluginEventEnvelope
 from reflex_runtime.protocol import parse_command
 
 
@@ -135,3 +136,55 @@ def test_provider_setup_failures_keep_safe_provider_metadata_and_matching_id(tmp
     assert failed["code"] == "provider_unconfigured"
     assert failed["diagnostic_id"] == error_envelope["event"]["data"]["diagnostic_id"]
     assert "private-provider-input" not in json.dumps(failed, ensure_ascii=False)
+
+
+def test_history_recovery_terminal_diagnostics_keep_only_safe_metadata(tmp_path):
+    protocol = StringIO()
+    writer = DiagnosticWriter(tmp_path / "diagnostics", enabled=True)
+    runtime = RuntimeContext(
+        stdout=protocol,
+        stderr=StringIO(),
+        development=True,
+        diagnostics=writer,
+    )
+
+    runtime.emit_runtime(
+        PluginEventEnvelope(
+            request_id="history-private-request-id",
+            plugin_id="history-sqlite",
+            operation="restore",
+            status="result",
+            data={
+                "backup_id": "private-backup-id",
+                "path": "C:/private/history.sqlite3",
+                "output": "private history body",
+            },
+        )
+    )
+    runtime.emit_runtime(
+        PluginEventEnvelope(
+            request_id="history-error-request-id",
+            plugin_id="history-sqlite",
+            operation="repair",
+            status="error",
+            code="history_recovery_required",
+        )
+    )
+    runtime.close()
+
+    terminal = [
+        record
+        for record in _records(tmp_path / "diagnostics")
+        if record["event"] == "plugin_terminal"
+    ]
+    assert [(record["operation"], record["status"]) for record in terminal] == [
+        ("restore", "result"),
+        ("repair", "error"),
+    ]
+    assert terminal[1]["code"] == "history_recovery_required"
+    serialized = json.dumps(terminal, ensure_ascii=False)
+    assert "history-private-request-id" not in serialized
+    assert "history-error-request-id" not in serialized
+    assert "private-backup-id" not in serialized
+    assert "private/history.sqlite3" not in serialized
+    assert "private history body" not in serialized

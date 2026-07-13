@@ -40,7 +40,10 @@ pub fn run() {
                 &app_data_dir,
             ))
             .map_err(std::io::Error::other)?;
-            let config_store = config_store::ConfigStore::new(app.path().app_config_dir()?);
+            let config_store = config_store::ConfigStore::with_diagnostics(
+                app.path().app_config_dir()?,
+                diagnostics.clone(),
+            );
             let config = config_store.load().unwrap_or_default();
             let desktop_state = desktop::DesktopState::new(config.hotkey.clone());
             let _ = desktop::register_hotkey(app.handle(), &desktop_state, &config.hotkey);

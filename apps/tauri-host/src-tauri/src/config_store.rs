@@ -8,6 +8,8 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::diagnostics::HostDiagnostics;
+
 pub const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_BACKUP_FILE_NAME: &str = "config.json.bak";
 const CONFIG_TEMP_FILE_NAME: &str = "config.json.tmp";
@@ -168,18 +170,30 @@ impl std::error::Error for ConfigStoreError {}
 pub struct ConfigStore {
     directory: PathBuf,
     write_lock: Mutex<()>,
+    diagnostics: Option<HostDiagnostics>,
 }
 
 impl ConfigStore {
+    #[cfg(test)]
     pub fn new(directory: PathBuf) -> Self {
         Self {
             directory,
             write_lock: Mutex::new(()),
+            diagnostics: None,
+        }
+    }
+
+    pub fn with_diagnostics(directory: PathBuf, diagnostics: HostDiagnostics) -> Self {
+        Self {
+            directory,
+            write_lock: Mutex::new(()),
+            diagnostics: Some(diagnostics),
         }
     }
 
     pub fn load(&self) -> Result<AppConfig, ConfigStoreError> {
         let primary = self.config_path();
+        let primary_exists = primary.exists();
         if primary.exists() {
             if let Ok(config) = read_config_file(&primary) {
                 return Ok(config);
@@ -187,10 +201,16 @@ impl ConfigStore {
         }
 
         let backup = self.backup_path();
-        if backup.exists() {
+        let backup_exists = backup.exists();
+        if backup_exists {
             if let Ok(config) = read_config_file(&backup) {
+                self.emit_recovery("restored", None);
                 return Ok(config);
             }
+        }
+
+        if primary_exists || backup_exists {
+            self.emit_recovery("defaulted", Some("config_invalid"));
         }
 
         Ok(AppConfig::default())
@@ -220,6 +240,12 @@ impl ConfigStore {
 
     fn config_path(&self) -> PathBuf {
         self.directory.join(CONFIG_FILE_NAME)
+    }
+
+    fn emit_recovery(&self, status: &str, code: Option<&str>) {
+        if let Some(diagnostics) = &self.diagnostics {
+            diagnostics.emit_recovery("config_recovery", status, code);
+        }
     }
 }
 
@@ -505,7 +531,9 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use serde_json::json;
+    use serde_json::{json, Value};
+
+    use crate::diagnostics::HostDiagnostics;
 
     use super::{AppConfig, ConfigStore, CONFIG_FILE_NAME};
 
@@ -717,6 +745,41 @@ mod tests {
 
         fs::write(directory.path().join(CONFIG_FILE_NAME), b"{not-json").unwrap();
         assert_eq!(store.load().unwrap().style, "balanced");
+    }
+
+    #[test]
+    fn config_recovery_diagnostics_distinguish_backup_and_default_fallback() {
+        let directory = TestDirectory::new();
+        let diagnostics_directory = directory.path().join("diagnostics");
+        let diagnostics = HostDiagnostics::new(diagnostics_directory.clone(), true);
+        let store =
+            ConfigStore::with_diagnostics(directory.path().join("config"), diagnostics.clone());
+        store.save(&AppConfig::default()).unwrap();
+
+        let mut changed = AppConfig::default();
+        changed.style = "concise".to_string();
+        store.save(&changed).unwrap();
+        fs::write(store.config_path(), b"{private-invalid-config").unwrap();
+
+        assert_eq!(store.load().unwrap().style, "balanced");
+        fs::write(store.backup_path(), b"{private-invalid-backup").unwrap();
+        assert_eq!(store.load().unwrap(), AppConfig::default());
+        diagnostics.close();
+
+        let records =
+            fs::read_to_string(diagnostics_directory.join("host-diagnostics.jsonl")).unwrap();
+        let records = records
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(records[0]["event"], "config_recovery");
+        assert_eq!(records[0]["status"], "restored");
+        assert!(records[0].get("code").is_none());
+        assert_eq!(records[1]["status"], "defaulted");
+        assert_eq!(records[1]["code"], "config_invalid");
+        let serialized = serde_json::to_string(&records).unwrap();
+        assert!(!serialized.contains("private-invalid-config"));
+        assert!(!serialized.contains("private-invalid-backup"));
     }
 
     #[test]
