@@ -134,6 +134,83 @@ def test_complete_json_response_is_supported():
     ) == ["完整结果"]
 
 
+def test_json_and_sse_response_limits_are_enforced_before_success(monkeypatch):
+    monkeypatch.setattr(provider_module, "MAX_RESPONSE_BYTES", 64)
+    oversized_json = MiniMaxProvider(
+        PRIVATE_SENTINEL,
+        provider_config(),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                content=b'{"choices":[{"message":{"content":"' + b"x" * 100 + b'"}}]}',
+            )
+        ),
+        sleep=lambda _: None,
+    )
+    with pytest.raises(MiniMaxProviderError) as caught:
+        list(
+            oversized_json.stream(
+                {"text": "input"}, request(stream=False), CancellationToken()
+            )
+        )
+    assert caught.value.code == "provider_invalid_response"
+
+    monkeypatch.setattr(provider_module, "MAX_RESPONSE_BYTES", 2048)
+    monkeypatch.setattr(provider_module, "MAX_STREAM_EVENTS", 1)
+    too_many_events = MiniMaxProvider(
+        PRIVATE_SENTINEL,
+        provider_config(),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"choices":[{"delta":{"content":"one"}}]}\n\n'
+                    b'data: {"choices":[{"delta":{"content":"two"}}]}\n\n'
+                    b"data: [DONE]\n\n"
+                ),
+            )
+        ),
+        sleep=lambda _: None,
+    )
+    stream = too_many_events.stream(
+        {"text": "input"}, request(), CancellationToken()
+    )
+    assert next(stream) == "one"
+    with pytest.raises(MiniMaxProviderError) as caught:
+        list(stream)
+    assert caught.value.code == "provider_invalid_response"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+        b"data: \xff\n\n",
+    ],
+)
+def test_truncated_or_invalid_utf8_stream_is_a_safe_protocol_error(content):
+    provider = MiniMaxProvider(
+        PRIVATE_SENTINEL,
+        provider_config(),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=content,
+            )
+        ),
+        sleep=lambda _: None,
+    )
+    stream = provider.stream({"text": "input"}, request(), CancellationToken())
+    if b"partial" in content:
+        assert next(stream) == "partial"
+    with pytest.raises(MiniMaxProviderError) as caught:
+        list(stream)
+    assert caught.value.code == "provider_invalid_response"
+
+
 @pytest.mark.parametrize(
     ("status", "code", "retryable"),
     [

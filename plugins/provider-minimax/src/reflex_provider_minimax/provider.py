@@ -10,12 +10,19 @@ import httpx
 
 from reflex_core import CancellationToken, OperationCancelled, OptimizeRequest
 
-from .sse import SseProtocolError, extract_json_content, iter_content_chunks
+from .sse import (
+    SseProtocolError,
+    extract_json_content,
+    iter_sse_payloads,
+    read_json_payload,
+)
 
 DEFAULT_BASE_URL = "https://api.minimaxi.com/v1/chat/completions"
 DEFAULT_MODEL = "MiniMax-M2.7-highspeed"
 SUPPORTED_MODELS = (DEFAULT_MODEL,)
 RETRY_DELAYS_SECONDS = (0.25, 0.5)
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_STREAM_EVENTS = 50_000
 
 _SAFE_MESSAGES = {
     "provider_auth_failed": "Provider authentication failed.",
@@ -150,8 +157,10 @@ class MiniMaxProvider:
                     content_type = response.headers.get("content-type", "").lower()
                     if "application/json" in content_type:
                         try:
-                            parsed = response.json()
-                        except ValueError:
+                            parsed = read_json_payload(
+                                response.iter_bytes(), max_bytes=MAX_RESPONSE_BYTES
+                            )
+                        except SseProtocolError:
                             if cancellation.is_cancelled:
                                 raise OperationCancelled("operation cancelled") from None
                             raise MiniMaxProviderError(
@@ -167,9 +176,18 @@ class MiniMaxProvider:
                         return
 
                     try:
-                        for content in iter_content_chunks(response.iter_lines()):
+                        for parsed in iter_sse_payloads(
+                            response.iter_bytes(),
+                            max_bytes=MAX_RESPONSE_BYTES,
+                            max_events=MAX_STREAM_EVENTS,
+                        ):
                             cancellation.raise_if_cancelled()
-                            yield content
+                            payloads = parsed if isinstance(parsed, list) else [parsed]
+                            for item in payloads:
+                                content = extract_json_content(item)
+                                if content:
+                                    cancellation.raise_if_cancelled()
+                                    yield content
                     except SseProtocolError:
                         if cancellation.is_cancelled:
                             raise OperationCancelled("operation cancelled") from None

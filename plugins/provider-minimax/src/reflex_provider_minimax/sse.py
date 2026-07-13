@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import json
 from collections.abc import Iterable, Iterator
 from typing import Any
@@ -13,6 +14,34 @@ class SseProtocolError(ValueError):
 
     def __repr__(self) -> str:
         return "SseProtocolError()"
+
+
+def read_json_payload(chunks: Iterable[bytes], *, max_bytes: int) -> Any:
+    raw = _read_bounded(chunks, max_bytes=max_bytes)
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise SseProtocolError() from None
+
+
+def iter_sse_payloads(
+    chunks: Iterable[bytes], *, max_bytes: int, max_events: int
+) -> Iterator[Any]:
+    event_count = 0
+    saw_done = False
+    for data in _iter_byte_event_data(chunks, max_bytes=max_bytes):
+        if data == "[DONE]":
+            saw_done = True
+            break
+        event_count += 1
+        if event_count > max_events:
+            raise SseProtocolError()
+        try:
+            yield json.loads(data)
+        except (TypeError, json.JSONDecodeError):
+            raise SseProtocolError() from None
+    if not saw_done:
+        raise SseProtocolError()
 
 
 def iter_content_chunks(lines: Iterable[str]) -> Iterator[str]:
@@ -73,3 +102,66 @@ def _iter_event_data(lines: Iterable[str]) -> Iterator[str]:
         yield line.strip()
     if pending:
         yield "\n".join(pending)
+
+
+def _read_bounded(chunks: Iterable[bytes], *, max_bytes: int) -> bytes:
+    parts: list[bytes] = []
+    total = 0
+    for chunk in chunks:
+        if not isinstance(chunk, bytes):
+            raise SseProtocolError()
+        total += len(chunk)
+        if total > max_bytes:
+            raise SseProtocolError()
+        parts.append(chunk)
+    return b"".join(parts)
+
+
+def _iter_byte_event_data(
+    chunks: Iterable[bytes], *, max_bytes: int
+) -> Iterator[str]:
+    decoder = codecs.getincrementaldecoder("utf-8")("strict")
+    buffer = ""
+    pending: list[str] = []
+    total = 0
+    try:
+        for chunk in chunks:
+            if not isinstance(chunk, bytes):
+                raise SseProtocolError()
+            total += len(chunk)
+            if total > max_bytes:
+                raise SseProtocolError()
+            buffer += decoder.decode(chunk)
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                data = _consume_sse_line(line.rstrip("\r"), pending)
+                if data is not None:
+                    yield data
+        buffer += decoder.decode(b"", final=True)
+    except UnicodeDecodeError:
+        raise SseProtocolError() from None
+
+    if buffer:
+        data = _consume_sse_line(buffer.rstrip("\r"), pending)
+        if data is not None:
+            yield data
+    if pending:
+        yield "\n".join(pending)
+
+
+def _consume_sse_line(line: str, pending: list[str]) -> str | None:
+    if not line:
+        if not pending:
+            return None
+        data = "\n".join(pending)
+        pending.clear()
+        return data
+    if line.startswith(":"):
+        return None
+    field, separator, value = line.partition(":")
+    if field != "data":
+        return None
+    if separator and value.startswith(" "):
+        value = value[1:]
+    pending.append(value)
+    return None
