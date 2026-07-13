@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -188,15 +188,21 @@ pub trait EventEmitter: Send + Sync {
 }
 
 struct HostRequestRegistry {
-    seen_request_ids: Mutex<HashSet<String>>,
+    history: Mutex<RequestHistory>,
     internal_sequence: AtomicU64,
     max_seen_request_ids: usize,
+}
+
+#[derive(Default)]
+struct RequestHistory {
+    ids: HashSet<String>,
+    order: VecDeque<String>,
 }
 
 impl Default for HostRequestRegistry {
     fn default() -> Self {
         Self {
-            seen_request_ids: Mutex::new(HashSet::new()),
+            history: Mutex::new(RequestHistory::default()),
             internal_sequence: AtomicU64::new(0),
             max_seen_request_ids: MAX_SEEN_REQUEST_IDS,
         }
@@ -227,24 +233,41 @@ impl HostRequestRegistry {
         {
             return Err(crate::runtime_commands::COMMAND_INVALID_MESSAGE);
         }
-        let mut unique = HashSet::new();
-        let mut seen_request_ids = self
-            .seen_request_ids
-            .lock()
-            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
-        if request_ids.iter().any(|request_id| {
-            seen_request_ids.contains(*request_id) || !unique.insert((*request_id).to_string())
-        }) {
+        let mut batch_ids = HashSet::new();
+        let unique = request_ids
+            .iter()
+            .map(|request_id| (*request_id).to_string())
+            .collect::<Vec<_>>();
+        if unique
+            .iter()
+            .any(|request_id| !batch_ids.insert(request_id.clone()))
+        {
             return Err(DUPLICATE_REQUEST_MESSAGE);
         }
-        if unique.len()
-            > self
-                .max_seen_request_ids
-                .saturating_sub(seen_request_ids.len())
-        {
+        if unique.len() > self.max_seen_request_ids {
             return Err(REQUEST_SESSION_FULL_MESSAGE);
         }
-        seen_request_ids.extend(unique);
+
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+        if unique
+            .iter()
+            .any(|request_id| history.ids.contains(request_id))
+        {
+            return Err(DUPLICATE_REQUEST_MESSAGE);
+        }
+        while history.ids.len() + unique.len() > self.max_seen_request_ids {
+            let Some(expired) = history.order.pop_front() else {
+                return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+            };
+            history.ids.remove(&expired);
+        }
+        for request_id in unique {
+            history.ids.insert(request_id.clone());
+            history.order.push_back(request_id);
+        }
         Ok(())
     }
 
@@ -736,6 +759,18 @@ where
                 || child.process.has_exited().unwrap_or(true)
             {
                 return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+            }
+        }
+        if let Some(child) = running.as_ref() {
+            let active_requests = child
+                .active_requests
+                .lock()
+                .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+            if commands.iter().any(|(command, _)| {
+                command.kind != crate::runtime_commands::CommandKind::Cancel
+                    && active_requests.contains_key(&command.request_id)
+            }) {
+                return Err(DUPLICATE_REQUEST_MESSAGE);
             }
         }
         self.request_registry
@@ -1924,23 +1959,21 @@ mod tests {
     }
 
     #[test]
-    fn seen_registry_rejects_new_ids_at_a_fixed_limit_without_eviction() {
+    fn seen_registry_rotates_the_oldest_id_without_losing_recent_replay_protection() {
         let registry = HostRequestRegistry::with_limit(2);
         registry.claim("seen-a").unwrap();
         registry.claim("seen-b").unwrap();
+        registry.claim("seen-c").unwrap();
 
         assert_eq!(
             registry.claim("seen-c"),
-            Err(super::REQUEST_SESSION_FULL_MESSAGE)
-        );
-        assert_eq!(
-            registry.claim("seen-a"),
             Err(super::DUPLICATE_REQUEST_MESSAGE)
         );
+        assert_eq!(registry.claim("seen-a"), Ok(()));
     }
 
     #[test]
-    fn seen_registry_limit_is_atomic_at_the_concurrent_boundary() {
+    fn seen_registry_rotation_is_atomic_at_the_concurrent_boundary() {
         let registry = Arc::new(HostRequestRegistry::with_limit(1));
         let barrier = Arc::new(Barrier::new(3));
         let results = Arc::new(Mutex::new(Vec::new()));
@@ -1960,13 +1993,25 @@ mod tests {
         }
 
         let results = results.lock().unwrap();
-        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 2);
+    }
+
+    #[test]
+    fn active_request_id_cannot_be_reused_after_replay_history_rotation() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let registry = Arc::new(HostRequestRegistry::with_limit(1));
+        let sidecar = RuntimeSidecar::new_with_registry(
+            FakeProcessFactory::new(vec![FakeProcess::running(writes)]),
+            Arc::new(FakeEmitter),
+            registry,
+        );
+
+        sidecar.send(optimize_command("active-a")).unwrap();
+        sidecar.send(optimize_command("active-b")).unwrap();
+
         assert_eq!(
-            results
-                .iter()
-                .filter(|result| **result == Err(super::REQUEST_SESSION_FULL_MESSAGE))
-                .count(),
-            1
+            sidecar.send(optimize_command("active-a")),
+            Err(super::DUPLICATE_REQUEST_MESSAGE)
         );
     }
 
@@ -2279,12 +2324,7 @@ mod tests {
                 payload: json!({}),
             })
             .unwrap();
-        let seen_before = sidecar
-            .request_registry
-            .seen_request_ids
-            .lock()
-            .unwrap()
-            .len();
+        let seen_before = sidecar.request_registry.history.lock().unwrap().ids.len();
 
         sidecar
             .send(ValidatedCommand {
@@ -2296,12 +2336,7 @@ mod tests {
 
         assert_eq!(seen_before, 1);
         assert_eq!(
-            sidecar
-                .request_registry
-                .seen_request_ids
-                .lock()
-                .unwrap()
-                .len(),
+            sidecar.request_registry.history.lock().unwrap().ids.len(),
             seen_before
         );
         assert_eq!(writes.lock().unwrap().len(), 2);
