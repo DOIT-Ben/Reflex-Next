@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from time import monotonic
+from typing import Callable
 
 from ..cancellation import CancellationToken, OperationCancelled
 from ..events import (
@@ -24,6 +25,7 @@ from ..safety import InputValidationError, safe_provider_error, sanitize_text, v
 
 _MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 _MAX_OUTPUT_CHUNKS = 50_000
+_MAX_REQUEST_SECONDS = 120.0
 
 
 class OptimizeUseCase:
@@ -35,10 +37,12 @@ class OptimizeUseCase:
         scene_detector: SceneDetector,
         template_resolver: TemplateResolver,
         provider: Provider,
+        clock: Callable[[], float] = monotonic,
     ) -> None:
         self._scene_detector = scene_detector
         self._template_resolver = template_resolver
         self._provider = provider
+        self._clock = clock
 
     def optimize(
         self,
@@ -49,7 +53,7 @@ class OptimizeUseCase:
     ) -> Iterator[EventEnvelope]:
         current_request_id = request_id or new_request_id()
         token = cancellation or CancellationToken()
-        started_at = monotonic()
+        started_at = self._clock()
 
         try:
             normalized_text = validate_input(request.text)
@@ -95,6 +99,10 @@ class OptimizeUseCase:
         if token.is_cancelled:
             yield self._cancelled(current_request_id)
             return
+        if self._deadline_exceeded(started_at):
+            token.cancel()
+            yield self._request_timeout(current_request_id)
+            return
 
         provider_id = request.provider or getattr(self._provider, "id", None)
         model = request.model or getattr(self._provider, "model", None)
@@ -112,6 +120,14 @@ class OptimizeUseCase:
             )
             return
 
+        if token.is_cancelled:
+            yield self._cancelled(current_request_id)
+            return
+        if self._deadline_exceeded(started_at):
+            token.cancel()
+            yield self._request_timeout(current_request_id)
+            return
+
         yield self._envelope(current_request_id, request_event(provider_id, model))
 
         try:
@@ -121,6 +137,10 @@ class OptimizeUseCase:
             for raw_chunk in self._provider.stream(rendered, request, token):
                 if token.is_cancelled:
                     yield self._cancelled(current_request_id)
+                    return
+                if self._deadline_exceeded(started_at):
+                    token.cancel()
+                    yield self._request_timeout(current_request_id)
                     return
                 chunk = sanitize_text(raw_chunk)
                 if not chunk:
@@ -140,6 +160,10 @@ class OptimizeUseCase:
 
             if token.is_cancelled:
                 yield self._cancelled(current_request_id)
+                return
+            if self._deadline_exceeded(started_at):
+                token.cancel()
+                yield self._request_timeout(current_request_id)
                 return
 
             final_text = sanitize_text("".join(chunks)).strip()
@@ -168,7 +192,7 @@ class OptimizeUseCase:
             )
             yield self._envelope(
                 current_request_id,
-                metric_event(elapsed_seconds=max(0.0, monotonic() - started_at)),
+                metric_event(elapsed_seconds=max(0.0, self._clock() - started_at)),
             )
         except OperationCancelled:
             yield self._cancelled(current_request_id)
@@ -218,5 +242,20 @@ class OptimizeUseCase:
                 "output_too_large",
                 "Provider output exceeded the allowed limit.",
                 recoverable=False,
+            ),
+        )
+
+    def _deadline_exceeded(self, started_at: float) -> bool:
+        return self._clock() - started_at >= _MAX_REQUEST_SECONDS
+
+    @classmethod
+    def _request_timeout(cls, request_id: str) -> EventEnvelope:
+        return cls._envelope(
+            request_id,
+            error_event(
+                "request_timeout",
+                "Request exceeded the 120 second time limit.",
+                recoverable=True,
+                action="retry",
             ),
         )

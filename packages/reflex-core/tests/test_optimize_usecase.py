@@ -97,6 +97,36 @@ def test_operation_cancelled_from_provider_emits_cancelled_terminal_status():
     }
 
 
+def test_request_stops_at_120_second_deadline_without_emitting_late_chunk():
+    now = [0.0]
+
+    def advance_to_deadline(index, cancellation):
+        del index, cancellation
+        now[0] = 120.0
+
+    provider = FakeProvider(("late",), on_chunk=advance_to_deadline)
+    use_case = OptimizeUseCase(
+        scene_detector=FakeSceneDetector(
+            SceneDetectionResult("report_writing", 0.9, "fake")
+        ),
+        template_resolver=FakeTemplateResolver(),
+        provider=provider,
+        clock=lambda: now[0],
+    )
+
+    events = list(use_case.optimize(OptimizeRequest("input")))
+
+    assert EventType.CHUNK not in event_types(events)
+    assert EventType.DONE not in event_types(events)
+    assert events[-1].event.type is EventType.ERROR
+    assert events[-1].event.data == {
+        "code": "request_timeout",
+        "message": "Request exceeded the 120 second time limit.",
+        "recoverable": True,
+        "action": "retry",
+    }
+
+
 def test_stream_output_exceeding_utf8_byte_limit_is_nonrecoverable_error():
     three_byte_character = "\u754c"
     within_limit = three_byte_character * 699_050 + "ab"
