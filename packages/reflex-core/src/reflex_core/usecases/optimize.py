@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from time import monotonic
 
-from ..cancellation import CancellationToken
+from ..cancellation import CancellationToken, OperationCancelled
 from ..events import (
     StatusPhase,
     chunk_event,
@@ -20,6 +20,10 @@ from ..interfaces import Provider, SceneDetector, TemplateResolver
 from ..models import OptimizeRequest, SceneDetectionResult
 from ..protocol import EventEnvelope, new_request_id
 from ..safety import InputValidationError, safe_provider_error, sanitize_text, validate_input
+
+
+_MAX_OUTPUT_BYTES = 2 * 1024 * 1024
+_MAX_OUTPUT_CHUNKS = 50_000
 
 
 class OptimizeUseCase:
@@ -112,6 +116,8 @@ class OptimizeUseCase:
 
         try:
             chunks: list[str] = []
+            output_bytes = 0
+            output_chunks = 0
             for raw_chunk in self._provider.stream(rendered, request, token):
                 if token.is_cancelled:
                     yield self._cancelled(current_request_id)
@@ -119,6 +125,16 @@ class OptimizeUseCase:
                 chunk = sanitize_text(raw_chunk)
                 if not chunk:
                     continue
+                next_output_bytes = output_bytes + len(chunk.encode("utf-8"))
+                next_output_chunks = output_chunks + 1
+                if (
+                    next_output_bytes > _MAX_OUTPUT_BYTES
+                    or next_output_chunks > _MAX_OUTPUT_CHUNKS
+                ):
+                    yield self._output_too_large(current_request_id)
+                    return
+                output_bytes = next_output_bytes
+                output_chunks = next_output_chunks
                 chunks.append(chunk)
                 yield self._envelope(current_request_id, chunk_event(chunk))
 
@@ -154,6 +170,8 @@ class OptimizeUseCase:
                 current_request_id,
                 metric_event(elapsed_seconds=max(0.0, monotonic() - started_at)),
             )
+        except OperationCancelled:
+            yield self._cancelled(current_request_id)
         except Exception as exc:
             code, message, recoverable, action = safe_provider_error(exc)
             yield self._envelope(
@@ -190,4 +208,15 @@ class OptimizeUseCase:
         return cls._envelope(
             request_id,
             status_event(StatusPhase.CANCELLED, "Generation cancelled."),
+        )
+
+    @classmethod
+    def _output_too_large(cls, request_id: str) -> EventEnvelope:
+        return cls._envelope(
+            request_id,
+            error_event(
+                "output_too_large",
+                "Provider output exceeded the allowed limit.",
+                recoverable=False,
+            ),
         )

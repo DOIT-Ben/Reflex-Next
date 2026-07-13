@@ -16,16 +16,30 @@ class DuplicateRequestId(RuntimeError):
         super().__init__(self.code)
 
 
-class TaskRegistry:
+class TaskCapacityExceeded(RuntimeError):
+    code = "runtime_busy"
+
     def __init__(self) -> None:
+        super().__init__(self.code)
+
+
+class TaskRegistry:
+    def __init__(self, max_tasks: int = 32) -> None:
+        if isinstance(max_tasks, bool) or not isinstance(max_tasks, int) or max_tasks < 1:
+            raise ValueError("max_tasks must be a positive integer")
+        self._max_tasks = max_tasks
         self._tokens: dict[str, CancellationToken] = {}
         self._lock = RLock()
 
-    def register(self, request_id: str) -> CancellationToken:
+    def register(
+        self, request_id: str, *, enforce_capacity: bool = True
+    ) -> CancellationToken:
         token = CancellationToken()
         with self._lock:
             if request_id in self._tokens:
                 raise DuplicateRequestId()
+            if enforce_capacity and len(self._tokens) >= self._max_tasks:
+                raise TaskCapacityExceeded()
             self._tokens[request_id] = token
         return token
 

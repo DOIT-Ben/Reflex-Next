@@ -40,10 +40,10 @@ from .plugin_contracts import (
     is_safe_id,
 )
 from .protocol import CommandEnvelope, ProtocolError
-from .provider_errors import ProviderRuntimeError, provider_unconfigured
+from .provider_errors import ProviderRuntimeError, provider_unconfigured, runtime_busy
 from .provider_gateway import ProviderGateway
 from .provider_registry import ProviderRegistry
-from .task_registry import DuplicateRequestId, TaskRegistry
+from .task_registry import DuplicateRequestId, TaskCapacityExceeded, TaskRegistry
 
 
 @dataclass(frozen=True, repr=False)
@@ -103,12 +103,15 @@ class RuntimeContext:
         provider_registry: ProviderRegistry | None = None,
         services: Any | None = None,
         thread_factory: Any = threading.Thread,
+        max_active_optimize: int = 4,
+        max_registered_tasks: int = 32,
     ) -> None:
         self._stdout = stdout or sys.stdout
         self._stderr = stderr or sys.stderr
         self._lock = threading.Lock()
         self._threads: dict[str, threading.Thread] = {}
-        self._tasks = TaskRegistry()
+        self._tasks = TaskRegistry(max_tasks=max_registered_tasks)
+        self._optimize_slots = threading.BoundedSemaphore(max_active_optimize)
         self._thread_factory = thread_factory
         self._development = (
             os.environ.get("REFLEX_RUNTIME_DEVELOPMENT") == "1"
@@ -173,7 +176,7 @@ class RuntimeContext:
 
     def _handle_synchronous(self, command: CommandEnvelope) -> bool:
         try:
-            token = self._tasks.register(command.request_id)
+            token = self._tasks.register(command.request_id, enforce_capacity=False)
         except DuplicateRequestId:
             self._diagnose_duplicate(command)
             return True
@@ -296,6 +299,9 @@ class RuntimeContext:
         except DuplicateRequestId:
             self._diagnose_duplicate(command)
             return
+        except TaskCapacityExceeded:
+            self.emit_provider_error(command.request_id, runtime_busy())
+            return
 
         try:
             thread = self._thread_factory(
@@ -321,6 +327,9 @@ class RuntimeContext:
             token = self._tasks.register(command.request_id)
         except DuplicateRequestId:
             self._diagnose_duplicate(command)
+            return
+        except TaskCapacityExceeded:
+            self.emit_plugin_error(command, "runtime_busy")
             return
         try:
             thread = self._thread_factory(
@@ -439,7 +448,19 @@ class RuntimeContext:
         )
 
     def _run_optimize(self, command: CommandEnvelope, token: CancellationToken) -> None:
+        slot_acquired = False
         try:
+            while not token.is_cancelled:
+                if self._optimize_slots.acquire(timeout=0.05):
+                    slot_acquired = True
+                    break
+            if not slot_acquired:
+                self.emit_status(
+                    command.request_id,
+                    StatusPhase.CANCELLED,
+                    "Generation cancelled.",
+                )
+                return
             request = self._request_from_payload(command.payload)
             provider = self._resolve_provider(request)
             started_at = time.monotonic()
@@ -475,6 +496,8 @@ class RuntimeContext:
                 f"runtime_error request_id={command.request_id} category=untrusted_provider_exception"
             )
         finally:
+            if slot_acquired:
+                self._optimize_slots.release()
             self._tasks.cleanup(command.request_id, token)
             with self._lock:
                 thread = self._threads.get(command.request_id)

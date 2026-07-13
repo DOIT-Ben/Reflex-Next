@@ -1,4 +1,11 @@
-from reflex_core import CancellationToken, EventType, OptimizeRequest, OptimizeUseCase, SceneDetectionResult
+from reflex_core import (
+    CancellationToken,
+    EventType,
+    OperationCancelled,
+    OptimizeRequest,
+    OptimizeUseCase,
+    SceneDetectionResult,
+)
 from reflex_core.testing import FakeProvider, FakeSceneDetector, FakeTemplateResolver
 
 
@@ -75,6 +82,53 @@ def test_cancel_stops_before_done_even_if_provider_ignores_cancellation():
     assert events[-1].event.data["phase"] == "cancelled"
     chunks = [event.event.data["text"] for event in events if event.event.type is EventType.CHUNK]
     assert chunks == ["first"]
+
+
+def test_operation_cancelled_from_provider_emits_cancelled_terminal_status():
+    provider = FakeProvider(error=OperationCancelled("api_key=provider-secret"))
+    events = list(make_use_case(provider=provider).optimize(OptimizeRequest("input")))
+
+    assert EventType.ERROR not in event_types(events)
+    assert EventType.DONE not in event_types(events)
+    assert events[-1].event.type is EventType.STATUS
+    assert events[-1].event.data == {
+        "phase": "cancelled",
+        "message": "Generation cancelled.",
+    }
+
+
+def test_stream_output_exceeding_utf8_byte_limit_is_nonrecoverable_error():
+    three_byte_character = "\u754c"
+    within_limit = three_byte_character * 699_050 + "ab"
+    provider = FakeProvider((within_limit, three_byte_character))
+    events = list(make_use_case(provider=provider).optimize(OptimizeRequest("input")))
+
+    chunks = [event for event in events if event.event.type is EventType.CHUNK]
+    assert len(chunks) == 1
+    assert EventType.DONE not in event_types(events)
+    assert events[-1].event.type is EventType.ERROR
+    assert events[-1].event.data == {
+        "code": "output_too_large",
+        "message": "Provider output exceeded the allowed limit.",
+        "recoverable": False,
+        "action": None,
+    }
+
+
+def test_stream_output_exceeding_valid_chunk_limit_is_nonrecoverable_error():
+    provider = FakeProvider(("\x00",) * 5 + ("x",) * 50_001)
+    events = list(make_use_case(provider=provider).optimize(OptimizeRequest("input")))
+
+    chunks = [event for event in events if event.event.type is EventType.CHUNK]
+    assert len(chunks) == 50_000
+    assert EventType.DONE not in event_types(events)
+    assert events[-1].event.type is EventType.ERROR
+    assert events[-1].event.data == {
+        "code": "output_too_large",
+        "message": "Provider output exceeded the allowed limit.",
+        "recoverable": False,
+        "action": None,
+    }
 
 
 def test_provider_error_is_safe_and_has_no_secret():

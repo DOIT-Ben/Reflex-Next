@@ -4,7 +4,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from reflex_runtime.task_registry import DuplicateRequestId, TaskRegistry
+from reflex_runtime.task_registry import (
+    DuplicateRequestId,
+    TaskCapacityExceeded,
+    TaskRegistry,
+)
 
 
 def test_duplicate_active_request_id_is_rejected():
@@ -66,3 +70,21 @@ def test_concurrent_registration_allows_exactly_one_owner():
         results = list(executor.map(lambda _: register_once(), range(2)))
 
     assert sum(result is not None for result in results) == 1
+
+
+def test_registration_capacity_is_bounded_and_reusable_after_cleanup():
+    registry = TaskRegistry(max_tasks=2)
+    first = registry.register("first")
+    registry.register("second")
+
+    with pytest.raises(DuplicateRequestId):
+        registry.register("first")
+    with pytest.raises(TaskCapacityExceeded) as caught:
+        registry.register("private-input-must-not-leak")
+
+    assert caught.value.code == "runtime_busy"
+    assert str(caught.value) == "runtime_busy"
+
+    registry.cleanup("first", first)
+    registry.register("replacement")
+    assert registry.is_active("replacement")

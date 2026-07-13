@@ -44,3 +44,12 @@ def provider_configuration_invalid() -> ProviderRuntimeError:
         recoverable=True,
         action="settings",
     )
+
+
+def runtime_busy() -> ProviderRuntimeError:
+    return ProviderRuntimeError(
+        "runtime_busy",
+        "Runtime is busy.",
+        recoverable=True,
+        action="retry",
+    )

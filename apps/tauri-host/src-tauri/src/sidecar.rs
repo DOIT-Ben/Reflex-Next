@@ -43,6 +43,7 @@ pub struct LaunchSpec {
     pub arguments: Vec<String>,
     pub current_dir: PathBuf,
     pub python_path: Vec<PathBuf>,
+    pub runtime_development: bool,
 }
 
 pub trait ChildProcess: Send {
@@ -88,21 +89,32 @@ impl OsProcessFactory {
 
 impl ProcessFactory for OsProcessFactory {
     fn spawn(&self) -> Result<Box<dyn ChildProcess>, &'static str> {
-        let python_path = std::env::join_paths(&self.launch.python_path)
-            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
-        let child = Command::new(&self.launch.program)
-            .args(&self.launch.arguments)
-            .current_dir(&self.launch.current_dir)
-            .env("PYTHONPATH", python_path)
-            .env("PYTHONUTF8", "1")
-            .env("REFLEX_RUNTIME_DEVELOPMENT", "1")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+        let child = build_process_command(&self.launch)?
             .spawn()
             .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
         Ok(Box::new(OsChildProcess::new(child)))
     }
+}
+
+fn build_process_command(launch: &LaunchSpec) -> Result<Command, &'static str> {
+    let python_path =
+        std::env::join_paths(&launch.python_path).map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+    let mut command = Command::new(&launch.program);
+    command
+        .args(&launch.arguments)
+        .current_dir(&launch.current_dir)
+        .env("PYTHONPATH", python_path)
+        .env("PYTHONUTF8", "1");
+    if launch.runtime_development {
+        command.env("REFLEX_RUNTIME_DEVELOPMENT", "1");
+    } else {
+        command.env_remove("REFLEX_RUNTIME_DEVELOPMENT");
+    }
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    Ok(command)
 }
 
 struct OsChildProcess {
@@ -1408,6 +1420,7 @@ pub fn build_bundled_launch_spec(executable: &Path) -> Result<LaunchSpec, &'stat
         arguments: vec![],
         current_dir,
         python_path: vec![],
+        runtime_development: false,
     })
 }
 
@@ -1446,6 +1459,7 @@ pub fn build_launch_spec(
             paths.core_src.clone(),
             paths.provider_plugin_src.clone(),
         ],
+        runtime_development: cfg!(debug_assertions),
     })
 }
 
@@ -1776,10 +1790,10 @@ mod tests {
     };
 
     use super::{
-        build_bundled_launch_spec, build_launch_spec, parse_event_envelope, parse_sidecar_event,
-        resolve_runtime_paths_from, route_parsed_event, serialize_command, spawn_stdout_reader,
-        ChildProcess, EventEmitter, HostRequestRegistry, OsProcessFactory, ParsedSidecarEvent,
-        ProcessFactory, PythonLauncher, RuntimeController, RuntimeSidecar,
+        build_bundled_launch_spec, build_launch_spec, build_process_command, parse_event_envelope,
+        parse_sidecar_event, resolve_runtime_paths_from, route_parsed_event, serialize_command,
+        spawn_stdout_reader, ChildProcess, EventEmitter, HostRequestRegistry, OsProcessFactory,
+        ParsedSidecarEvent, ProcessFactory, PythonLauncher, RuntimeController, RuntimeSidecar,
         CAPABILITY_LIST_EVENT_NAME, CORE_EVENT_NAME, PLUGIN_EVENT_NAME,
         RUNTIME_UNAVAILABLE_MESSAGE,
     };
@@ -3164,6 +3178,15 @@ mod tests {
             launch.python_path,
             vec![paths.runtime_src, paths.core_src, paths.provider_plugin_src]
         );
+        assert!(launch.runtime_development);
+        let command = build_process_command(&launch).unwrap();
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == "REFLEX_RUNTIME_DEVELOPMENT")
+                .and_then(|(_, value)| value),
+            Some(std::ffi::OsStr::new("1"))
+        );
     }
 
     #[test]
@@ -3174,6 +3197,15 @@ mod tests {
         assert_eq!(launch.program, executable);
         assert!(launch.arguments.is_empty());
         assert!(launch.python_path.is_empty());
+        assert!(!launch.runtime_development);
+        let command = build_process_command(&launch).unwrap();
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == "REFLEX_RUNTIME_DEVELOPMENT")
+                .map(|(_, value)| value),
+            Some(None)
+        );
     }
 
     #[test]

@@ -234,6 +234,34 @@ class RecordingProviderRegistry:
         return self.provider
 
 
+class ConcurrencyTrackingProvider:
+    id = "minimax"
+    model = "fixture-model-a"
+
+    def __init__(self):
+        self.release = threading.Event()
+        self.four_active = threading.Event()
+        self.five_active = threading.Event()
+        self._lock = threading.Lock()
+        self.active = 0
+        self.max_active = 0
+
+    def stream(self, rendered, request, cancellation):
+        with self._lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            if self.active >= 4:
+                self.four_active.set()
+            if self.active >= 5:
+                self.five_active.set()
+        try:
+            self.release.wait(timeout=3)
+            yield "released"
+        finally:
+            with self._lock:
+                self.active -= 1
+
+
 class FixtureHistoryCapability:
     descriptor = PluginDescriptor(
         plugin_id="history-sqlite",
@@ -1130,6 +1158,92 @@ def test_thread_start_failure_rolls_back_request_id_and_close_skips_join(
     )
     assert private_marker not in diagnostics.getvalue()
     assert private_body not in diagnostics.getvalue()
+
+
+def test_runtime_runs_at_most_four_optimize_requests_concurrently():
+    from io import StringIO
+
+    output = StringIO()
+    provider = ConcurrencyTrackingProvider()
+    runtime = _runtime_with_capability(
+        FixtureCapability(),
+        output,
+        stderr=StringIO(),
+        provider_registry=RecordingProviderRegistry(provider),
+    )
+
+    try:
+        for index in range(8):
+            runtime.handle(
+                parse_command(
+                    optimize_command(
+                        f"bounded-{index}",
+                        f"private concurrent input {index}",
+                        provider="minimax",
+                        model="fixture-model-a",
+                    )
+                )
+            )
+
+        assert provider.four_active.wait(timeout=2)
+        assert not provider.five_active.wait(timeout=0.2)
+        assert provider.max_active == 4
+    finally:
+        provider.release.set()
+        runtime.close(timeout=3)
+
+
+def test_runtime_busy_rejects_before_creating_an_unbounded_thread():
+    from io import StringIO
+
+    created_threads = []
+
+    class HoldingThread:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.started = False
+            created_threads.append(self)
+
+        def start(self):
+            self.started = True
+
+        def join(self, timeout=None):
+            return None
+
+    output = StringIO()
+    diagnostics = StringIO()
+    runtime = _runtime_with_capability(
+        FixtureCapability(),
+        output,
+        stderr=diagnostics,
+        thread_factory=HoldingThread,
+    )
+    private_input = "runtime-busy-private-input-must-not-leak"
+
+    for index in range(32):
+        runtime.handle(
+            parse_command(optimize_command(f"held-{index}", f"held input {index}"))
+        )
+    runtime.handle(parse_command(optimize_command("over-capacity", private_input)))
+
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    overloaded = next(
+        event["event"]
+        for event in events
+        if event["request_id"] == "over-capacity"
+    )
+    visible = output.getvalue() + diagnostics.getvalue()
+
+    assert len(created_threads) == 32
+    assert all(thread.started for thread in created_threads)
+    assert overloaded["type"] == "error"
+    assert overloaded["data"] == {
+        "code": "runtime_busy",
+        "message": "Runtime is busy.",
+        "recoverable": True,
+        "action": "retry",
+    }
+    assert private_input not in visible
 
 
 def test_runtime_plugin_call_uses_independent_plugin_event_contract():
