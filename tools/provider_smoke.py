@@ -20,6 +20,8 @@ from typing import Any
 PROTOCOL_VERSION = 1
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_CANCEL_AFTER_MS = 250
+CANCEL_OBSERVATION_SECONDS = 0.5
+MAX_RUNTIME_LINE_BYTES = 8 * 1024 * 1024
 FIXTURE_SECRET = "fixture-smoke-private-credential"
 PROVIDER_ID_PATTERN = re.compile(r"^[a-z0-9_.-]{1,64}$")
 MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
@@ -97,10 +99,7 @@ class RuntimeProcess:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
+            bufsize=-1,
         )
         self._reader = threading.Thread(target=self._read_stdout, daemon=True)
         self._reader.start()
@@ -108,12 +107,19 @@ class RuntimeProcess:
     def _read_stdout(self) -> None:
         assert self._process.stdout is not None
         try:
-            for line in self._process.stdout:
-                if not line.strip():
+            while True:
+                raw_line = self._process.stdout.readline(MAX_RUNTIME_LINE_BYTES + 1)
+                if not raw_line:
+                    break
+                if len(raw_line) > MAX_RUNTIME_LINE_BYTES or not raw_line.endswith(b"\n"):
+                    self._events.put(SmokeFailure("invalid_runtime_output"))
+                    self._terminate()
+                    return
+                if not raw_line.strip():
                     continue
                 try:
-                    value = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
+                    value = json.loads(raw_line.decode("utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                     self._events.put(SmokeFailure("invalid_runtime_output"))
                     continue
                 if not isinstance(value, dict):
@@ -133,7 +139,8 @@ class RuntimeProcess:
             "payload": payload,
         }
         try:
-            self._process.stdin.write(json.dumps(command, ensure_ascii=False) + "\n")
+            encoded = (json.dumps(command, ensure_ascii=False) + "\n").encode("utf-8")
+            self._process.stdin.write(encoded)
             self._process.stdin.flush()
         except (BrokenPipeError, OSError, ValueError) as exc:
             raise SmokeFailure("runtime_closed") from exc
@@ -169,8 +176,19 @@ class RuntimeProcess:
                 self.send("smoke-shutdown", "shutdown", {})
                 self._process.wait(timeout=2)
             except (SmokeFailure, subprocess.TimeoutExpired):
-                self._process.kill()
+                self._terminate()
                 self._process.wait(timeout=2)
+        for stream in (self._process.stdin, self._process.stdout):
+            if stream is not None:
+                stream.close()
+        self._reader.join(timeout=1)
+
+    def _terminate(self) -> None:
+        if self._process.poll() is None:
+            try:
+                self._process.kill()
+            except OSError:
+                pass
 
 
 def _safe_process_environment() -> dict[str, str]:
@@ -426,9 +444,16 @@ def _run_optimize(
         if operation == "cancel":
             if classification != "cancelled" or cancel_sent[0] is None:
                 raise SmokeFailure("cancel_not_observed")
-            late = runtime.receive_optional(request_id, 0.2)
-            if late and late.get("event", {}).get("type") == "done":
-                raise SmokeFailure("late_completion_after_cancel")
+            observation_deadline = time.monotonic() + CANCEL_OBSERVATION_SECONDS
+            while True:
+                remaining = observation_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                late = runtime.receive_optional(request_id, remaining)
+                if late is None:
+                    break
+                if late.get("event", {}).get("type") in {"chunk", "done"}:
+                    raise SmokeFailure("late_event_after_cancel")
         elif classification != "success":
             if classification != "error":
                 raise SmokeFailure("stream_not_completed")

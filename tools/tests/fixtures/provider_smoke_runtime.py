@@ -17,6 +17,22 @@ PROVIDERS = [
         "session_configured": False,
     },
     {
+        "id": "late-chunk",
+        "name": "Late Chunk Fixture",
+        "models": ["fixture-model"],
+        "default_model": "fixture-model",
+        "release_status": "experimental",
+        "session_configured": False,
+    },
+    {
+        "id": "late-done",
+        "name": "Late Done Fixture",
+        "models": ["fixture-model"],
+        "default_model": "fixture-model",
+        "release_status": "experimental",
+        "session_configured": False,
+    },
+    {
         "id": "minimax",
         "name": "MiniMax Fixture",
         "models": ["fixture-model"],
@@ -43,6 +59,7 @@ def event(request_id: str, event_type: str, data: dict) -> None:
 
 def main() -> int:
     configured = False
+    active_provider = None
     for line in sys.stdin:
         command = json.loads(line)
         request_id = command["request_id"]
@@ -63,6 +80,7 @@ def main() -> int:
             configured = True
             event(request_id, "status", {"phase": "completed", "message": "configured"})
         elif command_type == "optimize":
+            active_provider = command["payload"].get("provider")
             event(request_id, "status", {"phase": "connecting_provider", "message": "connecting"})
             if command["payload"].get("provider") == "failure":
                 event(
@@ -96,6 +114,21 @@ def main() -> int:
                 )
         elif command_type == "cancel":
             event(request_id, "status", {"phase": "cancelled", "message": "cancelled"})
+            if active_provider == "late-chunk":
+                event(request_id, "chunk", {"text": "fixture-private-late-body"})
+            elif active_provider == "late-done":
+                event(
+                    request_id,
+                    "done",
+                    {
+                        "text": "fixture-private-late-body",
+                        "scene": "general",
+                        "style": "balanced",
+                        "mode": "content",
+                        "provider": "late-done",
+                        "model": "fixture-model",
+                    },
+                )
         elif command_type == "shutdown":
             event(request_id, "status", {"phase": "completed", "message": "shutdown"})
             return 0

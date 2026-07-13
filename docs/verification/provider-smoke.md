@@ -32,7 +32,8 @@ py -3 -m unittest tools.tests.test_provider_smoke -v
 - 严格解析 `provider_catalog`；
 - 只允许目录中的 Provider 和模型 ID；
 - 记录首状态、首包、总时延和分片数；
-- 定时取消后记录取消时延并拒绝迟到完成事件；
+- 定时取消后记录取消时延，持续观察至少 500ms，并拒绝任何迟到文本分片或完成事件；
+- Runtime stdout 按二进制有界读取，单行超过 8 MiB 时立即终止 Runtime 并返回 `invalid_runtime_output`；
 - Runtime 错误只保留稳定错误码；
 - 成功和失败输出均不包含 fixture 正文、凭据或端点；
 - CLI 拒绝所有明文凭据、正文和端点参数。

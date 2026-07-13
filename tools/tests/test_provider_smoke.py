@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -15,6 +16,9 @@ import provider_smoke
 
 TOOL = ROOT / "tools" / "provider_smoke.py"
 FIXTURE = ROOT / "tools" / "tests" / "fixtures" / "provider_smoke_runtime.py"
+OVERSIZED_FIXTURE = (
+    ROOT / "tools" / "tests" / "fixtures" / "provider_smoke_oversized_runtime.py"
+)
 ALLOWED_FIELDS = {
     "operation",
     "provider_id",
@@ -69,7 +73,9 @@ class ProviderSmokeContractTests(unittest.TestCase):
         return records
 
     def test_all_mode_reports_catalog_stream_and_cancel_without_private_content(self):
+        started = time.monotonic()
         result = self.run_tool("--operation", "all", "--cancel-after-ms", "10")
+        elapsed = time.monotonic() - started
 
         self.assertEqual(result.returncode, 0, result.stdout)
         records = self.parse_output(result)
@@ -80,6 +86,7 @@ class ProviderSmokeContractTests(unittest.TestCase):
         self.assertIsInstance(records[1]["first_chunk_ms"], int)
         self.assertIsInstance(records[2]["cancel_latency_ms"], int)
         self.assertEqual(records[2]["error_code"], None)
+        self.assertGreaterEqual(elapsed, 0.5)
 
     def test_list_mode_uses_the_runtime_provider_catalog(self):
         result = self.run_tool("--operation", "list")
@@ -129,6 +136,39 @@ class ProviderSmokeContractTests(unittest.TestCase):
             provider_smoke._list_catalog(LegacyRuntime(), 1)
 
         self.assertEqual(failure.exception.code, "runtime_contract_outdated")
+
+    def test_late_chunk_or_done_after_cancel_is_rejected(self):
+        for provider_id in ("late-chunk", "late-done"):
+            with self.subTest(provider_id=provider_id):
+                result = self.run_tool(
+                    "--operation",
+                    "cancel",
+                    "--provider",
+                    provider_id,
+                    "--cancel-after-ms",
+                    "10",
+                )
+
+                self.assertEqual(result.returncode, 2)
+                records = self.parse_output(result)
+                self.assertEqual(records[-1]["classification"], "tool_error")
+                self.assertEqual(records[-1]["error_code"], "late_event_after_cancel")
+
+    def test_oversized_runtime_line_is_rejected_and_process_is_terminated(self):
+        runtime = provider_smoke.RuntimeProcess(
+            [sys.executable, str(OVERSIZED_FIXTURE)], cwd=ROOT
+        )
+        try:
+            runtime.send("smoke-list-providers", "list_providers", {})
+            with self.assertRaises(provider_smoke.SmokeFailure) as failure:
+                runtime.receive("smoke-list-providers", 3)
+            self.assertEqual(failure.exception.code, "invalid_runtime_output")
+            deadline = time.monotonic() + 2
+            while runtime._process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertIsNotNone(runtime._process.poll())
+        finally:
+            runtime.close()
 
     def test_cli_has_no_plaintext_secret_prompt_or_endpoint_options(self):
         for forbidden_option in ["--key", "--secret", "--prompt", "--endpoint", "--base-url"]:
