@@ -10,6 +10,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::config_store::{AppConfig, ConfigStore};
 use crate::desktop::{DesktopState, DesktopStatus};
+use crate::diagnostics::HostDiagnostics;
 use crate::history_key_store::HistoryKeyStore;
 use crate::runtime_commands::{
     configure_history_keyring_command, configure_history_path_command,
@@ -23,6 +24,7 @@ use crate::sidecar::{
 
 pub struct TauriRuntimeState {
     runtime: RuntimeController,
+    diagnostics: HostDiagnostics,
 }
 
 pub struct HistoryOperationControl {
@@ -91,14 +93,21 @@ impl HistoryOperationControl {
 }
 
 impl TauriRuntimeState {
-    pub fn new(app: AppHandle) -> Self {
+    pub fn new(app: AppHandle, diagnostics: HostDiagnostics) -> Self {
+        diagnostics.emit_lifecycle("host_started", "ready");
         Self {
-            runtime: RuntimeController::new(Arc::new(TauriEventEmitter { app })),
+            runtime: RuntimeController::new(Arc::new(TauriEventEmitter {
+                app,
+                diagnostics: diagnostics.clone(),
+            })),
+            diagnostics,
         }
     }
 
     pub fn shutdown(&self) {
         self.runtime.shutdown();
+        self.diagnostics.emit_lifecycle("host_stopped", "stopped");
+        self.diagnostics.close();
     }
 
     pub(crate) fn runtime(&self) -> &RuntimeController {
@@ -108,14 +117,17 @@ impl TauriRuntimeState {
 
 struct TauriEventEmitter {
     app: AppHandle,
+    diagnostics: HostDiagnostics,
 }
 
 impl EventEmitter for TauriEventEmitter {
     fn emit(&self, event_name: &str, payload: Value) {
+        self.diagnostics.observe_runtime_event(event_name, &payload);
         let _ = self.app.emit_to("main", event_name, payload);
     }
 
     fn emit_to(&self, target: &str, event_name: &str, payload: Value) {
+        self.diagnostics.observe_runtime_event(event_name, &payload);
         let _ = self.app.emit_to(target, event_name, payload);
     }
 }

@@ -114,9 +114,14 @@ def main(fd_adapter: OsFdAdapter | None = None) -> int:
     try:
         # Importing RuntimeContext can discover and import development plugins.
         from .context import RuntimeContext
+        from .diagnostics import diagnostic_writer_from_environment
         from .protocol import ProtocolError, parse_command
 
-        runtime = RuntimeContext(stdout=streams.protocol, stderr=streams.diagnostic)
+        runtime = RuntimeContext(
+            stdout=streams.protocol,
+            stderr=streams.diagnostic,
+            diagnostics=diagnostic_writer_from_environment(),
+        )
         keep_running = True
         for raw_line in sys.stdin:
             if not keep_running:

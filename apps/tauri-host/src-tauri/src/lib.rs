@@ -2,6 +2,7 @@ mod clipboard;
 mod commands;
 mod config_store;
 mod desktop;
+mod diagnostics;
 mod history_export;
 mod history_key_store;
 mod plugin_commands;
@@ -33,6 +34,8 @@ pub fn run() {
         .setup(|app| {
             configure_bundled_runtime(app);
             let app_data_dir = app.path().app_data_dir()?;
+            let diagnostics = diagnostics::HostDiagnostics::from_environment(&app_data_dir);
+            configure_runtime_diagnostics(&app_data_dir, diagnostics.enabled());
             history_export::cleanup_pending_export(&history_export::pending_export_journal(
                 &app_data_dir,
             ))
@@ -44,7 +47,10 @@ pub fn run() {
             if desktop::setup_tray(app).is_ok() {
                 desktop_state.mark_tray_available();
             }
-            app.manage(commands::TauriRuntimeState::new(app.handle().clone()));
+            app.manage(commands::TauriRuntimeState::new(
+                app.handle().clone(),
+                diagnostics,
+            ));
             app.manage(config_store);
             app.manage(desktop_state);
             app.manage(secret_store::SecretStore::windows());
@@ -110,6 +116,19 @@ fn configure_bundled_runtime(app: &tauri::App) {
     let executable = resource_dir.join("runtime").join("reflex-runtime.exe");
     if executable.is_file() {
         std::env::set_var("REFLEX_RUNTIME_EXECUTABLE", executable);
+    }
+}
+
+fn configure_runtime_diagnostics(app_data_dir: &std::path::Path, enabled: bool) {
+    if enabled {
+        std::env::set_var("REFLEX_RUNTIME_DIAGNOSTICS_ENABLED", "1");
+        std::env::set_var(
+            "REFLEX_RUNTIME_DIAGNOSTICS_DIR",
+            app_data_dir.join("diagnostics"),
+        );
+    } else {
+        std::env::remove_var("REFLEX_RUNTIME_DIAGNOSTICS_ENABLED");
+        std::env::remove_var("REFLEX_RUNTIME_DIAGNOSTICS_DIR");
     }
 }
 

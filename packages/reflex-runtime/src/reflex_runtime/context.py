@@ -31,6 +31,7 @@ from reflex_core.usecases import OptimizeUseCase
 from reflex_core.safety import redact_for_history, redact_sensitive
 
 from .capability_registry import CapabilityDenied, CapabilityRegistry, HistoryPolicySnapshot
+from .diagnostics import DiagnosticWriter
 from .mock_provider import MockProvider
 from .plugin_manager import PluginManager
 from .plugin_contracts import (
@@ -63,6 +64,14 @@ class _HistorySaveResult:
     history_id: str | None
     save_status: str
     elapsed_ms: int
+
+
+@dataclass
+class _DiagnosticRequestState:
+    provider_id: str | None
+    model: str | None
+    started_at: float
+    chunk_count: int = 0
 
 
 def _safe_plugin_error_code(error: BaseException) -> str | None:
@@ -106,6 +115,7 @@ class RuntimeContext:
         thread_factory: Any = threading.Thread,
         max_active_optimize: int = 4,
         max_registered_tasks: int = 32,
+        diagnostics: DiagnosticWriter | None = None,
     ) -> None:
         self._stdout = stdout or sys.stdout
         self._stderr = stderr or sys.stderr
@@ -114,6 +124,9 @@ class RuntimeContext:
         self._tasks = TaskRegistry(max_tasks=max_registered_tasks)
         self._optimize_slots = threading.BoundedSemaphore(max_active_optimize)
         self._thread_factory = thread_factory
+        self._diagnostics = diagnostics or DiagnosticWriter(Path("."), enabled=False)
+        self._diagnostic_lock = threading.Lock()
+        self._diagnostic_requests: dict[str, _DiagnosticRequestState] = {}
         self._development = (
             os.environ.get("REFLEX_RUNTIME_DEVELOPMENT") == "1"
             if development is None
@@ -159,6 +172,9 @@ class RuntimeContext:
             RuleSceneDetector(),
         )
         self._template_resolver = template_resolver or _builtin_template_resolver()
+        self._record_diagnostic(
+            "runtime_started", component="runtime", status="ready"
+        )
 
     def __repr__(self) -> str:
         return "RuntimeContext(protocol=1)"
@@ -380,6 +396,10 @@ class RuntimeContext:
             if thread is threading.current_thread():
                 continue
             thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        self._record_diagnostic(
+            "runtime_stopped", component="runtime", status="stopped"
+        )
+        self._diagnostics.close()
 
     def has_active_tasks(self) -> bool:
         with self._lock:
@@ -420,6 +440,7 @@ class RuntimeContext:
         self.emit(EventEnvelope(request_id, status_event(phase, message)))
 
     def emit(self, envelope: EventEnvelope) -> None:
+        envelope = self._observe_diagnostic_event(envelope)
         with self._lock:
             print(json.dumps(envelope.to_dict(), ensure_ascii=False), file=self._stdout, flush=True)
 
@@ -469,8 +490,14 @@ class RuntimeContext:
                 )
                 return
             request = self._request_from_payload(command.payload)
-            provider = self._resolve_provider(request)
             started_at = time.monotonic()
+            self._start_diagnostic_request(
+                command.request_id,
+                provider_id=request.provider,
+                model=request.model,
+                started_at=started_at,
+            )
+            provider = self._resolve_provider(request)
             history = self._start_history_save(request)
             use_case = OptimizeUseCase(
                 scene_detector=self._scene_detector,
@@ -505,11 +532,135 @@ class RuntimeContext:
         finally:
             if slot_acquired:
                 self._optimize_slots.release()
+            incomplete_state = self._take_diagnostic_request(command.request_id)
+            if incomplete_state is not None:
+                self._record_request_terminal(
+                    "request_abandoned",
+                    command.request_id,
+                    incomplete_state,
+                    status="incomplete",
+                    code="missing_terminal",
+                )
             self._tasks.cleanup(command.request_id, token)
             with self._lock:
                 thread = self._threads.get(command.request_id)
                 if thread is threading.current_thread():
                     self._threads.pop(command.request_id, None)
+
+    def _start_diagnostic_request(
+        self,
+        request_id: str,
+        *,
+        provider_id: str | None,
+        model: str | None,
+        started_at: float,
+    ) -> None:
+        if not self._diagnostics.available:
+            return
+        with self._diagnostic_lock:
+            self._diagnostic_requests[request_id] = _DiagnosticRequestState(
+                provider_id=provider_id,
+                model=model,
+                started_at=started_at,
+            )
+        self._record_diagnostic(
+            "request_started",
+            component="runtime",
+            request_id=request_id,
+            provider_id=provider_id,
+            model=model,
+            status="running",
+        )
+
+    def _observe_diagnostic_event(self, envelope: EventEnvelope) -> EventEnvelope:
+        if not self._diagnostics.available:
+            return envelope
+        event = envelope.event
+        request_id = envelope.request_id
+        if event.type is EventType.CHUNK:
+            with self._diagnostic_lock:
+                state = self._diagnostic_requests.get(request_id)
+                if state is not None:
+                    state.chunk_count += 1
+            return envelope
+        if event.type is EventType.ERROR:
+            diagnostic_id = event.data.get("diagnostic_id")
+            if not isinstance(diagnostic_id, str):
+                diagnostic_id = f"diag-{uuid.uuid4().hex}"
+                event = Event(
+                    event.type,
+                    {**event.data, "diagnostic_id": diagnostic_id},
+                )
+                envelope = EventEnvelope(request_id=request_id, event=event)
+            state = self._take_diagnostic_request(request_id)
+            self._record_request_terminal(
+                "request_failed",
+                request_id,
+                state,
+                status="error",
+                code=event.data.get("code"),
+                diagnostic_id=diagnostic_id,
+            )
+            return envelope
+        if (
+            event.type is EventType.STATUS
+            and event.data.get("phase") == StatusPhase.CANCELLED.value
+        ):
+            state = self._take_diagnostic_request(request_id)
+            self._record_request_terminal(
+                "request_cancelled",
+                request_id,
+                state,
+                status="cancelled",
+            )
+            return envelope
+        if event.type is EventType.METRIC:
+            state = self._take_diagnostic_request(request_id)
+            self._record_request_terminal(
+                "request_completed",
+                request_id,
+                state,
+                status="completed",
+            )
+        return envelope
+
+    def _take_diagnostic_request(
+        self, request_id: str
+    ) -> _DiagnosticRequestState | None:
+        with self._diagnostic_lock:
+            return self._diagnostic_requests.pop(request_id, None)
+
+    def _record_request_terminal(
+        self,
+        event: str,
+        request_id: str,
+        state: _DiagnosticRequestState | None,
+        *,
+        status: str,
+        code: object = None,
+        diagnostic_id: object = None,
+    ) -> None:
+        duration_ms = None
+        if state is not None:
+            duration_ms = max(0, round((time.monotonic() - state.started_at) * 1000))
+        self._record_diagnostic(
+            event,
+            component="runtime",
+            request_id=request_id,
+            provider_id=state.provider_id if state is not None else None,
+            model=state.model if state is not None else None,
+            status=status,
+            code=code,
+            diagnostic_id=diagnostic_id,
+            duration_ms=duration_ms,
+            chunk_count=state.chunk_count if state is not None else 0,
+        )
+
+    def _record_diagnostic(self, event: str, **fields: object) -> None:
+        try:
+            self._diagnostics.emit(event, **fields)
+        except Exception:
+            pass
 
     def _start_history_save(self, request: OptimizeRequest) -> _HistorySaveContext:
         history_state, policy = self._capabilities.history_snapshot

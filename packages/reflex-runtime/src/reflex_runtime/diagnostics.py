@@ -9,6 +9,7 @@ import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Final
 from urllib.parse import urlsplit, urlunsplit
 
@@ -39,6 +40,7 @@ _ALLOWED_FIELDS: Final = frozenset(
         "duration_ms",
         "chunk_count",
         "cancel_latency_ms",
+        "diagnostic_id",
     }
 )
 _URL_PATTERN: Final = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
@@ -287,4 +289,32 @@ class DiagnosticWriter:
             pass
 
 
-__all__ = ["DiagnosticWriter"]
+def diagnostic_writer_from_environment(
+    environ: Mapping[str, str] | None = None,
+) -> DiagnosticWriter:
+    """Build the fail-open Runtime writer from a host-controlled environment."""
+
+    values = os.environ if environ is None else environ
+    disabled = DiagnosticWriter(Path("."), enabled=False)
+    if values.get("REFLEX_RUNTIME_DIAGNOSTICS_ENABLED") != "1":
+        return disabled
+    raw_directory = values.get("REFLEX_RUNTIME_DIAGNOSTICS_DIR")
+    if not isinstance(raw_directory, str) or not _safe_diagnostic_directory(raw_directory):
+        return disabled
+    return DiagnosticWriter(Path(raw_directory), enabled=True)
+
+
+def _safe_diagnostic_directory(value: str) -> bool:
+    if not value or len(value) > 4_096 or value.startswith(("\\\\", "//")):
+        return False
+    if any(ord(character) < 32 for character in value):
+        return False
+    path = Path(value)
+    return (
+        path.is_absolute()
+        and path.name == "diagnostics"
+        and all(part not in {".", ".."} for part in path.parts)
+    )
+
+
+__all__ = ["DiagnosticWriter", "diagnostic_writer_from_environment"]

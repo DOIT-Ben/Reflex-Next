@@ -120,11 +120,47 @@ fn build_process_command(launch: &LaunchSpec) -> Result<Command, &'static str> {
     } else {
         command.env_remove("REFLEX_RUNTIME_DEVELOPMENT");
     }
+    if let Some(directory) = trusted_runtime_diagnostics_directory(
+        std::env::var_os("REFLEX_RUNTIME_DIAGNOSTICS_ENABLED"),
+        std::env::var_os("REFLEX_RUNTIME_DIAGNOSTICS_DIR"),
+    ) {
+        command
+            .env("REFLEX_RUNTIME_DIAGNOSTICS_ENABLED", "1")
+            .env("REFLEX_RUNTIME_DIAGNOSTICS_DIR", directory);
+    } else {
+        command
+            .env_remove("REFLEX_RUNTIME_DIAGNOSTICS_ENABLED")
+            .env_remove("REFLEX_RUNTIME_DIAGNOSTICS_DIR");
+    }
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     Ok(command)
+}
+
+fn trusted_runtime_diagnostics_directory(
+    enabled: Option<std::ffi::OsString>,
+    directory: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    if enabled.as_deref() != Some(std::ffi::OsStr::new("1")) {
+        return None;
+    }
+    let path = PathBuf::from(directory?);
+    let text = path.to_string_lossy();
+    if !path.is_absolute()
+        || path.file_name() != Some(std::ffi::OsStr::new("diagnostics"))
+        || text.starts_with("\\\\")
+        || text.starts_with("//")
+        || text.len() > 4_096
+        || text.chars().any(|character| character.is_control())
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    Some(path)
 }
 
 struct OsChildProcess {
@@ -4442,6 +4478,34 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((target.to_string(), event_name.to_string(), payload));
+        }
+    }
+
+    #[test]
+    fn runtime_diagnostics_environment_requires_exact_enablement_and_safe_directory() {
+        let safe = std::env::temp_dir().join("reflex-diagnostics-environment").join("diagnostics");
+        assert_eq!(
+            super::trusted_runtime_diagnostics_directory(
+                Some(std::ffi::OsString::from("1")),
+                Some(safe.clone().into_os_string()),
+            ),
+            Some(safe)
+        );
+        for (enabled, path) in [
+            ("true", r"C:\safe\diagnostics"),
+            ("1", r"diagnostics"),
+            ("1", r"C:\safe\..\diagnostics"),
+            ("1", r"\\server\share\diagnostics"),
+            ("1", r"C:\safe\logs"),
+        ] {
+            assert_eq!(
+                super::trusted_runtime_diagnostics_directory(
+                    Some(std::ffi::OsString::from(enabled)),
+                    Some(std::ffi::OsString::from(path)),
+                ),
+                None,
+                "expected diagnostics environment to be rejected: {enabled} {path}"
+            );
         }
     }
 

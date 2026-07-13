@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from reflex_runtime.diagnostics import DiagnosticWriter
+from reflex_runtime.diagnostics import DiagnosticWriter, diagnostic_writer_from_environment
 
 
 def _records(directory: Path) -> list[dict[str, object]]:
@@ -216,3 +216,49 @@ def test_total_budget_must_cover_one_file(tmp_path):
             max_file_bytes=2_000,
             max_total_bytes=1_000,
         )
+
+
+def test_environment_factory_requires_exact_opt_in_and_safe_absolute_directory(tmp_path):
+    directory = tmp_path / "diagnostics"
+
+    disabled = diagnostic_writer_from_environment(
+        {
+            "REFLEX_RUNTIME_DIAGNOSTICS_ENABLED": "true",
+            "REFLEX_RUNTIME_DIAGNOSTICS_DIR": str(directory),
+        }
+    )
+    enabled = diagnostic_writer_from_environment(
+        {
+            "REFLEX_RUNTIME_DIAGNOSTICS_ENABLED": "1",
+            "REFLEX_RUNTIME_DIAGNOSTICS_DIR": str(directory),
+        }
+    )
+
+    assert disabled.enabled is False
+    assert enabled.enabled is True
+    assert enabled.available is True
+    assert enabled.emit("runtime_started", status="ready") is True
+    enabled.close()
+    assert directory.joinpath("runtime-diagnostics.jsonl").is_file()
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [
+        "diagnostics",
+        "../diagnostics",
+        "//server/share/diagnostics",
+        "C:\\unsafe\\..\\diagnostics",
+        "C:\\unsafe\\logs",
+    ],
+)
+def test_environment_factory_fails_open_for_untrusted_paths(directory):
+    writer = diagnostic_writer_from_environment(
+        {
+            "REFLEX_RUNTIME_DIAGNOSTICS_ENABLED": "1",
+            "REFLEX_RUNTIME_DIAGNOSTICS_DIR": directory,
+        }
+    )
+
+    assert writer.enabled is False
+    assert writer.emit("must_not_write") is False
