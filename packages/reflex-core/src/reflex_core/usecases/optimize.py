@@ -123,6 +123,9 @@ class OptimizeUseCase:
         try:
             normalized_text = validate_input(request.text)
         except InputValidationError as exc:
+            if not deadline.try_complete():
+                yield self._request_timeout(current_request_id)
+                return
             yield self._envelope(
                 current_request_id,
                 error_event("invalid_input", str(exc), recoverable=True, action="edit"),
@@ -175,6 +178,9 @@ class OptimizeUseCase:
         try:
             rendered = self._template_resolver.render(request, detected_scene)
         except Exception:
+            if not deadline.try_complete():
+                yield self._request_timeout(current_request_id)
+                return
             yield self._envelope(
                 current_request_id,
                 error_event(
@@ -216,6 +222,9 @@ class OptimizeUseCase:
                     next_output_bytes > _MAX_OUTPUT_BYTES
                     or next_output_chunks > _MAX_OUTPUT_CHUNKS
                 ):
+                    if not deadline.try_complete():
+                        yield self._request_timeout(current_request_id)
+                        return
                     yield self._output_too_large(current_request_id)
                     return
                 output_bytes = next_output_bytes
@@ -233,6 +242,9 @@ class OptimizeUseCase:
 
             final_text = sanitize_text("".join(chunks)).strip()
             if not final_text:
+                if not deadline.try_complete():
+                    yield self._request_timeout(current_request_id)
+                    return
                 yield self._envelope(
                     current_request_id,
                     error_event(
@@ -266,7 +278,7 @@ class OptimizeUseCase:
         except OperationCancelled:
             yield self._cancellation_terminal(current_request_id, deadline)
         except Exception as exc:
-            if deadline.expired:
+            if not deadline.try_complete():
                 yield self._request_timeout(current_request_id)
                 return
             code, message, recoverable, action = safe_provider_error(exc)
@@ -324,7 +336,7 @@ class OptimizeUseCase:
     def _cancellation_terminal(
         cls, request_id: str, deadline: _RequestDeadline
     ) -> EventEnvelope:
-        if deadline.expired:
+        if not deadline.try_complete():
             return cls._request_timeout(request_id)
         return cls._cancelled(request_id)
 

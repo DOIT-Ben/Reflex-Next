@@ -216,6 +216,29 @@ def test_success_cancels_watchdog_before_done_and_prevents_late_expiry():
     assert not token.is_cancelled
 
 
+def test_error_terminal_closes_watchdog_before_generator_is_resumed():
+    timer_factory = ManualTimerFactory()
+    token = CancellationToken()
+    use_case = OptimizeUseCase(
+        scene_detector=FakeSceneDetector(
+            SceneDetectionResult("report_writing", 0.9, "fake")
+        ),
+        template_resolver=FakeTemplateResolver(),
+        provider=FakeProvider(("unused",)),
+        timer_factory=timer_factory,
+    )
+    stream = use_case.optimize(OptimizeRequest("   "), cancellation=token)
+
+    terminal = next(stream)
+    timer_factory.timers[0].fire()
+
+    assert terminal.event.type is EventType.ERROR
+    assert terminal.event.data["code"] == "invalid_input"
+    assert timer_factory.timers[0].cancelled
+    assert not token.is_cancelled
+    stream.close()
+
+
 def test_stream_output_exceeding_utf8_byte_limit_is_nonrecoverable_error():
     three_byte_character = "\u754c"
     within_limit = three_byte_character * 699_050 + "ab"
