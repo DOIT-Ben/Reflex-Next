@@ -21,7 +21,10 @@ function Write-Utf8Json {
 function New-CleanFixture {
   param([string]$Path)
   New-Item -ItemType Directory -Path $Path -Force | Out-Null
-  Write-Utf8Json (Join-Path $Path "python-vulnerabilities.json") @{ dependencies = @(@{ name = "httpx"; version = "0.28.1"; vulns = @() }) }
+  Write-Utf8Json (Join-Path $Path "python-vulnerabilities.json") @{ dependencies = @(
+    @{ name = "httpx"; version = "0.28.1"; vulns = @() },
+    @{ name = "reflex-runtime"; version = "0.1.0"; vulns = @(@{}) }
+  ) }
   Write-Utf8Json (Join-Path $Path "python-licenses.json") @(
     @{ Name = "httpx"; Version = "0.28.1"; License = "BSD-3-Clause" },
     @{ Name = "anyio"; Version = "4.14.1"; License = "UNKNOWN" },
@@ -54,6 +57,16 @@ $auditSource = [System.IO.File]::ReadAllText($auditScript, [System.Text.Encoding
 Assert-True (@($policy.licenses.allowed_expressions.python).Count -gt 0) "Python licenses require an explicit allowlist."
 Assert-True (@($policy.licenses.allowed_expressions.rust).Count -gt 0) "Rust licenses require an explicit allowlist."
 Assert-True (@($policy.licenses.allowed_expressions.npm).Count -gt 0) "npm licenses require an explicit allowlist."
+Assert-True (@($policy.rust_advisory_exceptions).Count -gt 0) "Rust advisory exceptions must be explicit and reviewable."
+foreach ($exception in @($policy.rust_advisory_exceptions)) {
+  Assert-True ([string]$exception.scope -eq "non-windows-transitive-only") "Rust advisory exceptions must be limited to non-Windows transitive dependencies."
+  Assert-True ([string]$exception.expires_on -match '^[0-9]{4}-[0-9]{2}-[0-9]{2}$') "Rust advisory exceptions require an expiry date."
+  Assert-True (-not [string]::IsNullOrWhiteSpace([string]$exception.rationale)) "Rust advisory exceptions require a written rationale."
+}
+Assert-True ($auditSource -match 'cargo.*tree.*--target.*all') "Rust exceptions must prove that the package exists only in another target graph."
+Assert-True ($auditSource -match 'expired_rust_advisory_exception') "Rust exceptions must fail closed after their expiry date."
+Assert-True ($auditSource -match '\$previousErrorActionPreference = \$ErrorActionPreference') "Native command capture must preserve the caller error preference."
+Assert-True ($auditSource -match '\$ErrorActionPreference = "Continue"') "Native stderr must not turn a successful tool exit into a PowerShell exception."
 Assert-True ($auditSource -notmatch '--omit=dev') "npm auditing must include devDependencies from the full lockfile."
 Assert-True ($auditSource -match 'npm@.*audit.*--json') "npm auditing must use the pinned npm tool against the full lockfile."
 

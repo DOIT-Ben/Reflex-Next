@@ -78,7 +78,7 @@ jobs:
       - name: Install pinned dependency audit tools
         shell: powershell
         run: |
-          cargo install cargo-audit --version 0.21.2 --locked
+          cargo install cargo-audit --version 0.22.2 --locked
           cargo install cargo-license --version 0.6.1 --locked
 
       - name: Verify backend script contract

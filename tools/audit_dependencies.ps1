@@ -60,13 +60,16 @@ function Invoke-CapturedCommand {
 
   $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-dependency-audit-stderr-" + [guid]::NewGuid().ToString("N") + ".txt")
   $pushed = $false
+  $previousErrorActionPreference = $ErrorActionPreference
   try {
     Push-Location -LiteralPath $WorkDir
     $pushed = $true
+    $ErrorActionPreference = "Continue"
     $stdout = @(& $Executable @Arguments 2> $stderrPath)
     $exitCode = $LASTEXITCODE
   }
   finally {
+    $ErrorActionPreference = $previousErrorActionPreference
     if ($pushed) {
       Pop-Location
     }
@@ -91,6 +94,56 @@ function Assert-ToolVersion {
   if ($result.ExitCode -ne 0 -or $result.Stdout -notmatch ("(?<![0-9])" + [regex]::Escape($ExpectedVersion) + "(?![0-9])")) {
     throw "tool_version_mismatch:$Executable"
   }
+}
+
+function Get-RustAuditExceptionArguments {
+  param(
+    [object]$Policy,
+    [string]$WorkDir
+  )
+
+  $arguments = [System.Collections.Generic.List[string]]::new()
+  foreach ($exception in @($Policy.rust_advisory_exceptions)) {
+    $id = [string]$exception.id
+    $package = [string]$exception.package
+    $version = [string]$exception.version
+    $scope = [string]$exception.scope
+    $expiresOn = [string]$exception.expires_on
+    if ($id -notmatch '^RUSTSEC-[0-9]{4}-[0-9]{4}$' -or
+        $package -notmatch '^[a-z0-9_-]{1,64}$' -or
+        $version -notmatch '^[0-9A-Za-z.+-]{1,64}$' -or
+        $scope -ne 'non-windows-transitive-only' -or
+        $expiresOn -notmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}$') {
+      throw "invalid_rust_advisory_exception"
+    }
+    try {
+      $expiry = [DateTime]::ParseExact(
+        $expiresOn,
+        "yyyy-MM-dd",
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::AssumeUniversal
+      )
+    }
+    catch {
+      throw "invalid_rust_advisory_exception_expiry"
+    }
+    if ($expiry.Date -lt [DateTime]::UtcNow.Date) {
+      throw "expired_rust_advisory_exception"
+    }
+
+    $packageSpec = "$package@$version"
+    $allTargets = Invoke-CapturedCommand -Executable "cargo" -Arguments @("tree", "--target", "all", "-i", $packageSpec) -WorkDir $WorkDir
+    if ($allTargets.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($allTargets.Stdout)) {
+      throw "stale_rust_advisory_exception"
+    }
+    $windowsTarget = Invoke-CapturedCommand -Executable "cargo" -Arguments @("tree", "-i", $packageSpec) -WorkDir $WorkDir
+    if ($windowsTarget.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($windowsTarget.Stdout)) {
+      throw "unsafe_rust_advisory_exception"
+    }
+    $arguments.Add("--ignore")
+    $arguments.Add($id)
+  }
+  return $arguments.ToArray()
 }
 
 function ConvertTo-SafeIdentifier {
@@ -265,7 +318,9 @@ function Invoke-LiveInputs {
   if (-not (Test-Path -LiteralPath (Join-Path $rustPath "Cargo.lock") -PathType Leaf)) {
     throw "missing_lock:rust"
   }
-  $rustAudit = Invoke-CapturedCommand -Executable "cargo" -Arguments @("audit", "--json") -WorkDir $rustPath
+  $rustAuditArguments = @("audit", "--json")
+  $rustAuditArguments += @(Get-RustAuditExceptionArguments -Policy $Policy -WorkDir $rustPath)
+  $rustAudit = Invoke-CapturedCommand -Executable "cargo" -Arguments $rustAuditArguments -WorkDir $rustPath
   $rustAuditJson = ConvertFrom-StrictJson -Content $rustAudit.Stdout -Label "rust-vulnerabilities"
   if ($rustAudit.ExitCode -ne 0 -and [int]$rustAuditJson.vulnerabilities.found -eq 0) {
     throw "tool_failed:cargo_audit"
@@ -318,6 +373,9 @@ try {
   $toolFailures = [System.Collections.Generic.List[object]]::new()
 
   foreach ($dependency in @($inputs.PythonVulnerabilities.dependencies)) {
+    if (Test-InternalPackage -Name ([string]$dependency.name) -Policy $policy) {
+      continue
+    }
     foreach ($vulnerability in @($dependency.vulns)) {
       Add-VulnerabilityFinding -Findings $vulnerabilities -Ecosystem "python" -Package $dependency.name -Advisory $vulnerability.id
     }
