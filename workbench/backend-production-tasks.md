@@ -22,7 +22,7 @@
 | P0-004 | 性能/资源/可观测性审查 | 完成 | 无 | SLO、基准和浸泡方案 |
 | P0-005 | 测试/CI/发布工程审查 | 完成 | 无 | 统一入口、CI 和发布门禁 |
 | P0-006 | 建立统一后端验证脚本 | 完成 | P0-005 | 单命令运行 9 个 Python 包、Rust 和前端契约 |
-| P0-007 | 建立 Windows 后端 CI | 待验证 | P0-006 | 本地契约通过，等待 GitHub Windows runner |
+| P0-007 | 建立 Windows 后端 CI | 完成 | P0-006 | GitHub Windows Run `29255203782` 全门禁通过 |
 | P0-008 | 建立版本一致性检查 | 待办 | P0-005 | Python/Tauri/标签不一致时失败 |
 | P0-009 | 建立发布前敏感信息扫描 | 待办 | P0-002 | 禁入文件和高风险密钥模式为 0 |
 | P0-010 | 冻结第一阶段 Provider 目录协议 | 待办 | P0-003 | 工程评审通过、契约测试先行 |
@@ -45,7 +45,7 @@
 | P1-009 | 正确分类 `OperationCancelled` | 完成 | P0-013 | Core 取消终态测试通过 |
 | P1-010 | 主动中断 Provider 阻塞读取 | 待办 | P1-009 | 取消 P95 与无迟到事件测试 |
 | P1-011 | 建立 Runtime 并发和等待队列上限 | 完成 | P0-013 | 4 活动/32 注册、`runtime_busy`、Runtime 225 项通过 |
-| P1-012 | 建立输出、分片和总时限上限 | 进行中 | P0-013 | 2 MiB/50,000 已通过；120s 总时限待办 |
+| P1-012 | 建立输出、分片和总时限上限 | 进行中 | P0-013 | 2 MiB/50,000 和 Core 120s 截止已通过；阻塞读取硬中断依赖 P1-010 |
 | P1-013 | 重做请求 ID 有界生命周期 | 待办 | P1-011 | 防重放、无永久拒绝服务测试 |
 | P1-014 | OpenAI-compatible 移除 MiniMax 私有依赖 | 待办 | P1-004 | 共享传输契约测试 |
 
@@ -111,7 +111,10 @@
 - Runtime 最多同时执行 4 个 Optimize，最多注册 32 个异步任务，超限返回安全 `runtime_busy`；
 - 新增 `tools/verify_backend.ps1`、脚本契约测试和 Windows CI；
 - 主线程修正干净环境 `dev` 依赖和 Vitest 参数，并补充生产构建步骤；
-- 本批仍未完成：120 秒总时限、主动关闭阻塞 HTTP、Markdown WebView 导航、动态 Provider 目录、版本一致性和远程 CI 结果。
+- 修复干净 Windows Runner 缺少正式 Sidecar 时的 Rust 测试资源准备，测试占位文件仅在验证期间创建并自动清理；
+- GitHub Windows Run `29255203782` 已完成 9 个 Python 包、Rust、TypeScript 测试和前端生产构建，结论为 `success`；
+- Core 已在 120 秒单调时钟截止点终止迟到分片并返回安全 `request_timeout`，阻塞 HTTP 主动关闭仍由 P1-010 跟踪；
+- 本批仍未完成：主动关闭阻塞 HTTP、Markdown WebView 导航、动态 Provider 目录和版本一致性。
 
 ## 集成约定
 
