@@ -2,7 +2,8 @@
   import type {
     ResultMetaItem,
     WorkbenchActionHandler,
-    WorkbenchPhase
+    WorkbenchPhase,
+    WorkbenchRatingHandler
   } from "./types";
 
   export let phase: WorkbenchPhase = "empty";
@@ -19,7 +20,14 @@
   export let historyStatus = "";
   export let meta: ReadonlyArray<ResultMetaItem> = [];
   export let copied = false;
+  export let rating: number | null = null;
+  export let ratingEnabled = false;
   export let onCopy: WorkbenchActionHandler | undefined = undefined;
+  export let onReplace: WorkbenchActionHandler | undefined = undefined;
+  export let onRegenerate: WorkbenchActionHandler | undefined = undefined;
+  export let onExport: WorkbenchActionHandler | undefined = undefined;
+  export let onOpenHistory: WorkbenchActionHandler | undefined = undefined;
+  export let onRate: WorkbenchRatingHandler | undefined = undefined;
   export let onTranslate: WorkbenchActionHandler | undefined = undefined;
   export let onPreview: WorkbenchActionHandler | undefined = undefined;
   export let onCompare: WorkbenchActionHandler | undefined = undefined;
@@ -160,6 +168,31 @@
           disabled={!onCopy}
           on:click={() => void onCopy?.()}
         >{copied ? "已复制" : "复制结果"}</button>
+        {#if onReplace}
+          <button class="secondary-result-action" type="button" on:click={() => void onReplace?.()}>替换剪贴板</button>
+        {/if}
+        {#if onRegenerate}
+          <button class="secondary-result-action" type="button" on:click={() => void onRegenerate?.()}>重新生成</button>
+        {/if}
+        {#if onExport}
+          <button class="secondary-result-action" type="button" on:click={() => void onExport?.()}>导出</button>
+        {/if}
+        {#if onOpenHistory}
+          <button class="secondary-result-action" type="button" on:click={() => void onOpenHistory?.()}>历史</button>
+        {/if}
+        {#if onRate}
+          <span class="rating-actions" aria-label="结果评分">
+            {#each [1, 2, 3, 4, 5] as score}
+              <button
+                type="button"
+                aria-label={`评分 ${score}`}
+                aria-pressed={rating === score}
+                disabled={!ratingEnabled}
+                on:click={() => void onRate?.(score)}
+              >{score}</button>
+            {/each}
+          </span>
+        {/if}
       </div>
       {#if meta.length || historyStatus}
         <div class="result-meta">
@@ -557,11 +590,49 @@
     display: flex;
     min-height: 44px;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
     padding: 6px 11px;
   }
 
   .copy-button {
     min-width: 84px;
+  }
+
+  .secondary-result-action,
+  .rating-actions button {
+    min-height: 31px;
+    padding: 0 9px;
+    color: var(--muted, #697386);
+    background: var(--surface, #fff);
+    border: 1px solid var(--line, #e1e6ee);
+    border-radius: 7px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .secondary-result-action:hover:not(:disabled),
+  .rating-actions button:hover:not(:disabled) {
+    color: var(--text, #202535);
+    background: var(--accent-soft, #eef1ff);
+    border-color: var(--line-strong, #cbd4e2);
+  }
+
+  .rating-actions {
+    display: inline-flex;
+    gap: 2px;
+    margin-left: auto;
+  }
+
+  .rating-actions button {
+    min-width: 27px;
+    padding: 0 5px;
+  }
+
+  .rating-actions button[aria-pressed="true"] {
+    color: #fff;
+    background: var(--accent, #5065c7);
+    border-color: var(--accent, #5065c7);
   }
 
   .result-meta {

@@ -1,4 +1,13 @@
 <script lang="ts">
+  import Maximize2 from "@lucide/svelte/icons/maximize-2";
+  import Minus from "@lucide/svelte/icons/minus";
+  import PanelTop from "@lucide/svelte/icons/panel-top";
+  import RectangleHorizontal from "@lucide/svelte/icons/rectangle-horizontal";
+  import RectangleVertical from "@lucide/svelte/icons/rectangle-vertical";
+  import Search from "@lucide/svelte/icons/search";
+  import X from "@lucide/svelte/icons/x";
+  import ZoomIn from "@lucide/svelte/icons/zoom-in";
+  import ZoomOut from "@lucide/svelte/icons/zoom-out";
   import type { ProviderAvailability, WindowSizePreset } from "./types";
 
   interface Props {
@@ -13,6 +22,7 @@
     windowSize?: WindowSizePreset;
     commandLabel?: string;
     commandShortcut?: string;
+    onOpenProvider?: () => void;
     onOpenCommand?: () => void;
     onZoomOut?: () => void;
     onResetZoom?: () => void;
@@ -35,6 +45,7 @@
     windowSize = "default",
     commandLabel = "搜索命令",
     commandShortcut = "Ctrl K",
+    onOpenProvider,
     onOpenCommand,
     onZoomOut,
     onResetZoom,
@@ -48,23 +59,30 @@
   const sizeOptions: Array<{
     id: WindowSizePreset;
     label: string;
-    symbol: string;
   }> = [
-    { id: "compact", label: "紧凑尺寸", symbol: "▯" },
-    { id: "default", label: "默认尺寸", symbol: "▭" },
-    { id: "wide", label: "宽屏尺寸", symbol: "▬" }
+    { id: "compact", label: "紧凑尺寸" },
+    { id: "default", label: "默认尺寸" },
+    { id: "wide", label: "宽屏尺寸" }
   ];
 </script>
 
 <header class="title-bar" role="toolbar" aria-label="应用标题栏">
-  <div class="identity" title={appName}>
+  <div class="identity" title={appName} data-tauri-drag-region="true">
     <span class="app-mark" aria-hidden="true">R</span>
     <strong>{appName}</strong>
   </div>
 
   <span class="separator" aria-hidden="true"></span>
 
-  <div class="provider-status" data-availability={availability} title={`${providerName} ${modelName} ${availabilityLabel}`.trim()}>
+  <button
+    class="provider-status"
+    type="button"
+    data-availability={availability}
+    aria-label={`Provider：${providerName}，${availabilityLabel}`}
+    title={`${providerName} ${modelName} ${availabilityLabel}`.trim()}
+    disabled={!onOpenProvider}
+    onclick={onOpenProvider}
+  >
     <span class="provider-dot" aria-hidden="true"></span>
     <span class="provider-copy">
       <strong>{providerName}</strong>
@@ -73,7 +91,7 @@
       {/if}
       <span class="availability">· {availabilityLabel}</span>
     </span>
-  </div>
+  </button>
 
   <button
     class="command-trigger"
@@ -83,12 +101,12 @@
     disabled={!onOpenCommand}
     onclick={onOpenCommand}
   >
-    <span aria-hidden="true">⌕</span>
+    <Search size={14} strokeWidth={1.8} aria-hidden="true" />
     <span class="command-label">{commandLabel}</span>
     <kbd>{commandShortcut}</kbd>
   </button>
 
-  <span class="bar-spacer"></span>
+  <span class="bar-spacer" data-tauri-drag-region="true"></span>
 
   <div class="control-cluster zoom-controls" role="group" aria-label="页面缩放">
     <button
@@ -97,7 +115,7 @@
       title="缩小页面"
       disabled={!onZoomOut || scale <= minimumScale}
       onclick={onZoomOut}
-    >−</button>
+    ><ZoomOut size={14} strokeWidth={1.8} aria-hidden="true" /></button>
     <button
       class="scale-value"
       type="button"
@@ -112,7 +130,7 @@
       title="放大页面"
       disabled={!onZoomIn || scale >= maximumScale}
       onclick={onZoomIn}
-    >＋</button>
+    ><ZoomIn size={14} strokeWidth={1.8} aria-hidden="true" /></button>
   </div>
 
   <div class="control-cluster size-controls" role="group" aria-label="窗口尺寸">
@@ -124,14 +142,28 @@
         title={option.label}
         disabled={!onWindowSizeChange}
         onclick={() => onWindowSizeChange?.(option.id)}
-      >{option.symbol}</button>
+      >
+        {#if option.id === "compact"}
+          <RectangleVertical size={14} strokeWidth={1.8} aria-hidden="true" />
+        {:else if option.id === "default"}
+          <PanelTop size={14} strokeWidth={1.8} aria-hidden="true" />
+        {:else}
+          <RectangleHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
+        {/if}
+      </button>
     {/each}
   </div>
 
   <div class="window-controls" role="group" aria-label="窗口控制">
-    <button type="button" aria-label="最小化窗口" title="最小化" disabled={!onMinimize} onclick={onMinimize}>−</button>
-    <button type="button" aria-label="最大化或还原窗口" title="最大化或还原" disabled={!onMaximize} onclick={onMaximize}>□</button>
-    <button class="close" type="button" aria-label="关闭窗口" title="关闭" disabled={!onClose} onclick={onClose}>×</button>
+    <button type="button" aria-label="最小化窗口" title="最小化" disabled={!onMinimize} onclick={onMinimize}>
+      <Minus size={14} strokeWidth={1.8} aria-hidden="true" />
+    </button>
+    <button type="button" aria-label="最大化或还原窗口" title="最大化或还原" disabled={!onMaximize} onclick={onMaximize}>
+      <Maximize2 size={13} strokeWidth={1.8} aria-hidden="true" />
+    </button>
+    <button class="close" type="button" aria-label="关闭窗口" title="关闭" disabled={!onClose} onclick={onClose}>
+      <X size={14} strokeWidth={1.8} aria-hidden="true" />
+    </button>
   </div>
 </header>
 
@@ -198,8 +230,13 @@
 
   .provider-status {
     gap: 6px;
+    width: auto;
+    height: 28px;
     min-width: 0;
+    padding: 0 5px;
     color: var(--muted, #697386);
+    background: transparent;
+    border: 0;
     font-size: 11px;
   }
 

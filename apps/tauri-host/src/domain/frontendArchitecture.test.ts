@@ -156,4 +156,36 @@ describe("production frontend architecture", () => {
       expect.arrayContaining(["@tauri-apps/api/core", "@tauri-apps/api/event"])
     );
   });
+
+  it("wires the redesigned shell and workbench to existing host actions", () => {
+    const appSource = readFileSync(join(sourceRoot, "App.svelte"), "utf8");
+    for (const component of [
+      "ReflexTitleBar",
+      "NavRail",
+      "StatusBar",
+      "InputPane",
+      "ConfigSummary",
+      "ResultPane"
+    ]) {
+      expect(appSource).toMatch(new RegExp(`import\\s+${component}\\s+from`));
+      expect(appSource).toContain(`<${component}`);
+    }
+
+    for (const hostAction of [
+      "runOptimization",
+      "cancelRun",
+      "readClipboard",
+      "copyResult",
+      "askReplaceClipboard",
+      "openHistoryWindow",
+      "rateCurrentResult",
+      "hide_main_window"
+    ]) {
+      expect(appSource).toContain(hostAction);
+    }
+
+    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+    expect(styles).toContain(".workbench-grid");
+    expect(styles).toMatch(/@media\s*\(max-width:\s*620px\)/);
+  });
 });

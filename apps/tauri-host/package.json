@@ -15,6 +15,7 @@
     "package:windows": "npm run runtime:build && npm run tauri:build"
   },
   "dependencies": {
+    "@lucide/svelte": "^0.525.0",
     "@tauri-apps/api": "^2.11.1",
     "svelte": "^5.0.0"
   },

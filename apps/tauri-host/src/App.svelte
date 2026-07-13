@@ -1,5 +1,17 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import NavRail from "./components/shell/NavRail.svelte";
+  import ReflexTitleBar from "./components/shell/ReflexTitleBar.svelte";
+  import StatusBar from "./components/shell/StatusBar.svelte";
+  import type { NavRailItem, StatusTone } from "./components/shell/types";
+  import ConfigSummary from "./components/workbench/ConfigSummary.svelte";
+  import InputPane from "./components/workbench/InputPane.svelte";
+  import ResultPane from "./components/workbench/ResultPane.svelte";
+  import type {
+    ConfigSummaryItem,
+    ResultMetaItem,
+    WorkbenchPhase
+  } from "./components/workbench/types";
   import { CapabilityBridge } from "./domain/capabilityBridge";
   import { createDefaultCoreBridge, DemoCoreBridge } from "./domain/coreBridge";
   import {
@@ -295,6 +307,15 @@
   let moreActionsButton: HTMLButtonElement | null = null;
   let resultRatingBusy = false;
   let viewScale = 1;
+  let windowSizePreset: WindowSizePreset = "default";
+  let commandPaletteOpen = false;
+  let activeNavId = "workbench";
+  let workbenchPhase: WorkbenchPhase = "empty";
+  let workbenchStatusMessage = "准备就绪";
+  let statusTone: StatusTone = "idle";
+  let navItems: NavRailItem[] = [];
+  let configSummaryItems: ConfigSummaryItem[] = [];
+  let resultMetaItems: ResultMetaItem[] = [];
   let summary = "";
   let tr: (source: string, values?: Record<string, string | number>) => string = (source) => source;
 
@@ -396,6 +417,91 @@
     providerStatusError
   );
   $: providerStatusText = providerAvailabilityLabel(providerStatus);
+  $: workbenchPhase = isGenerating(state.phase)
+    ? "running"
+    : state.phase === "completed"
+      ? "completed"
+      : state.phase === "error"
+        ? "error"
+        : state.phase === "cancelled"
+          ? "cancelled"
+          : state.output
+            ? "completed"
+            : "empty";
+  $: workbenchStatusMessage = state.phase === "analyzing_scene"
+    ? tr("正在分析场景")
+    : state.phase === "connecting_provider"
+      ? tr("正在连接模型服务")
+      : state.phase === "streaming"
+        ? tr("正在生成结果")
+        : state.phase === "completed"
+          ? tr("生成完成")
+          : state.phase === "error"
+            ? tr("生成失败")
+            : state.phase === "cancelled"
+              ? tr("已取消生成")
+              : tr("准备就绪");
+  $: statusTone = isGenerating(state.phase)
+    ? "working"
+    : state.phase === "completed"
+      ? "success"
+      : state.phase === "error"
+        ? "error"
+        : state.phase === "cancelled"
+          ? "warning"
+          : "idle";
+  $: activeNavId = state.overlay === "template_manager"
+    ? "templates"
+    : state.overlay === "plugin_manager"
+      ? "plugins"
+      : state.overlay === "settings"
+        ? "settings"
+        : batch.phase !== "closed"
+          ? "batch"
+          : translation.phase !== "closed"
+            ? "translation"
+            : markdownPreview.phase !== "closed"
+              ? "markdown"
+              : "workbench";
+  $: navItems = [
+    { id: "workbench", label: tr("工作台"), symbol: "" },
+    { id: "templates", label: tr("模板管理"), symbol: "" },
+    { id: "batch", label: tr("批量处理"), symbol: "", disabled: !batchRunnerEnabled },
+    {
+      id: "translation",
+      label: tr("翻译"),
+      symbol: "",
+      disabled: !translatorEnabled || !state.currentResult?.output
+    },
+    {
+      id: "markdown",
+      label: tr("Markdown 预览"),
+      symbol: "",
+      disabled: !markdownPreviewEnabled || !state.currentResult?.output
+    },
+    { id: "plugins", label: tr("插件"), symbol: "" },
+    { id: "history", label: tr("历史记录"), symbol: "", group: "utility" },
+    { id: "settings", label: tr("设置"), symbol: "", shortcut: "Ctrl+,", group: "utility" }
+  ];
+  $: configSummaryItems = [
+    { id: "mode", label: tr("模式"), value: modeLabel(state.requestDraft.mode) },
+    { id: "style", label: tr("风格"), value: styleLabel(state.requestDraft.style) },
+    { id: "scene", label: tr("场景"), value: sceneLabel(state.requestDraft.scene) },
+    {
+      id: "model",
+      label: tr("模型"),
+      value: state.requestDraft.model ?? tr(providerDisplayName(state.requestDraft.provider))
+    }
+  ];
+  $: resultMetaItems = [
+    { id: "mode", label: tr("模式"), value: modeLabel(state.currentResult?.mode ?? state.requestDraft.mode) },
+    { id: "style", label: tr("风格"), value: styleLabel(state.currentResult?.style ?? state.requestDraft.style) },
+    {
+      id: "provider",
+      label: "Provider",
+      value: tr(providerDisplayName(state.currentResult?.provider ?? state.requestDraft.provider))
+    }
+  ];
 
   function setInput(value: string) {
     state = updateInput(state, value);
@@ -403,6 +509,44 @@
 
   function clearInput() {
     setInput("");
+  }
+
+  function openCommandPalette() {
+    commandPaletteOpen = true;
+  }
+
+  function closeCommandPalette() {
+    commandPaletteOpen = false;
+  }
+
+  function returnToWorkbench() {
+    commandPaletteOpen = false;
+    if (state.phase === "adjusting") cancelAdjustView();
+    if (state.overlay === "template_manager") closeTemplateManager();
+    else if (state.overlay !== null) closeOverlay();
+    if (batch.phase !== "closed") closeBatchView();
+    if (translation.phase !== "closed") closeTranslationView();
+    if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
+  }
+
+  function handleNavigation(id: string) {
+    commandPaletteOpen = false;
+    if (id === "workbench") returnToWorkbench();
+    else if (id === "templates") openTemplateManager();
+    else if (id === "batch" && batchRunnerEnabled) openBatchView();
+    else if (id === "translation" && translatorEnabled && state.currentResult?.output) openTranslationView();
+    else if (id === "markdown" && markdownPreviewEnabled && state.currentResult?.output) openMarkdownPreviewView();
+    else if (id === "plugins") state = applyHostAction(state, "plugins");
+    else if (id === "history") openHistoryWindow();
+    else if (id === "settings") beginSettings();
+  }
+
+  async function hideMainWindow() {
+    try {
+      await hostApi?.invoke("hide_main_window");
+    } catch {
+      showToast("窗口操作暂不可用。");
+    }
   }
 
   async function readClipboard() {
@@ -1406,6 +1550,23 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      commandPaletteOpen = !commandPaletteOpen;
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key === ",") {
+      event.preventDefault();
+      beginSettings();
+      return;
+    }
+    if (commandPaletteOpen) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeCommandPalette();
+      }
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
       if (event.key === "+" || event.key === "=") {
         event.preventDefault();
@@ -1523,6 +1684,7 @@
   async function setWindowSize(preset: WindowSizePreset) {
     try {
       await desktopBridge?.setWindowSize(preset);
+      windowSizePreset = preset;
     } catch {
       showToast("窗口尺寸暂不可用。");
     }
@@ -1574,41 +1736,93 @@
 
 <main class="app-shell" data-phase={state.phase} data-theme={settingsDraft.theme} style={`--view-scale: ${viewScale}`}>
   <section class="window" aria-label="Reflex quick window">
-    <header class="top-bar">
-      <div class="brand" data-tauri-drag-region="true">
-        <span class="brand-mark">R</span>
-        <strong>Reflex</strong>
-      </div>
-      <button
-        class="provider-pill"
-        class:checking={providerStatus === "checking"}
-        class:ready={providerStatus === "ready"}
-        class:missing={providerStatus === "missing"}
-        class:unavailable={providerStatus === "unavailable"}
-        type="button"
-        aria-label={providerStatusAriaLabel()}
-        title={providerStatusText}
-        on:click={beginSettings}
-      >
-        <span class="provider-dot" aria-hidden="true"></span>
-        <span class="provider-name">{tr(providerDisplayName(state.requestDraft.provider))}</span>
-        <span class="provider-state-label">{providerStatusText}</span>
-      </button>
-      <div class="view-controls" role="group" aria-label="视图控制">
-        <button class="view-control" type="button" aria-label="缩小界面" title="缩小界面" on:click={() => changeViewScale("out")}>−</button>
-        <button class="view-scale" type="button" title="重置缩放" on:click={() => setViewScale(1)}>{viewScaleLabel(viewScale)}</button>
-        <button class="view-control" type="button" aria-label="放大界面" title="放大界面" on:click={() => changeViewScale("in")}>+</button>
-        {#if desktopBridge}
-          <span class="window-controls" aria-label="窗口控制">
-            <button class="view-control" type="button" aria-label="紧凑窗口" title="紧凑窗口" on:click={() => setWindowSize("compact")}>⊡</button>
-            <button class="view-control" type="button" aria-label="宽窗口" title="宽窗口" on:click={() => setWindowSize("wide")}>↔</button>
-            <button class="view-control" type="button" aria-label="最小化窗口" title="最小化窗口" on:click={minimizeWindow}>—</button>
-            <button class="view-control" type="button" aria-label="最大化或恢复窗口" title="最大化或恢复窗口" on:click={toggleMaximizeWindow}>□</button>
-          </span>
-        {/if}
-      </div>
-      <button class="icon-button" aria-label={t(uiLanguage, "settings")} on:click={beginSettings}>⚙</button>
-    </header>
+    <ReflexTitleBar
+      providerName={tr(providerDisplayName(state.requestDraft.provider))}
+      modelName={state.requestDraft.model ?? ""}
+      availability={providerStatus}
+      availabilityLabel={providerStatusText}
+      scale={viewScale}
+      windowSize={windowSizePreset}
+      onOpenProvider={beginSettings}
+      onOpenCommand={openCommandPalette}
+      onZoomOut={() => changeViewScale("out")}
+      onResetZoom={() => setViewScale(1)}
+      onZoomIn={() => changeViewScale("in")}
+      onWindowSizeChange={desktopBridge ? setWindowSize : undefined}
+      onMinimize={desktopBridge ? minimizeWindow : undefined}
+      onMaximize={desktopBridge ? toggleMaximizeWindow : undefined}
+      onClose={hostApi ? hideMainWindow : undefined}
+    />
+
+    <div class="shell-main">
+      <NavRail items={navItems} {activeNavId} onSelect={handleNavigation} />
+      <section class="workbench-surface" aria-label={tr("工作台")}>
+        <div class="workbench-grid">
+          <div class="input-column">
+            <InputPane
+              value={state.inputText}
+              phase={workbenchPhase}
+              label={t(uiLanguage, "input")}
+              placeholder={t(uiLanguage, "paste")}
+              notice={state.inputNotice ? tr(state.inputNotice) : ""}
+              maxLength={100_000}
+              disabled={state.phase === "adjusting"}
+              clipboardBusy={clipboardReading}
+              onInput={setInput}
+              onRun={runOptimization}
+              onReadClipboard={readClipboard}
+              onClear={clearInput}
+            />
+            <ConfigSummary
+              items={configSummaryItems}
+              phase={workbenchPhase}
+              canRun={canGenerate}
+              statusMessage={workbenchStatusMessage}
+              onRun={runOptimization}
+              onCancel={cancelRun}
+              onAdjust={beginAdjust}
+            />
+          </div>
+          <ResultPane
+            phase={workbenchPhase}
+            output={state.output}
+            statusMessage={workbenchStatusMessage}
+            errorMessage={state.errorMessage ? tr(state.errorMessage) : t(uiLanguage, "noProvider")}
+            errorRecoverable={state.errorRecoverable}
+            diagnosticId={state.diagnosticId}
+            sceneLabel={state.detectedScene ? sceneLabel(state.detectedScene) : state.currentResult?.scene ? sceneLabel(state.currentResult.scene) : null}
+            elapsedMs={state.currentResult?.elapsedMs ?? null}
+            sourceAvailable={Boolean(state.currentResult?.sourceText?.trim())}
+            historyStatus={state.currentResult ? saveStatusLabel() : ""}
+            meta={resultMetaItems}
+            copied={state.copied || toastText.includes("已复制") && toastVisible}
+            rating={state.currentResult?.rating ?? null}
+            ratingEnabled={state.currentResult?.saveStatus === "saved" && !resultRatingBusy}
+            onCopy={copyResult}
+            onReplace={askReplaceClipboard}
+            onRegenerate={runOptimization}
+            onExport={exportResultMarkdown}
+            onOpenHistory={openHistoryWindow}
+            onRate={rateCurrentResult}
+            onTranslate={translatorEnabled && state.currentResult?.output ? openTranslationView : undefined}
+            onPreview={markdownPreviewEnabled && state.currentResult?.output ? openMarkdownPreviewView : undefined}
+            onCompare={state.currentResult?.sourceText?.trim() ? openResultCompare : undefined}
+            onRetry={state.errorRecoverable ? retryRun : undefined}
+            onOpenSettings={openSettingsView}
+            onCopyDiagnosticId={state.diagnosticId ? copyDiagnosticId : undefined}
+          />
+        </div>
+      </section>
+    </div>
+
+    <StatusBar
+      message={workbenchStatusMessage}
+      tone={statusTone}
+      inputCount={state.inputText.length}
+      languageLabel={uiLanguage === "zh-CN" ? "中文" : "English"}
+      themeLabel={settingsDraft.theme === "system" ? tr("系统") : settingsDraft.theme === "dark" ? tr("深色") : tr("浅色")}
+      versionLabel="v0.6 beta"
+    />
 
     {#if state.phase === "adjusting"}
       <section class="adjust-view" aria-label={tr("生成设置")}>
@@ -1669,7 +1883,7 @@
           <button class="primary small" on:click={applyAdjust}>{tr("应用")}</button>
         </div>
       </section>
-    {:else if isGenerating(state.phase)}
+    {:else if false && isGenerating(state.phase)}
       <section class="generation-view" aria-label={t(uiLanguage, "generating")}>
         <div class="badge">{t(uiLanguage, "current")}</div>
         <h1>{t(uiLanguage, "generating")}</h1>
@@ -1684,7 +1898,7 @@
           <button class="outline" on:click={cancelRun}>{t(uiLanguage, "cancelGeneration")}</button>
         </div>
       </section>
-    {:else if state.phase === "completed"}
+    {:else if false && state.phase === "completed"}
       <section class="complete-view" aria-label={t(uiLanguage, "completed")}>
         <div class="badge">{t(uiLanguage, "current")}</div>
         <h1>{t(uiLanguage, "completed")}</h1>
@@ -1749,7 +1963,7 @@
           <div class="toast">{toastText}</div>
         {/if}
       </section>
-    {:else if state.phase === "error"}
+    {:else if false && state.phase === "error"}
       <section class="error-view" aria-label={t(uiLanguage, "failed")}>
         <div class="badge">{t(uiLanguage, "current")}</div>
         <h1>{t(uiLanguage, "failed")}</h1>
@@ -1774,7 +1988,7 @@
           <div class="toast">{toastText}</div>
         {/if}
       </section>
-    {:else}
+    {:else if false}
       <section class="default-view" aria-label={t(uiLanguage, "input")}>
         <div class="badge">{t(uiLanguage, "current")}</div>
         <label class="input-label" for="source-text">{t(uiLanguage, "input")}</label>
@@ -1814,6 +2028,26 @@
         </button>
 
       </section>
+    {/if}
+
+    {#if commandPaletteOpen}
+      <div class="command-layer" role="presentation">
+        <div class="command-dialog" role="dialog" aria-modal="true" aria-label={tr("命令面板")}>
+          <header>
+            <strong>{tr("命令")}</strong>
+            <button type="button" aria-label={tr("关闭命令面板")} on:click={closeCommandPalette}>×</button>
+          </header>
+          <div class="command-list">
+            <button type="button" on:click={() => { closeCommandPalette(); beginAdjust(); }}>{tr("调整生成方案")}</button>
+            <button type="button" on:click={() => { closeCommandPalette(); openTemplateManager(); }}>{tr("模板管理")}</button>
+            <button type="button" disabled={!batchRunnerEnabled} on:click={() => { closeCommandPalette(); openBatchView(); }}>{tr("批量处理")}</button>
+            <button type="button" disabled={!translatorEnabled || !state.currentResult?.output} on:click={() => { closeCommandPalette(); openTranslationView(); }}>{tr("翻译当前结果")}</button>
+            <button type="button" disabled={!markdownPreviewEnabled || !state.currentResult?.output} on:click={() => { closeCommandPalette(); openMarkdownPreviewView(); }}>{tr("预览 Markdown")}</button>
+            <button type="button" on:click={() => { closeCommandPalette(); openHistoryWindow(); }}>{tr("打开历史记录")}</button>
+            <button type="button" on:click={() => { closeCommandPalette(); beginSettings(); }}>{tr("打开设置")}</button>
+          </div>
+        </div>
+      </div>
     {/if}
 
     {#if state.overlay === "template_manager"}

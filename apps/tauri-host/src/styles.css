@@ -2221,3 +2221,166 @@ pre {
 .history-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin: 0; }
 .history-fields div { display: grid; gap: 3px; }.history-fields dt { color: var(--muted); font-size: 12px; }.history-fields dd { margin: 0; color: var(--text); font-size: 13px; }
 .history-state { padding: 22px; color: var(--muted); font-size: 13px; }.history-state.error { color: var(--danger); }.more { margin: 12px; }.detail-actions { flex-wrap: wrap; margin-bottom: 14px; }.detail-actions button:last-child { margin-left: auto; color: var(--danger); }
+
+/* Redesigned desktop shell: full-window, stable tracks, progressive disclosure. */
+.app-shell {
+  place-items: stretch;
+  background: var(--window);
+}
+
+.window {
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr) 24px;
+  width: 100%;
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.shell-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workbench-surface {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.workbench-grid {
+  display: grid;
+  grid-template-columns: minmax(270px, 42%) minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.input-column {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+}
+
+.window > .adjust-view {
+  position: absolute;
+  z-index: 20;
+  inset: 54px 58px 34px 58px;
+  width: auto;
+  height: auto;
+  padding: 18px;
+  overflow: auto;
+  background: color-mix(in srgb, var(--window) 96%, white);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgb(20 29 52 / 18%);
+}
+
+.command-layer {
+  position: absolute;
+  z-index: 40;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding: 72px 16px 16px;
+  background: rgb(24 31 48 / 24%);
+  backdrop-filter: blur(3px);
+}
+
+.command-dialog {
+  width: min(460px, 100%);
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 20px 56px rgb(20 29 52 / 22%);
+}
+
+.command-dialog header {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 0 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.command-dialog header button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border-radius: 7px;
+  font-size: 18px;
+}
+
+.command-dialog header button:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.command-list {
+  display: grid;
+  gap: 3px;
+  max-height: min(360px, calc(100vh - 150px));
+  padding: 8px;
+  overflow: auto;
+}
+
+.command-list button {
+  min-height: 38px;
+  padding: 0 11px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.command-list button:hover:not(:disabled),
+.command-list button:focus-visible {
+  color: var(--accent);
+  background: var(--accent-soft);
+  outline: none;
+}
+
+@media (max-width: 620px) {
+  .workbench-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(210px, 48%) minmax(0, 1fr);
+  }
+
+  .input-column {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .window > .adjust-view {
+    inset: 50px 8px 30px;
+  }
+}
+
+@media (max-height: 520px) {
+  .window > .adjust-view {
+    inset-block: 48px 28px;
+    padding: 12px;
+  }
+
+  .command-layer {
+    padding-top: 52px;
+  }
+}

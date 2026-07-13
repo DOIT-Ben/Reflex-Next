@@ -1,4 +1,12 @@
 <script lang="ts">
+  import Eye from "@lucide/svelte/icons/eye";
+  import FileText from "@lucide/svelte/icons/file-text";
+  import History from "@lucide/svelte/icons/history";
+  import House from "@lucide/svelte/icons/house";
+  import Languages from "@lucide/svelte/icons/languages";
+  import Layers3 from "@lucide/svelte/icons/layers-3";
+  import Puzzle from "@lucide/svelte/icons/puzzle";
+  import Settings from "@lucide/svelte/icons/settings";
   import type { NavRailItem } from "./types";
 
   interface Props {
@@ -42,7 +50,27 @@
       onclick={() => onSelect?.(item.id)}
     >
       <span class="active-mark" aria-hidden="true"></span>
-      <span class="nav-symbol" aria-hidden="true">{item.symbol}</span>
+      <span class="nav-symbol" aria-hidden="true">
+        {#if item.id === "workbench"}
+          <House size={16} strokeWidth={1.8} />
+        {:else if item.id === "templates"}
+          <FileText size={16} strokeWidth={1.8} />
+        {:else if item.id === "batch"}
+          <Layers3 size={16} strokeWidth={1.8} />
+        {:else if item.id === "translation"}
+          <Languages size={16} strokeWidth={1.8} />
+        {:else if item.id === "markdown"}
+          <Eye size={16} strokeWidth={1.8} />
+        {:else if item.id === "plugins"}
+          <Puzzle size={16} strokeWidth={1.8} />
+        {:else if item.id === "history"}
+          <History size={16} strokeWidth={1.8} />
+        {:else if item.id === "settings"}
+          <Settings size={16} strokeWidth={1.8} />
+        {:else}
+          {item.symbol}
+        {/if}
+      </span>
     </button>
   {/each}
 </nav>
@@ -124,6 +152,8 @@
   }
 
   .nav-symbol {
+    display: grid;
+    place-items: center;
     font-family: "Segoe UI Symbol", "Microsoft YaHei UI", sans-serif;
     font-size: 15px;
     font-weight: 600;

@@ -41,6 +41,7 @@
       onRun
     ) {
       event.preventDefault();
+      event.stopPropagation();
       void onRun();
     }
   }
