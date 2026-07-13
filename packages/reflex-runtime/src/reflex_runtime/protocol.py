@@ -14,6 +14,7 @@ COMMAND_TYPES = frozenset(
         "ping",
         "shutdown",
         "configure_provider",
+        "list_providers",
         "list_plugins",
         "plugin_call",
         "configure_plugin",
@@ -45,7 +46,9 @@ CONFIGURE_HISTORY_POLICY_FIELDS = frozenset(
     {"history_enabled", "privacy_mode", "history_redaction"}
 )
 CONFIGURE_HISTORY_PATH_FIELDS = frozenset({"database_path"})
-EMPTY_PAYLOAD_COMMANDS = frozenset({"cancel", "ping", "shutdown", "list_plugins"})
+EMPTY_PAYLOAD_COMMANDS = frozenset(
+    {"cancel", "ping", "shutdown", "list_providers", "list_plugins"}
+)
 BUILTIN_CAPABILITY_IDS = frozenset(
     {"history-sqlite", "translator", "markdown-preview", "batch-runner", "semantic-detector"}
 )

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import RLock
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -12,6 +13,18 @@ from .provider_errors import (
     ProviderRuntimeError,
     provider_configuration_invalid,
     provider_unconfigured,
+)
+from .plugin_contracts import ProviderDescriptor
+
+
+TRUSTED_PROVIDER_RELEASE_STATUS = MappingProxyType(
+    {
+        "minimax": "supported",
+        "deepseek": "experimental",
+        "qwen": "experimental",
+        "zhipu": "experimental",
+        "siliconflow": "experimental",
+    }
 )
 
 
@@ -26,11 +39,26 @@ class ProviderConfig:
 
 class ProviderRegistry:
     def __init__(self, factories: Mapping[str, Any]) -> None:
-        self._factories = {
-            provider_id.strip().lower(): factory
-            for provider_id, factory in factories.items()
-            if isinstance(provider_id, str)
-        }
+        self._factories: dict[str, Any] = {}
+        self._descriptors: dict[str, ProviderDescriptor] = {}
+        for provider_id, factory in factories.items():
+            try:
+                normalized_id = _normalize_provider_id(provider_id)
+                factory_id = _normalize_provider_id(getattr(factory, "id", None))
+                descriptor = ProviderDescriptor(
+                    provider_id=normalized_id,
+                    display_name=getattr(factory, "display_name", None),
+                    models=getattr(factory, "models", None),
+                    default_model=getattr(factory, "default_model", None),
+                    release_status=TRUSTED_PROVIDER_RELEASE_STATUS[normalized_id],
+                    session_configured=False,
+                )
+            except Exception:
+                continue
+            if factory_id != normalized_id or normalized_id in self._factories:
+                continue
+            self._factories[normalized_id] = factory
+            self._descriptors[normalized_id] = descriptor
         self._providers: dict[str, Any] = {}
         self._lock = RLock()
 
@@ -39,7 +67,7 @@ class ProviderRegistry:
             return (
                 "ProviderRegistry("
                 f"factories={sorted(self._factories)!r}, "
-                f"configured={sorted(self._providers)!r})"
+                f"session_configured={sorted(self._providers)!r})"
             )
 
     def configure(
@@ -79,6 +107,17 @@ class ProviderRegistry:
         if model is not None and model not in factory.models:
             raise provider_configuration_invalid()
         return provider
+
+    def catalog(self) -> tuple[ProviderDescriptor, ...]:
+        with self._lock:
+            session_configured_ids = frozenset(self._providers)
+        return tuple(
+            replace(
+                self._descriptors[provider_id],
+                session_configured=provider_id in session_configured_ids,
+            )
+            for provider_id in sorted(self._descriptors)
+        )
 
 
 def _provider_config(factory: Any, raw_config: dict[str, object]) -> ProviderConfig:

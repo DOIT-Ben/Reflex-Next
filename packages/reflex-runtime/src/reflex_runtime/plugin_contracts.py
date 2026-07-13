@@ -1,4 +1,4 @@
-"""Validated contracts for non-Provider Runtime capability plugins."""
+"""Validated contracts for Runtime plugins and public catalog envelopes."""
 
 from __future__ import annotations
 
@@ -21,6 +21,10 @@ PLUGIN_STATES = frozenset(
         "unavailable",
     }
 )
+MAX_PROVIDER_DISPLAY_NAME_LENGTH = 80
+MAX_PROVIDER_MODEL_ID_LENGTH = 256
+MAX_PROVIDER_MODELS = 256
+PROVIDER_RELEASE_STATUSES = frozenset({"supported", "experimental"})
 
 
 def is_safe_id(value: object) -> bool:
@@ -55,6 +59,93 @@ def _require_request_id(value: object) -> str:
     ):
         raise ValueError("invalid request id")
     return value
+
+
+def _require_safe_public_text(value: object, field_name: str, max_length: int) -> str:
+    if not (
+        isinstance(value, str)
+        and value == value.strip()
+        and 1 <= len(value) <= max_length
+        and all(character.isprintable() for character in value)
+    ):
+        raise ValueError(f"invalid {field_name}")
+    return value
+
+
+@dataclass(frozen=True)
+class ProviderDescriptor:
+    provider_id: str
+    display_name: str
+    models: tuple[str, ...]
+    default_model: str
+    release_status: str
+    session_configured: bool
+
+    def __post_init__(self) -> None:
+        _require_safe_id(self.provider_id, "provider id")
+        _require_safe_public_text(
+            self.display_name,
+            "provider display name",
+            MAX_PROVIDER_DISPLAY_NAME_LENGTH,
+        )
+        if (
+            not isinstance(self.models, tuple)
+            or not self.models
+            or len(self.models) > MAX_PROVIDER_MODELS
+        ):
+            raise ValueError("invalid provider models")
+        for model in self.models:
+            _require_safe_public_text(
+                model,
+                "provider model",
+                MAX_PROVIDER_MODEL_ID_LENGTH,
+            )
+        if len(set(self.models)) != len(self.models):
+            raise ValueError("invalid provider models")
+        if self.default_model not in self.models:
+            raise ValueError("invalid default provider model")
+        if self.release_status not in PROVIDER_RELEASE_STATUSES:
+            raise ValueError("invalid provider release status")
+        if not isinstance(self.session_configured, bool):
+            raise ValueError("invalid provider session configuration state")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.provider_id,
+            "name": self.display_name,
+            "models": list(self.models),
+            "default_model": self.default_model,
+            "release_status": self.release_status,
+            "session_configured": self.session_configured,
+        }
+
+
+@dataclass(frozen=True)
+class ProviderCatalogEnvelope:
+    request_id: str
+    providers: tuple[ProviderDescriptor, ...]
+    version: int = RUNTIME_PROTOCOL_VERSION
+
+    def __post_init__(self) -> None:
+        _require_request_id(self.request_id)
+        if self.version != RUNTIME_PROTOCOL_VERSION:
+            raise ValueError("unsupported runtime protocol version")
+        if not isinstance(self.providers, tuple) or any(
+            not isinstance(provider, ProviderDescriptor)
+            for provider in self.providers
+        ):
+            raise ValueError("invalid provider descriptors")
+        provider_ids = tuple(provider.provider_id for provider in self.providers)
+        if provider_ids != tuple(sorted(set(provider_ids))):
+            raise ValueError("provider catalog requires sorted unique providers")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "request_id": self.request_id,
+            "type": "provider_catalog",
+            "providers": [provider.to_dict() for provider in self.providers],
+        }
 
 
 @dataclass(frozen=True)

@@ -60,6 +60,7 @@ def test_parse_private_provider_configuration_command():
 @pytest.mark.parametrize(
     ("command_type", "payload"),
     [
+        ("list_providers", {}),
         ("list_plugins", {}),
         (
             "plugin_call",
@@ -195,6 +196,7 @@ def test_history_path_requires_an_absolute_fixed_history_database_path(database_
     ("command_type", "payload"),
     [
         ("ping", {"extra": True}),
+        ("list_providers", {"extra": True}),
         ("list_plugins", {"extra": True}),
         (
             "plugin_call",

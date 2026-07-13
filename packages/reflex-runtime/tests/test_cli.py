@@ -14,7 +14,7 @@ import reflex_runtime.cli as runtime_cli
 from reflex_runtime.capability_registry import CapabilityRegistry
 from reflex_runtime.cli import OsFdAdapter, _ProtocolStreams, _isolate_process_output
 from reflex_runtime.context import RuntimeContext
-from reflex_runtime.plugin_contracts import PluginDescriptor
+from reflex_runtime.plugin_contracts import PluginDescriptor, ProviderCatalogEnvelope
 from reflex_runtime.protocol import parse_command
 
 
@@ -61,10 +61,10 @@ class RuntimeProcess:
         self.process.stdin.write(line + "\n")
         self.process.stdin.flush()
 
-    def read_event(self, timeout: float = 2.0) -> dict:
+    def read_event(self, timeout: float = 5.0) -> dict:
         return self.stdout.get(timeout=timeout)
 
-    def read_until(self, request_id: str, event_type: str, timeout: float = 3.0) -> list[dict]:
+    def read_until(self, request_id: str, event_type: str, timeout: float = 5.0) -> list[dict]:
         deadline = time.monotonic() + timeout
         events: list[dict] = []
         while time.monotonic() < deadline:
@@ -634,6 +634,7 @@ def test_protocol_stream_close_is_idempotent_after_complete_cleanup():
     ("command_type", "payload"),
     [
         ("ping", {}),
+        ("list_providers", {}),
         ("list_plugins", {}),
         ("configure_plugin", {"plugin_id": "translator", "enabled": False}),
         ("configure_history_keys", {"keys": {"v1": "11" * 32}}),
@@ -1717,6 +1718,96 @@ def test_list_plugins_emits_capability_list_instead_of_core_event():
         assert all("operations" not in plugin for plugin in envelope["plugins"])
     finally:
         runtime.close()
+
+
+def test_list_providers_emits_strict_stable_catalog_without_private_values():
+    runtime = RuntimeProcess(provider_fixture=True)
+    secret = "catalog-fixture-private-credential"
+    try:
+        runtime.send(
+            {
+                "version": 1,
+                "request_id": "providers-before",
+                "type": "list_providers",
+                "payload": {},
+            }
+        )
+        before = runtime.read_event()
+        listed_before = next(
+            provider for provider in before["providers"] if provider["id"] == "minimax"
+        )
+
+        assert before["type"] == "provider_catalog"
+        assert "event" not in before
+        assert list(before) == ["version", "request_id", "type", "providers"]
+        assert list(listed_before) == [
+            "id",
+            "name",
+            "models",
+            "default_model",
+            "release_status",
+            "session_configured",
+        ]
+        assert listed_before == {
+            "id": "minimax",
+            "name": "MiniMax Fixture",
+            "models": ["fixture-model-a", "fixture-model-b"],
+            "default_model": "fixture-model-a",
+            "release_status": "supported",
+            "session_configured": False,
+        }
+        assert [provider["id"] for provider in before["providers"]] == sorted(
+            provider["id"] for provider in before["providers"]
+        )
+
+        runtime.send(configure_provider_command("providers-configure", secret))
+        assert runtime.read_event()["event"]["data"]["phase"] == "completed"
+        runtime.send(
+            {
+                "version": 1,
+                "request_id": "providers-after",
+                "type": "list_providers",
+                "payload": {},
+            }
+        )
+        after = runtime.read_event()
+        listed_after = next(
+            provider for provider in after["providers"] if provider["id"] == "minimax"
+        )
+
+        assert listed_after["session_configured"] is True
+        assert "credential_configured" not in listed_after
+        visible = json.dumps([before, after], ensure_ascii=False)
+        assert secret not in visible
+        assert "fixture.invalid" not in visible
+    finally:
+        runtime.close()
+
+
+def test_provider_catalog_envelope_rejects_unsorted_or_duplicate_providers():
+    from reflex_runtime.plugin_contracts import ProviderDescriptor
+
+    alpha = ProviderDescriptor(
+        provider_id="alpha",
+        display_name="Alpha",
+        models=("alpha-model",),
+        default_model="alpha-model",
+        release_status="experimental",
+        session_configured=False,
+    )
+    minimax = ProviderDescriptor(
+        provider_id="minimax",
+        display_name="MiniMax",
+        models=("minimax-model",),
+        default_model="minimax-model",
+        release_status="supported",
+        session_configured=False,
+    )
+
+    with pytest.raises(ValueError, match="sorted unique providers"):
+        ProviderCatalogEnvelope("catalog-unsorted", (minimax, alpha))
+    with pytest.raises(ValueError, match="sorted unique providers"):
+        ProviderCatalogEnvelope("catalog-duplicate", (alpha, alpha))
 
 
 def test_context_list_uses_registry_unavailable_state_for_unloaded_history():

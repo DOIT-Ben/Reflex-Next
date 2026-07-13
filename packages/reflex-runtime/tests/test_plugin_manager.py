@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from reflex_runtime.plugin_contracts import PluginDescriptor
 from reflex_runtime.plugin_manager import BUILTIN_CAPABILITY_DESCRIPTORS, PluginManager
 
@@ -183,6 +185,31 @@ def test_provider_factory_id_must_match_normalized_entry_point_name():
             FakeEntryPoint("minimax", loaded=lambda: FakeFactory(id="other"))
         ],
         allowed_provider_ids=frozenset({"minimax", "other"}),
+    )
+
+    result = manager.discover_provider_factories()
+
+    assert result.factories == {}
+    assert result.failures[0].plugin_id == "minimax"
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        FakeFactory(display_name="unsafe\nname"),
+        FakeFactory(display_name=" x" * 81),
+        FakeFactory(models=("model-a", "model-a")),
+        FakeFactory(models=("model-a", " unsafe-model")),
+        FakeFactory(models=("model-a", "unsafe\rmodel")),
+        FakeFactory(models=({"not": "a model id"},)),
+        FakeFactory(models=tuple(f"model-{index}" for index in range(257))),
+    ],
+)
+def test_provider_factory_with_unsafe_catalog_metadata_is_isolated(factory):
+    manager = PluginManager(
+        entry_points_loader=lambda: [
+            FakeEntryPoint("minimax", loaded=lambda: factory)
+        ]
     )
 
     result = manager.discover_provider_factories()

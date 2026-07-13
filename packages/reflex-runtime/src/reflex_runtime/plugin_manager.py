@@ -9,10 +9,11 @@ from dataclasses import dataclass, replace
 from types import ModuleType
 from typing import Any
 
-from .plugin_contracts import PluginDescriptor, PluginFailure
+from .plugin_contracts import PluginDescriptor, PluginFailure, ProviderDescriptor
+from .provider_registry import TRUSTED_PROVIDER_RELEASE_STATUS
 
 PLUGIN_UNAVAILABLE_MESSAGE = "Provider plugin unavailable."
-DEFAULT_ALLOWED_PROVIDER_IDS = frozenset({"minimax", "deepseek", "qwen", "zhipu", "siliconflow"})
+DEFAULT_ALLOWED_PROVIDER_IDS = frozenset(TRUSTED_PROVIDER_RELEASE_STATUS)
 
 
 @dataclass(frozen=True)
@@ -351,15 +352,22 @@ def _validate_factory(factory: Any) -> str:
     if not _safe_identifier(provider_id):
         raise ValueError(PLUGIN_UNAVAILABLE_MESSAGE)
 
-    for field_name in ("display_name", "version", "default_model", "required_secret"):
+    for field_name in ("version", "required_secret"):
         value = getattr(factory, field_name, None)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(PLUGIN_UNAVAILABLE_MESSAGE)
 
     models = getattr(factory, "models", None)
-    if not isinstance(models, tuple) or not models or not all(isinstance(model, str) and model for model in models):
-        raise ValueError(PLUGIN_UNAVAILABLE_MESSAGE)
-    if factory.default_model not in models:
+    try:
+        ProviderDescriptor(
+            provider_id=provider_id,
+            display_name=getattr(factory, "display_name", None),
+            models=models,
+            default_model=getattr(factory, "default_model", None),
+            release_status=TRUSTED_PROVIDER_RELEASE_STATUS[provider_id],
+            session_configured=False,
+        )
+    except (KeyError, ValueError):
         raise ValueError(PLUGIN_UNAVAILABLE_MESSAGE)
 
     permissions = getattr(factory, "permissions", None)

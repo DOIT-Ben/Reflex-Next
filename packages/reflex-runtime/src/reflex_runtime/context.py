@@ -37,6 +37,7 @@ from .plugin_contracts import (
     CapabilityListEnvelope,
     PluginDescriptor,
     PluginEventEnvelope,
+    ProviderCatalogEnvelope,
     is_safe_id,
 )
 from .protocol import CommandEnvelope, ProtocolError
@@ -190,6 +191,11 @@ class RuntimeContext:
                 return False
             if command.type == "configure_provider":
                 self.configure_provider(command)
+                return True
+            if command.type == "list_providers":
+                self.emit_runtime(
+                    ProviderCatalogEnvelope(command.request_id, self._registry.catalog())
+                )
                 return True
             if command.type == "list_plugins":
                 self.emit_runtime(
@@ -418,7 +424,8 @@ class RuntimeContext:
             print(json.dumps(envelope.to_dict(), ensure_ascii=False), file=self._stdout, flush=True)
 
     def emit_runtime(
-        self, envelope: CapabilityListEnvelope | PluginEventEnvelope
+        self,
+        envelope: CapabilityListEnvelope | PluginEventEnvelope | ProviderCatalogEnvelope,
     ) -> None:
         with self._lock:
             print(
