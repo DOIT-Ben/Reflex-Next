@@ -164,6 +164,8 @@ describe("production frontend architecture", () => {
       "NavRail",
       "StatusBar",
       "SettingsDialog",
+      "TranslationDialog",
+      "MarkdownPreviewDialog",
       "InputPane",
       "ConfigSummary",
       "ResultPane",
@@ -191,5 +193,6 @@ describe("production frontend architecture", () => {
     expect(styles).toContain(".adjust-dialog");
     expect(styles).toMatch(/@media\s*\(max-width:\s*620px\)/);
     expect(appSource).not.toContain("false &&");
+    expect(appSource).not.toContain("closeMoreActions");
   });
 });

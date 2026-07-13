@@ -1014,6 +1014,30 @@ pre {
   gap: 16px;
 }
 
+.translation-head .icon-button,
+.markdown-head .icon-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  place-items: center;
+  border-radius: 7px;
+}
+
+.translation-head .icon-button:hover,
+.markdown-head .icon-button:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.translation-head .icon-button:focus-visible,
+.markdown-head .icon-button:focus-visible {
+  color: var(--accent);
+  background: var(--accent-soft);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .translation-head h2,
 .translation-pane h3 {
   margin: 0;

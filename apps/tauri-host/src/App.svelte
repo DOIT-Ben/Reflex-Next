@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import SettingsDialog from "./components/settings/SettingsDialog.svelte";
   import type { SettingsSection } from "./components/settings/types";
+  import MarkdownPreviewDialog from "./components/tools/MarkdownPreviewDialog.svelte";
+  import TranslationDialog from "./components/tools/TranslationDialog.svelte";
   import NavRail from "./components/shell/NavRail.svelte";
   import ReflexTitleBar from "./components/shell/ReflexTitleBar.svelte";
   import StatusBar from "./components/shell/StatusBar.svelte";
@@ -106,8 +108,7 @@
     createMarkdownPreviewState,
     failMarkdownPreview,
     openMarkdownPreview,
-    selectMarkdownPreviewMode,
-    type MarkdownPreviewMode
+    selectMarkdownPreviewMode
   } from "./domain/markdownPreviewState";
   import {
     batchCanExport,
@@ -180,16 +181,6 @@
     { id: "creative", label: "创意" }
   ];
   const scenes = listSceneOptions();
-  const translationTargets: Array<{ id: TranslationTarget; label: string }> = [
-    { id: "auto", label: "自动" },
-    { id: "zh", label: "中文" },
-    { id: "en", label: "English" }
-  ];
-  const markdownPreviewModes: Array<{ id: MarkdownPreviewMode; label: string }> = [
-    { id: "split", label: "分栏" },
-    { id: "source", label: "源码" },
-    { id: "preview", label: "预览" }
-  ];
   const batchFormats: Array<{ id: BatchFormat; label: string }> = [
     { id: "txt", label: "TXT 每行一条" },
     { id: "csv", label: "CSV prompt 列" }
@@ -209,10 +200,8 @@
   let translationRun: AbortController | null = null;
   let translation = createTranslationState();
   let translationSourceResult: CurrentResult | null = null;
-  let translationCloseButton: HTMLButtonElement | null = null;
   let markdownPreview = createMarkdownPreviewState();
   let markdownPreviewRun: AbortController | null = null;
-  let markdownPreviewCloseButton: HTMLButtonElement | null = null;
   let batch = createBatchState();
   let batchRun: AbortController | null = null;
   let semanticModel = createSemanticModelState();
@@ -769,7 +758,6 @@
 
   function openResultCompare() {
     if (!state.output || !state.currentResult?.sourceText?.trim()) return;
-    closeMoreActions();
     state = { ...state, overlay: "result_compare" };
   }
 
@@ -787,11 +775,9 @@
   function openTranslationView() {
     const source = state.currentResult;
     if (!source?.output.trim() || !translatorEnabled) return;
-    closeMoreActions();
     translationSourceResult = { ...source };
     translation = openTranslation(translation, source.output);
     if (translation.phase !== "closed") {
-      window.setTimeout(() => translationCloseButton?.focus());
       void runTranslation();
     }
   }
@@ -898,7 +884,6 @@
     if (!source?.trim() || !markdownPreviewEnabled) return;
     markdownPreview = openMarkdownPreview(markdownPreview, source);
     if (markdownPreview.phase !== "closed") {
-      window.setTimeout(() => markdownPreviewCloseButton?.focus());
       void runMarkdownPreview();
     }
   }
@@ -1930,125 +1915,29 @@
     {/if}
 
     {#if translation.phase !== "closed"}
-      <div class="translation-layer" role="presentation">
-        <div class="translation-dialog" role="dialog" aria-modal="true" aria-label={tr("翻译结果")}>
-          <div class="translation-head">
-            <div>
-              <h2>{tr("翻译结果")}</h2>
-              {#if translation.sourceLanguage && translation.targetLanguage}
-                <p>{translationLanguageLabel(translation.sourceLanguage)} → {translationLanguageLabel(translation.targetLanguage)}</p>
-              {/if}
-            </div>
-            <button
-              class="icon-button"
-              aria-label={tr("关闭翻译")}
-              bind:this={translationCloseButton}
-              on:click={() => closeTranslationView(true)}
-            >×</button>
-          </div>
-
-          <div class="translation-toolbar">
-            <span>{tr("目标语言")}</span>
-            <div class="translation-segments" role="group" aria-label={tr("目标语言")}>
-              {#each translationTargets as item}
-                <button
-                  type="button"
-                  class:active={translation.target === item.id}
-                  aria-pressed={translation.target === item.id}
-                  disabled={translation.phase === "streaming"}
-                  on:click={() => chooseTranslationTarget(item.id)}
-                >{tr(item.label)}</button>
-              {/each}
-            </div>
-          </div>
-
-          <div class="translation-content">
-            <section class="translation-pane" aria-label={tr("原文")}>
-              <h3>{tr("原文")}</h3>
-              <pre>{translation.sourceText}</pre>
-            </section>
-            <section class="translation-pane translated" aria-label={tr("译文")} aria-live="polite">
-              <h3>{tr("译文")}</h3>
-              {#if translation.phase === "error"}
-                <p class="translation-message error">{tr(translation.error)}</p>
-              {:else if translation.phase === "cancelled" && !translation.translatedText}
-                <p class="translation-message">{tr("翻译已取消。")}</p>
-              {:else if translation.translatedText}
-                <pre>{translation.translatedText}</pre>
-              {:else if translation.phase === "streaming"}
-                <p class="translation-message">{tr("正在翻译…")}</p>
-              {:else}
-                <p class="translation-message">{tr("准备翻译")}</p>
-              {/if}
-            </section>
-          </div>
-
-          <div class="translation-footer">
-            {#if translation.phase === "streaming"}
-              <button class="outline" type="button" on:click={cancelTranslationRun}>{tr("取消翻译")}</button>
-            {:else}
-              <button class="outline" type="button" on:click={runTranslation}>
-                {tr(translation.phase === "completed" ? "重新翻译" : "重试")}
-              </button>
-            {/if}
-            {#if translation.phase === "completed"}
-              <button class="outline" type="button" on:click={copyTranslation}>{tr("复制译文")}</button>
-              <button class="primary small" type="button" on:click={useTranslationAsCurrentResult}>{tr("作为当前结果")}</button>
-            {/if}
-          </div>
-        </div>
-      </div>
+      <TranslationDialog
+        state={translation}
+        sourceLanguageLabel={translationLanguageLabel(translation.sourceLanguage)}
+        targetLanguageLabel={translationLanguageLabel(translation.targetLanguage)}
+        translate={tr}
+        onTargetChange={chooseTranslationTarget}
+        onCancel={cancelTranslationRun}
+        onRetry={runTranslation}
+        onCopy={copyTranslation}
+        onUseResult={useTranslationAsCurrentResult}
+        onClose={() => closeTranslationView(true)}
+      />
     {/if}
 
     {#if markdownPreview.phase !== "closed"}
-      <div class="markdown-layer" role="presentation">
-        <div class="markdown-dialog" role="dialog" aria-modal="true" aria-label={tr("Markdown 预览")}>
-          <div class="markdown-head">
-            <h2>{tr("Markdown 预览")}</h2>
-            <button
-              class="icon-button"
-              aria-label={tr("关闭 Markdown 预览")}
-              bind:this={markdownPreviewCloseButton}
-              on:click={() => closeMarkdownPreviewView(true)}
-            >×</button>
-          </div>
-          <div class="markdown-toolbar">
-            <div class="markdown-segments" role="group" aria-label={tr("预览方式")}>
-              {#each markdownPreviewModes as item}
-                <button
-                  type="button"
-                  class:active={markdownPreview.mode === item.id}
-                  aria-pressed={markdownPreview.mode === item.id}
-                  on:click={() => markdownPreview = selectMarkdownPreviewMode(markdownPreview, item.id)}
-                >{tr(item.label)}</button>
-              {/each}
-            </div>
-            <button class="outline" type="button" on:click={() => writeClipboardValue(markdownPreview.sourceText, "✓ 源码已复制")}>{tr("复制源码")}</button>
-          </div>
-          <div class:source-only={markdownPreview.mode === "source"} class:preview-only={markdownPreview.mode === "preview"} class="markdown-content">
-            <section class="markdown-source" aria-label={tr("Markdown 源码")}>
-              <h3>{tr("源码")}</h3>
-              <pre>{markdownPreview.sourceText}</pre>
-            </section>
-            <section class="markdown-rendered" aria-label={tr("渲染预览")} aria-live="polite">
-              <h3>{tr("预览")}</h3>
-              {#if markdownPreview.phase === "loading"}
-                <p class="markdown-message">{tr("正在渲染…")}</p>
-              {:else if markdownPreview.phase === "error"}
-                <p class="markdown-message error">{tr(markdownPreview.error)}</p>
-              {:else}
-                <article>{@html markdownPreview.html}</article>
-              {/if}
-            </section>
-          </div>
-          <div class="markdown-footer">
-            {#if markdownPreview.phase === "error"}
-              <button class="outline" type="button" on:click={runMarkdownPreview}>{t(uiLanguage, "retry")}</button>
-            {/if}
-            <button class="primary small" type="button" on:click={() => closeMarkdownPreviewView(true)}>{tr("关闭")}</button>
-          </div>
-        </div>
-      </div>
+      <MarkdownPreviewDialog
+        state={markdownPreview}
+        translate={tr}
+        onModeChange={(mode) => (markdownPreview = selectMarkdownPreviewMode(markdownPreview, mode))}
+        onCopySource={() => writeClipboardValue(markdownPreview.sourceText, "✓ 源码已复制")}
+        onRetry={runMarkdownPreview}
+        onClose={() => closeMarkdownPreviewView(true)}
+      />
     {/if}
 
     {#if state.overlay === "clipboard_confirm"}
