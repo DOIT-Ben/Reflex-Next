@@ -66,6 +66,8 @@ Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:secret
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:secret-scan .*lock=none .*powershell .*scan_release_secrets\.ps1' }).Count -eq 1) "Tracked-file secret scanning must be part of verification."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:dependency-contract .*heavy=False .*audit_dependencies_contract\.ps1' }).Count -eq 1) "Dependency-audit contract tests must be part of verification."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:dependency-audit .*heavy=True .*audit_dependencies\.ps1' }).Count -eq 1) "The live dependency gate must be a resource-bounded heavy verification step."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:provider-smoke-contract .*lock=packages\\reflex-runtime\\uv\.lock .*test_provider_smoke\.py -q' }).Count -eq 1) "Provider smoke contract tests must use the frozen Runtime environment."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:benchmark-contract .*lock=packages\\reflex-runtime\\uv\.lock .*test_benchmark_backend\.py -q' }).Count -eq 1) "Backend benchmark contract tests must use the frozen Runtime environment."
 
 $dryRun = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipHeavy")
 Assert-True ($dryRun.ExitCode -eq 0) "The focused dry-run must return exit code 0."

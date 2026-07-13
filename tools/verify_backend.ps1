@@ -146,6 +146,22 @@ $steps += New-VerificationStep `
   -Executable "powershell" `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\audit_dependencies_contract.ps1")
 
+$steps += New-VerificationStep `
+  -Id "tools:provider-smoke-contract" `
+  -Category "tools" `
+  -WorkDir "." `
+  -LockFile "packages\reflex-runtime\uv.lock" `
+  -Executable "uv" `
+  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_provider_smoke.py", "-q")
+
+$steps += New-VerificationStep `
+  -Id "tools:benchmark-contract" `
+  -Category "tools" `
+  -WorkDir "." `
+  -LockFile "packages\reflex-runtime\uv.lock" `
+  -Executable "uv" `
+  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_benchmark_backend.py", "-q")
+
 foreach ($project in $pythonProjects) {
   $steps += New-VerificationStep `
     -Id ("python:" + $project.Name) `

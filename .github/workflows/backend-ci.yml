@@ -15,6 +15,11 @@ on:
       - "tools/audit_dependencies.ps1"
       - "tools/tests/audit_dependencies_contract.ps1"
       - "tools/policies/dependency-audit-policy.json"
+      - "tools/provider_smoke.py"
+      - "tools/tests/test_provider_smoke.py"
+      - "tools/tests/fixtures/provider_smoke_*.py"
+      - "tools/benchmark_backend.py"
+      - "tools/tests/test_benchmark_backend.py"
   push:
     branches:
       - main
@@ -32,6 +37,11 @@ on:
       - "tools/audit_dependencies.ps1"
       - "tools/tests/audit_dependencies_contract.ps1"
       - "tools/policies/dependency-audit-policy.json"
+      - "tools/provider_smoke.py"
+      - "tools/tests/test_provider_smoke.py"
+      - "tools/tests/fixtures/provider_smoke_*.py"
+      - "tools/benchmark_backend.py"
+      - "tools/tests/test_benchmark_backend.py"
   workflow_dispatch:
 
 permissions:
