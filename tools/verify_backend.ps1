@@ -5,6 +5,7 @@ param(
   [switch]$SkipFrontend,
   [switch]$SkipHeavy,
   [switch]$SkipDependencyAudit,
+  [switch]$SkipReleaseMaterials,
   [ValidateSet(
     "reflex-core",
     "reflex-runtime",
@@ -147,6 +148,14 @@ $steps += New-VerificationStep `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\audit_dependencies_contract.ps1")
 
 $steps += New-VerificationStep `
+  -Id "supply-chain:sbom-contract" `
+  -Category "supply-chain" `
+  -WorkDir "." `
+  -LockFile "" `
+  -Executable "powershell" `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\generate_release_sbom_contract.ps1")
+
+$steps += New-VerificationStep `
   -Id "tools:provider-smoke-contract" `
   -Category "tools" `
   -WorkDir "." `
@@ -180,6 +189,15 @@ $steps += New-VerificationStep `
   -LockFile "" `
   -Executable "powershell" `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\audit_dependencies.ps1") `
+  -Heavy $true
+
+$steps += New-VerificationStep `
+  -Id "supply-chain:sbom" `
+  -Category "supply-chain" `
+  -WorkDir "." `
+  -LockFile "" `
+  -Executable "powershell" `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\generate_release_sbom.ps1", "-Verify") `
   -Heavy $true
 
 $steps += New-VerificationStep `
@@ -240,6 +258,10 @@ function Get-SkipReason {
 
   if ($SkipDependencyAudit -and $Step.Id -eq "security:dependency-audit") {
     return "SkipDependencyAudit"
+  }
+
+  if ($SkipReleaseMaterials -and $Step.Id -eq "supply-chain:sbom") {
+    return "SkipReleaseMaterials"
   }
 
   if ($SkipFrontend -and $Step.Frontend) {

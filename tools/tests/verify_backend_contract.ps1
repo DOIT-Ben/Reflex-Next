@@ -66,6 +66,8 @@ Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:secret
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:secret-scan .*lock=none .*powershell .*scan_release_secrets\.ps1' }).Count -eq 1) "Tracked-file secret scanning must be part of verification."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:dependency-contract .*heavy=False .*audit_dependencies_contract\.ps1' }).Count -eq 1) "Dependency-audit contract tests must be part of verification."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:dependency-audit .*heavy=True .*audit_dependencies\.ps1' }).Count -eq 1) "The live dependency gate must be a resource-bounded heavy verification step."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] supply-chain:sbom-contract .*heavy=False .*generate_release_sbom_contract\.ps1' }).Count -eq 1) "SBOM contract tests must be part of verification."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] supply-chain:sbom .*heavy=True .*generate_release_sbom\.ps1 -Verify' }).Count -eq 1) "Live SBOM generation must be a resource-bounded heavy verification step."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:provider-smoke-contract .*lock=packages\\reflex-runtime\\uv\.lock .*test_provider_smoke\.py -q' }).Count -eq 1) "Provider smoke contract tests must use the frozen Runtime environment."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:benchmark-contract .*lock=packages\\reflex-runtime\\uv\.lock .*test_benchmark_backend\.py -q' }).Count -eq 1) "Backend benchmark contract tests must use the frozen Runtime environment."
 
@@ -88,6 +90,11 @@ Assert-True ($dependencySkip.ExitCode -eq 0) "The dependency-audit skip dry-run 
 Assert-True (($dependencySkip.Output | Where-Object { $_ -match '^\[SKIP\] security:dependency-audit .*SkipDependencyAudit' }).Count -eq 1) "-SkipDependencyAudit must skip only the live dependency gate."
 Assert-True (($dependencySkip.Output | Where-Object { $_ -match '^\[DRY-RUN\] security:dependency-contract ' }).Count -eq 1) "-SkipDependencyAudit must keep dependency contract tests enabled."
 
+$releaseMaterialSkip = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipFrontend", "-SkipReleaseMaterials")
+Assert-True ($releaseMaterialSkip.ExitCode -eq 0) "The release-material skip dry-run must return exit code 0."
+Assert-True (($releaseMaterialSkip.Output | Where-Object { $_ -match '^\[SKIP\] supply-chain:sbom .*SkipReleaseMaterials' }).Count -eq 1) "-SkipReleaseMaterials must skip only live SBOM generation."
+Assert-True (($releaseMaterialSkip.Output | Where-Object { $_ -match '^\[DRY-RUN\] supply-chain:sbom-contract ' }).Count -eq 1) "-SkipReleaseMaterials must keep SBOM contract tests enabled."
+
 $resourceProbeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-rust-resource-contract-" + [guid]::NewGuid().ToString("N"))
 $resourceProbe = Join-Path $resourceProbeRoot "resources\runtime\reflex-runtime.exe"
 $resourceFakeBin = Join-Path $resourceProbeRoot "bin"
@@ -102,7 +109,7 @@ try {
   $originalResourcePath = $env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH
   $env:PATH = "$resourceFakeBin;$originalPath"
   $env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH = $resourceProbe
-  $resourceLifecycle = Invoke-Verify -Arguments @("-PythonProject", "reflex-core", "-SkipFrontend", "-SkipDependencyAudit")
+  $resourceLifecycle = Invoke-Verify -Arguments @("-PythonProject", "reflex-core", "-SkipFrontend", "-SkipDependencyAudit", "-SkipReleaseMaterials")
 
   Assert-True ($resourceLifecycle.ExitCode -eq 0) "Rust verification must create its temporary bundle resource before cargo runs."
   Assert-True (($resourceLifecycle.Output | Where-Object { $_ -eq '[SETUP] rust:tests | temporary-resource-created=true' }).Count -eq 1) "Rust verification must report temporary resource creation."

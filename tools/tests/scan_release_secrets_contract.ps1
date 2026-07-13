@@ -31,12 +31,16 @@ function Write-Utf8File {
 function Invoke-Scan {
   param(
     [string]$RepositoryRoot,
-    [string[]]$ReleasePath = @()
+    [string[]]$ReleasePath = @(),
+    [switch]$SkipTrackedFiles
   )
 
   $arguments = @("-RepositoryRoot", $RepositoryRoot)
   foreach ($path in $ReleasePath) {
     $arguments += @("-ReleasePath", $path)
+  }
+  if ($SkipTrackedFiles) {
+    $arguments += "-SkipTrackedFiles"
   }
 
   $previousErrorActionPreference = $ErrorActionPreference
@@ -130,6 +134,10 @@ This fixture discusses password, credentials, and private keys without containin
   Assert-True ($trackedOutput -notmatch [regex]::Escape($privateKeyHeader)) "Private-key material must never be echoed."
   Assert-True (($tracked.Output | Where-Object { $_ -notmatch '^.+(?::\d+)? \| rule=[a-z0-9-]+$' }).Count -eq 0) "Finding output must contain only a file location and rule name."
 
+  $releaseOnly = Invoke-Scan -RepositoryRoot $repository -ReleasePath @((Join-Path $repository "safe.txt")) -SkipTrackedFiles
+  Assert-True ($releaseOnly.ExitCode -eq 0) "Artifact-only mode must not rescan tracked repository files."
+  Assert-True ($releaseOnly.Output.Count -eq 0) "Artifact-only mode must emit only findings from requested release paths."
+
   & git -C $repository rm --cached --quiet -- "tracked-config.txt" "tracked-key.pem"
   Assert-True ($LASTEXITCODE -eq 0) "Unable to reset tracked secret fixtures."
 
@@ -142,7 +150,7 @@ This fixture discusses password, credentials, and private keys without containin
     ([byte[]](0, 1, 2, 0) + [System.Text.Encoding]::ASCII.GetBytes("token=" + $binaryToken))
   )
 
-  $releaseResult = Invoke-Scan -RepositoryRoot $repository -ReleasePath @($release)
+  $releaseResult = Invoke-Scan -RepositoryRoot $repository -ReleasePath @($release) -SkipTrackedFiles
   $releaseOutput = $releaseResult.Output -join "`n"
   Assert-True ($releaseResult.ExitCode -ne 0) "Release-directory secrets and credential files must fail the scan."
   Assert-True ($releaseOutput -match 'settings\.json:1 \| rule=authorization-token') "Release content findings must identify location and rule."

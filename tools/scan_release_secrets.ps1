@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$RepositoryRoot = "",
-  [string[]]$ReleasePath = @()
+  [string[]]$ReleasePath = @(),
+  [switch]$SkipTrackedFiles
 )
 
 $ErrorActionPreference = "Stop"
@@ -304,24 +305,26 @@ function Get-ReleaseDisplayPath {
   return $File.FullName.Substring($rootPrefix.Length) -replace '/', '\'
 }
 
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-  Write-Error "git is required to enumerate tracked files."
-  exit 2
-}
-
-$trackedPaths = @(& git -C $repository -c core.quotepath=false ls-files 2>$null)
-if ($LASTEXITCODE -ne 0) {
-  Write-Error "Unable to enumerate tracked files."
-  exit 2
-}
-
-foreach ($relativePath in $trackedPaths) {
-  if ([string]::IsNullOrWhiteSpace($relativePath)) {
-    continue
+if (-not $SkipTrackedFiles) {
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Error "git is required to enumerate tracked files."
+    exit 2
   }
-  $fullPath = Join-Path $repository $relativePath
-  if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
-    Scan-File -Path $fullPath -DisplayPath ($relativePath -replace '/', '\')
+
+  $trackedPaths = @(& git -C $repository -c core.quotepath=false ls-files 2>$null)
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error "Unable to enumerate tracked files."
+    exit 2
+  }
+
+  foreach ($relativePath in $trackedPaths) {
+    if ([string]::IsNullOrWhiteSpace($relativePath)) {
+      continue
+    }
+    $fullPath = Join-Path $repository $relativePath
+    if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
+      Scan-File -Path $fullPath -DisplayPath ($relativePath -replace '/', '\')
+    }
   }
 }
 

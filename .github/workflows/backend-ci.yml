@@ -15,6 +15,8 @@ on:
       - "tools/audit_dependencies.ps1"
       - "tools/tests/audit_dependencies_contract.ps1"
       - "tools/policies/dependency-audit-policy.json"
+      - "tools/generate_release_sbom.ps1"
+      - "tools/tests/generate_release_sbom_contract.ps1"
       - "tools/provider_smoke.py"
       - "tools/tests/test_provider_smoke.py"
       - "tools/tests/fixtures/provider_smoke_*.py"
@@ -37,6 +39,8 @@ on:
       - "tools/audit_dependencies.ps1"
       - "tools/tests/audit_dependencies_contract.ps1"
       - "tools/policies/dependency-audit-policy.json"
+      - "tools/generate_release_sbom.ps1"
+      - "tools/tests/generate_release_sbom_contract.ps1"
       - "tools/provider_smoke.py"
       - "tools/tests/test_provider_smoke.py"
       - "tools/tests/fixtures/provider_smoke_*.py"
@@ -90,6 +94,7 @@ jobs:
         run: |
           cargo install cargo-audit --version 0.22.2 --locked
           cargo install cargo-license --version 0.6.1 --locked
+          cargo install cargo-cyclonedx --version 0.5.9 --locked --jobs 2
 
       - name: Verify backend script contract
         shell: powershell
@@ -98,3 +103,18 @@ jobs:
       - name: Run locked backend verification
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\verify_backend.ps1
+
+      - name: Generate retained SBOM and scan build artifacts
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\generate_release_sbom.ps1 `
+            -OutputDirectory "${{ runner.temp }}\reflex-sbom" `
+            -ReleasePath ".\apps\tauri-host\dist"
+
+      - name: Upload SBOM evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: reflex-next-sbom-${{ github.sha }}
+          path: ${{ runner.temp }}\reflex-sbom
+          if-no-files-found: error
+          retention-days: 30
