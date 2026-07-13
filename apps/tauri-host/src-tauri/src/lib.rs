@@ -15,6 +15,7 @@ pub fn run() {
     use tauri_plugin_global_shortcut::ShortcutState;
 
     let app = tauri::Builder::default()
+        .plugin(window::navigation_guard())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let _ = window::show_main_window(app);
         }))

@@ -1,6 +1,7 @@
 use tauri::{
-    webview::NewWindowResponse, AppHandle, Manager, PhysicalPosition, Runtime, Url, WebviewUrl,
-    WebviewWindowBuilder,
+    plugin::{Builder as PluginBuilder, TauriPlugin},
+    webview::NewWindowResponse,
+    AppHandle, Manager, PhysicalPosition, Runtime, Url, WebviewUrl, WebviewWindowBuilder,
 };
 
 const MIN_VISIBLE_EDGE: i64 = 64;
@@ -84,6 +85,12 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static s
 
 pub fn history_window_url() -> &'static str {
     "index.html?view=history"
+}
+
+pub fn navigation_guard<R: Runtime>() -> TauriPlugin<R> {
+    PluginBuilder::new("navigation-guard")
+        .on_navigation(|webview, url| navigation_is_allowed(webview.label(), url))
+        .build()
 }
 
 pub fn show_history_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static str> {
@@ -170,13 +177,44 @@ fn recover_window_position_for<R: Runtime>(window: &tauri::WebviewWindow<R>) {
 }
 
 fn is_local_history_url(url: &Url) -> bool {
-    let fixed_origin = matches!(
-        (url.scheme(), url.host_str(), url.port()),
-        ("tauri", Some("localhost"), None)
-            | ("http" | "https", Some("tauri.localhost"), None)
-            | ("http", Some("127.0.0.1"), Some(1420))
-    );
-    fixed_origin && url.path() == "/index.html" && url.query() == Some("view=history")
+    navigation_is_allowed_for_environment(HISTORY_WINDOW_LABEL, url, cfg!(debug_assertions))
+}
+
+fn navigation_is_allowed(window_label: &str, url: &Url) -> bool {
+    navigation_is_allowed_for_environment(window_label, url, cfg!(debug_assertions))
+}
+
+fn navigation_is_allowed_for_environment(
+    window_label: &str,
+    url: &Url,
+    allow_dev_server: bool,
+) -> bool {
+    match window_label {
+        "main" => {
+            is_trusted_local_origin(url, allow_dev_server)
+                && matches!(url.path(), "/" | "/index.html")
+                && url.query().is_none()
+        }
+        HISTORY_WINDOW_LABEL => {
+            is_trusted_local_origin(url, allow_dev_server)
+                && url.path() == "/index.html"
+                && url.query() == Some("view=history")
+        }
+        _ => false,
+    }
+}
+
+fn is_trusted_local_origin(url: &Url, allow_dev_server: bool) -> bool {
+    url.username().is_empty()
+        && url.password().is_none()
+        && (matches!(
+            (url.scheme(), url.host_str(), url.port()),
+            ("tauri", Some("localhost"), None) | ("http" | "https", Some("tauri.localhost"), None)
+        ) || (allow_dev_server
+            && matches!(
+                (url.scheme(), url.host_str(), url.port()),
+                ("http", Some("127.0.0.1"), Some(1420))
+            )))
 }
 
 fn bounds_from_rect(rect: &tauri::PhysicalRect<i32, u32>) -> PhysicalBounds {
@@ -191,7 +229,8 @@ fn bounds_from_rect(rect: &tauri::PhysicalRect<i32, u32>) -> PhysicalBounds {
 #[cfg(test)]
 mod tests {
     use super::{
-        history_window_url, is_local_history_url, recover_window_position, reuse_intent_is_valid,
+        history_window_url, is_local_history_url, navigation_is_allowed,
+        navigation_is_allowed_for_environment, recover_window_position, reuse_intent_is_valid,
         PhysicalBounds, HISTORY_DEFAULT_SIZE, HISTORY_MINIMUM_SIZE,
     };
 
@@ -278,6 +317,83 @@ mod tests {
                 !is_local_history_url(&url.parse().unwrap()),
                 "expected deny: {url}"
             );
+        }
+    }
+
+    #[test]
+    fn main_navigation_allows_only_trusted_local_entries() {
+        for url in [
+            "tauri://localhost/",
+            "tauri://localhost/index.html",
+            "http://tauri.localhost/",
+            "https://tauri.localhost/index.html",
+            "http://127.0.0.1:1420/",
+            "http://127.0.0.1:1420/index.html",
+        ] {
+            assert!(
+                navigation_is_allowed("main", &url.parse().unwrap()),
+                "expected allow: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn navigation_guard_rejects_external_and_dangerous_urls_for_every_window() {
+        for label in ["main", "history"] {
+            for url in [
+                "https://example.com/",
+                "http://example.com/",
+                "file:///C:/Windows/System32/drivers/etc/hosts",
+                "javascript:alert(1)",
+                "data:text/html,<script>alert(1)</script>",
+                "http://127.0.0.1:1421/",
+                "http://localhost:1420/",
+            ] {
+                assert!(
+                    !navigation_is_allowed(label, &url.parse().unwrap()),
+                    "expected deny for {label}: {url}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn navigation_guard_enforces_each_window_fixed_entry() {
+        for url in [
+            "tauri://localhost/index.html?view=history",
+            "http://tauri.localhost/index.html?view=history",
+            "http://127.0.0.1:1420/index.html?view=history",
+        ] {
+            let url = url.parse().unwrap();
+            assert!(navigation_is_allowed("history", &url));
+            assert!(!navigation_is_allowed("main", &url));
+        }
+
+        assert!(!navigation_is_allowed(
+            "history",
+            &"tauri://localhost/index.html".parse().unwrap()
+        ));
+        assert!(!navigation_is_allowed(
+            "settings",
+            &"tauri://localhost/index.html".parse().unwrap()
+        ));
+    }
+
+    #[test]
+    fn release_navigation_rejects_the_development_server() {
+        let url = "http://127.0.0.1:1420/index.html".parse().unwrap();
+
+        assert!(navigation_is_allowed_for_environment("main", &url, true));
+        assert!(!navigation_is_allowed_for_environment("main", &url, false));
+    }
+
+    #[test]
+    fn navigation_guard_rejects_credentials_on_a_trusted_host() {
+        for url in [
+            "http://user@tauri.localhost/",
+            "https://user:password@tauri.localhost/index.html",
+        ] {
+            assert!(!navigation_is_allowed("main", &url.parse().unwrap()));
         }
     }
 }
