@@ -298,4 +298,32 @@ mod tests {
 
         assert_eq!(status.provider_id, "minimax");
     }
+
+    #[test]
+    #[ignore = "requires the Windows Credential Manager"]
+    fn windows_backend_round_trips_an_isolated_probe_credential() {
+        const PROVIDER_ID: &str = "reflex-production-credential-probe";
+        const SECRET: &str = "fixture-windows-credential-probe-9a8b7c6d";
+
+        struct ProbeCleanup;
+
+        impl Drop for ProbeCleanup {
+            fn drop(&mut self) {
+                let _ = SecretStore::windows().delete(PROVIDER_ID);
+            }
+        }
+
+        let store = SecretStore::windows();
+        let _cleanup = ProbeCleanup;
+        store.delete(PROVIDER_ID).unwrap();
+
+        let saved = store.save(PROVIDER_ID, SECRET).unwrap();
+        assert!(saved.configured);
+        assert_eq!(saved.masked_tail.as_deref(), Some("7c6d"));
+        assert_eq!(store.read(PROVIDER_ID).unwrap().as_deref(), Some(SECRET));
+
+        let deleted = store.delete(PROVIDER_ID).unwrap();
+        assert!(!deleted.configured);
+        assert!(store.read(PROVIDER_ID).unwrap().is_none());
+    }
 }
