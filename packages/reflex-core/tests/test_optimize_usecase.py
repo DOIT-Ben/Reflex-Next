@@ -82,6 +82,13 @@ def test_cancel_stops_before_done_even_if_provider_ignores_cancellation():
     assert events[-1].event.data["phase"] == "cancelled"
     chunks = [event.event.data["text"] for event in events if event.event.type is EventType.CHUNK]
     assert chunks == ["first"]
+    terminal_events = [
+        event
+        for event in events
+        if event.event.type in {EventType.DONE, EventType.ERROR}
+        or event.event.data.get("phase") == "cancelled"
+    ]
+    assert len(terminal_events) == 1
 
 
 def test_operation_cancelled_from_provider_emits_cancelled_terminal_status():

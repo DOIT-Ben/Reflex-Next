@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import ssl
-import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from reflex_core import CancellationToken, OptimizeRequest
+from reflex_core import CancellationToken, OperationCancelled, OptimizeRequest
 
 from .protocol import ProtocolError, iter_sse_content, parse_json_content
 
@@ -105,7 +104,7 @@ class CompatibleProvider:
         config: Any,
         *,
         transport: httpx.BaseTransport | None = None,
-        sleep: Callable[[float], None] = time.sleep,
+        sleep: Callable[[float], None] | None = None,
     ) -> None:
         normalized_secret = secret.strip() if isinstance(secret, str) else ""
         if not normalized_secret:
@@ -145,43 +144,50 @@ class CompatibleProvider:
         idempotency_key = str(uuid.uuid4())
         yielded_content = False
 
+        client: httpx.Client | None = None
+        unregister_client: Callable[[], None] = lambda: None
         try:
-            with self._build_client() as client:
-                for attempt in range(MAX_ATTEMPTS):
+            client = self._build_client()
+            unregister_client = cancellation.register(client.close)
+            cancellation.raise_if_cancelled()
+            for attempt in range(MAX_ATTEMPTS):
+                if cancellation.is_cancelled:
+                    return
+                try:
+                    attempt_had_content = False
+                    for content in self._stream_once(
+                        client,
+                        payload,
+                        idempotency_key,
+                        cancellation,
+                    ):
+                        if cancellation.is_cancelled:
+                            return
+                        attempt_had_content = True
+                        yielded_content = True
+                        yield content
                     if cancellation.is_cancelled:
                         return
-                    try:
-                        attempt_had_content = False
-                        for content in self._stream_once(
-                            client,
-                            payload,
-                            idempotency_key,
-                            cancellation,
-                        ):
-                            if cancellation.is_cancelled:
-                                return
-                            attempt_had_content = True
-                            yielded_content = True
-                            yield content
-                        if cancellation.is_cancelled:
-                            return
-                        if not attempt_had_content:
-                            raise CompatibleProviderError(
-                                "provider_empty_response", retryable=False
-                            )
+                    if not attempt_had_content:
+                        raise CompatibleProviderError(
+                            "provider_empty_response", retryable=False
+                        )
+                    return
+                except CompatibleProviderError as error:
+                    if cancellation.is_cancelled:
                         return
-                    except CompatibleProviderError as error:
-                        if cancellation.is_cancelled:
-                            return
-                        if (
-                            yielded_content
-                            or not error.retryable
-                            or attempt == MAX_ATTEMPTS - 1
-                        ):
-                            raise
-                        self._sleep(RETRY_DELAYS_SECONDS[attempt])
-                        if cancellation.is_cancelled:
-                            return
+                    if (
+                        yielded_content
+                        or not error.retryable
+                        or attempt == MAX_ATTEMPTS - 1
+                    ):
+                        raise
+                    if self._wait_for_retry(
+                        cancellation, RETRY_DELAYS_SECONDS[attempt]
+                    ):
+                        return
+        except OperationCancelled:
+            return
         except CompatibleProviderError:
             raise
         except httpx.TimeoutException:
@@ -194,6 +200,10 @@ class CompatibleProvider:
             raise CompatibleProviderError(
                 "provider_invalid_response", retryable=False
             ) from None
+        finally:
+            unregister_client()
+            if client is not None:
+                _close_quietly(client)
 
     def _stream_once(
         self,
@@ -214,47 +224,66 @@ class CompatibleProvider:
                 },
                 json=payload,
             ) as response:
-                status_error = _error_for_status(response.status_code)
-                if status_error is not None:
-                    raise status_error
-                if cancellation.is_cancelled:
-                    response.close()
-                    return
+                unregister_response = cancellation.register(response.close)
+                try:
+                    cancellation.raise_if_cancelled()
+                    status_error = _error_for_status(response.status_code)
+                    if status_error is not None:
+                        raise status_error
 
-                content_type = response.headers.get("content-type", "").lower()
-                if "json" in content_type or not payload["stream"]:
-                    content = parse_json_content(
-                        response.iter_bytes(), max_bytes=MAX_RESPONSE_BYTES
-                    )
-                    if content:
-                        yield content
-                    return
-
-                for content in iter_sse_content(
-                    response.iter_bytes(),
-                    max_bytes=MAX_RESPONSE_BYTES,
-                    max_events=MAX_STREAM_EVENTS,
-                ):
-                    if cancellation.is_cancelled:
-                        response.close()
+                    content_type = response.headers.get("content-type", "").lower()
+                    if "json" in content_type or not payload["stream"]:
+                        content = parse_json_content(
+                            response.iter_bytes(), max_bytes=MAX_RESPONSE_BYTES
+                        )
+                        cancellation.raise_if_cancelled()
+                        if content:
+                            yield content
                         return
-                    yield content
+
+                    for content in iter_sse_content(
+                        response.iter_bytes(),
+                        max_bytes=MAX_RESPONSE_BYTES,
+                        max_events=MAX_STREAM_EVENTS,
+                    ):
+                        cancellation.raise_if_cancelled()
+                        yield content
+                finally:
+                    unregister_response()
+        except OperationCancelled:
+            raise
         except CompatibleProviderError:
             raise
         except httpx.TimeoutException:
+            if cancellation.is_cancelled:
+                raise OperationCancelled("operation cancelled") from None
             raise CompatibleProviderError("provider_timeout", retryable=True) from None
         except httpx.NetworkError:
+            if cancellation.is_cancelled:
+                raise OperationCancelled("operation cancelled") from None
             raise CompatibleProviderError(
                 "provider_network_error", retryable=True
             ) from None
         except ProtocolError:
+            if cancellation.is_cancelled:
+                raise OperationCancelled("operation cancelled") from None
             raise CompatibleProviderError(
                 "provider_invalid_response", retryable=False
             ) from None
         except (httpx.HTTPError, OSError, ValueError):
+            if cancellation.is_cancelled:
+                raise OperationCancelled("operation cancelled") from None
             raise CompatibleProviderError(
                 "provider_invalid_response", retryable=False
             ) from None
+
+    def _wait_for_retry(
+        self, cancellation: CancellationToken, delay_seconds: float
+    ) -> bool:
+        if self._sleep is None:
+            return cancellation.wait(delay_seconds)
+        self._sleep(delay_seconds)
+        return cancellation.is_cancelled
 
     def _request_payload(
         self, rendered_request: Any, request: OptimizeRequest
@@ -378,3 +407,10 @@ def _config_timeout(config: Any) -> float:
     if not 1.0 <= timeout <= 300.0:
         raise CompatibleProviderError("provider_invalid_response", retryable=False)
     return timeout
+
+
+def _close_quietly(resource: Any) -> None:
+    try:
+        resource.close()
+    except Exception:
+        pass

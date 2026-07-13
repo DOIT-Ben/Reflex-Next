@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import ssl
-import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any
 
 import httpx
 
-from reflex_core import CancellationToken, OptimizeRequest
+from reflex_core import CancellationToken, OperationCancelled, OptimizeRequest
 
 from .sse import SseProtocolError, extract_json_content, iter_content_chunks
 
 DEFAULT_BASE_URL = "https://api.minimaxi.com/v1/chat/completions"
 DEFAULT_MODEL = "MiniMax-M2.7-highspeed"
 SUPPORTED_MODELS = (DEFAULT_MODEL,)
+RETRY_DELAYS_SECONDS = (0.25, 0.5)
 
 _SAFE_MESSAGES = {
     "provider_auth_failed": "Provider authentication failed.",
@@ -47,7 +47,7 @@ class MiniMaxProvider:
         config: Any,
         *,
         transport: httpx.BaseTransport | None = None,
-        sleep: Callable[[float], None] = time.sleep,
+        sleep: Callable[[float], None] | None = None,
     ) -> None:
         normalized_secret = secret.strip() if isinstance(secret, str) else ""
         if not normalized_secret:
@@ -77,28 +77,39 @@ class MiniMaxProvider:
         payload = self._request_payload(rendered_request, request)
         yielded_content = False
 
+        client: httpx.Client | None = None
+        unregister_client: Callable[[], None] = lambda: None
         try:
-            with self._build_client() as client:
-                for attempt in range(3):
-                    try:
-                        attempt_had_content = False
-                        for chunk in self._stream_once(client, payload, cancellation):
-                            if cancellation.is_cancelled:
-                                return
-                            attempt_had_content = True
-                            yielded_content = True
-                            yield chunk
+            client = self._build_client()
+            unregister_client = cancellation.register(client.close)
+            cancellation.raise_if_cancelled()
+            for attempt in range(3):
+                try:
+                    attempt_had_content = False
+                    for chunk in self._stream_once(client, payload, cancellation):
                         if cancellation.is_cancelled:
                             return
-                        if not attempt_had_content:
-                            raise MiniMaxProviderError("provider_empty_response", retryable=False)
+                        attempt_had_content = True
+                        yielded_content = True
+                        yield chunk
+                    if cancellation.is_cancelled:
                         return
-                    except MiniMaxProviderError as error:
-                        if cancellation.is_cancelled:
-                            return
-                        if yielded_content or not error.retryable or attempt == 2:
-                            raise
-                        self._sleep((0.25, 0.5)[attempt])
+                    if not attempt_had_content:
+                        raise MiniMaxProviderError(
+                            "provider_empty_response", retryable=False
+                        )
+                    return
+                except MiniMaxProviderError as error:
+                    if cancellation.is_cancelled:
+                        return
+                    if yielded_content or not error.retryable or attempt == 2:
+                        raise
+                    if self._wait_for_retry(
+                        cancellation, RETRY_DELAYS_SECONDS[attempt]
+                    ):
+                        return
+        except OperationCancelled:
+            return
         except MiniMaxProviderError:
             raise
         except httpx.TimeoutException:
@@ -107,6 +118,10 @@ class MiniMaxProvider:
             raise MiniMaxProviderError("provider_network_error", retryable=True) from None
         except (httpx.HTTPError, OSError, ValueError):
             raise MiniMaxProviderError("provider_invalid_response", retryable=False) from None
+        finally:
+            unregister_client()
+            if client is not None:
+                _close_quietly(client)
 
     def _stream_once(
         self,
@@ -125,47 +140,68 @@ class MiniMaxProvider:
                 },
                 json=payload,
             ) as response:
-                status_error = _error_for_status(response.status_code)
-                if status_error is not None:
-                    raise status_error
-                if cancellation.is_cancelled:
-                    response.close()
-                    return
+                unregister_response = cancellation.register(response.close)
+                try:
+                    cancellation.raise_if_cancelled()
+                    status_error = _error_for_status(response.status_code)
+                    if status_error is not None:
+                        raise status_error
 
-                content_type = response.headers.get("content-type", "").lower()
-                if "application/json" in content_type:
+                    content_type = response.headers.get("content-type", "").lower()
+                    if "application/json" in content_type:
+                        try:
+                            parsed = response.json()
+                        except ValueError:
+                            if cancellation.is_cancelled:
+                                raise OperationCancelled("operation cancelled") from None
+                            raise MiniMaxProviderError(
+                                "provider_invalid_response", retryable=False
+                            ) from None
+                        payloads = parsed if isinstance(parsed, list) else [parsed]
+                        for item in payloads:
+                            cancellation.raise_if_cancelled()
+                            content = extract_json_content(item)
+                            if content:
+                                cancellation.raise_if_cancelled()
+                                yield content
+                        return
+
                     try:
-                        parsed = response.json()
-                    except ValueError:
+                        for content in iter_content_chunks(response.iter_lines()):
+                            cancellation.raise_if_cancelled()
+                            yield content
+                    except SseProtocolError:
+                        if cancellation.is_cancelled:
+                            raise OperationCancelled("operation cancelled") from None
                         raise MiniMaxProviderError(
                             "provider_invalid_response", retryable=False
                         ) from None
-                    payloads = parsed if isinstance(parsed, list) else [parsed]
-                    for item in payloads:
-                        if cancellation.is_cancelled:
-                            response.close()
-                            return
-                        content = extract_json_content(item)
-                        if content:
-                            yield content
-                    return
-
-                try:
-                    for content in iter_content_chunks(response.iter_lines()):
-                        if cancellation.is_cancelled:
-                            response.close()
-                            return
-                        yield content
-                except SseProtocolError:
-                    raise MiniMaxProviderError(
-                        "provider_invalid_response", retryable=False
-                    ) from None
+                finally:
+                    unregister_response()
+        except OperationCancelled:
+            raise
         except MiniMaxProviderError:
             raise
         except httpx.TimeoutException:
+            if cancellation.is_cancelled:
+                raise OperationCancelled("operation cancelled") from None
             raise MiniMaxProviderError("provider_timeout", retryable=True) from None
         except httpx.NetworkError:
+            if cancellation.is_cancelled:
+                raise OperationCancelled("operation cancelled") from None
             raise MiniMaxProviderError("provider_network_error", retryable=True) from None
+        except (httpx.HTTPError, OSError, ValueError):
+            if cancellation.is_cancelled:
+                raise OperationCancelled("operation cancelled") from None
+            raise MiniMaxProviderError("provider_invalid_response", retryable=False) from None
+
+    def _wait_for_retry(
+        self, cancellation: CancellationToken, delay_seconds: float
+    ) -> bool:
+        if self._sleep is None:
+            return cancellation.wait(delay_seconds)
+        self._sleep(delay_seconds)
+        return cancellation.is_cancelled
 
     def _request_payload(
         self,
@@ -263,3 +299,10 @@ def _config_timeout(config: Any) -> float:
     if not 1.0 <= timeout <= 300.0:
         raise MiniMaxProviderError("provider_invalid_response", retryable=False)
     return timeout
+
+
+def _close_quietly(resource: Any) -> None:
+    try:
+        resource.close()
+    except Exception:
+        pass

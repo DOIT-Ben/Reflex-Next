@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import httpx
@@ -9,6 +10,7 @@ import pytest
 
 from reflex_core import CancellationToken, OptimizeRequest
 from reflex_provider_minimax import plugin
+from reflex_provider_minimax import provider as provider_module
 from reflex_provider_minimax.provider import MiniMaxProvider, MiniMaxProviderError
 
 
@@ -16,6 +18,33 @@ FIXTURES = Path(__file__).parent / "fixtures"
 STREAM_BYTES = (FIXTURES / "stream_success.jsonl").read_bytes()
 JSON_BYTES = (FIXTURES / "json_success.json").read_bytes()
 PRIVATE_SENTINEL = "fixture-private-credential"
+
+
+class BlockingByteStream(httpx.SyncByteStream):
+    def __init__(self, late_content: bytes) -> None:
+        self.started = Event()
+        self.closed = Event()
+        self.close_calls = 0
+        self._late_content = late_content
+
+    def __iter__(self):
+        self.started.set()
+        assert self.closed.wait(5.0)
+        yield self._late_content
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self.closed.set()
+
+
+class ObservedCancellationToken(CancellationToken):
+    def __init__(self) -> None:
+        super().__init__()
+        self.waiting = Event()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        self.waiting.set()
+        return super().wait(timeout)
 
 
 def provider_config(**overrides):
@@ -219,6 +248,78 @@ def test_cancellation_before_send_avoids_the_network_and_after_first_chunk_stops
     assert attempts == 1
 
 
+def test_cancellation_closes_a_blocked_response_without_yielding_late_content():
+    blocked = BlockingByteStream(
+        b'data: {"choices":[{"delta":{"content":"late-private-content"}}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+    provider = MiniMaxProvider(
+        PRIVATE_SENTINEL,
+        provider_config(),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=blocked,
+            )
+        ),
+    )
+    token = CancellationToken()
+    chunks: list[str] = []
+    errors: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            chunks.extend(provider.stream({"text": "input"}, request(), token))
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = Thread(target=consume, daemon=True)
+    thread.start()
+    assert blocked.started.wait(1.0)
+
+    token.cancel()
+
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+    assert blocked.close_calls >= 1
+    assert chunks == []
+    assert errors == []
+
+
+def test_cancellation_interrupts_retry_backoff_immediately(monkeypatch):
+    monkeypatch.setattr(provider_module, "RETRY_DELAYS_SECONDS", (30.0, 30.0))
+    token = ObservedCancellationToken()
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    provider = MiniMaxProvider(
+        PRIVATE_SENTINEL,
+        provider_config(),
+        transport=httpx.MockTransport(handler),
+    )
+    chunks: list[str] = []
+    thread = Thread(
+        target=lambda: chunks.extend(
+            provider.stream({"text": "input"}, request(), token)
+        ),
+        daemon=True,
+    )
+    thread.start()
+    assert token.waiting.wait(1.0)
+
+    token.cancel()
+
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+    assert calls == 1
+    assert chunks == []
+
+
 def test_empty_successful_response_is_a_stable_error_without_retry():
     attempts = 0
 
@@ -265,3 +366,19 @@ def test_transport_errors_map_without_raw_details(raised, code):
 
     assert caught.value.code == code
     assert "private" not in str(caught.value)
+
+
+def test_missing_ca_bundle_maps_to_safe_error_without_path_leakage():
+    private_path = r"C:\private-provider-config\missing-ca.pem"
+    provider = MiniMaxProvider(
+        PRIVATE_SENTINEL,
+        provider_config(ca_bundle_path=private_path),
+    )
+
+    with pytest.raises(MiniMaxProviderError) as caught:
+        list(provider.stream({"text": "input"}, request(), CancellationToken()))
+
+    assert caught.value.code == "provider_invalid_response"
+    assert caught.value.retryable is False
+    assert private_path not in str(caught.value)
+    assert private_path not in repr(caught.value)

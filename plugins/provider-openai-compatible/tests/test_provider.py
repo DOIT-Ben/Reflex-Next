@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import httpx
@@ -18,6 +19,33 @@ from reflex_provider_openai_compatible.provider import (
 FACTORIES = (deepseek, qwen, zhipu, siliconflow)
 PRIVATE_SENTINEL = "fixture-private-credential"
 PRIVATE_RESPONSE = "private-response-body"
+
+
+class BlockingByteStream(httpx.SyncByteStream):
+    def __init__(self, late_content: bytes) -> None:
+        self.started = Event()
+        self.closed = Event()
+        self.close_calls = 0
+        self._late_content = late_content
+
+    def __iter__(self):
+        self.started.set()
+        assert self.closed.wait(5.0)
+        yield self._late_content
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self.closed.set()
+
+
+class ObservedCancellationToken(CancellationToken):
+    def __init__(self) -> None:
+        super().__init__()
+        self.waiting = Event()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        self.waiting.set()
+        return super().wait(timeout)
 
 
 def provider_config(factory, **overrides):
@@ -350,6 +378,30 @@ def test_transport_errors_are_retryable_and_do_not_expose_raw_details(
     assert "private" not in repr(caught.value)
 
 
+def test_missing_ca_bundle_maps_to_safe_error_without_path_leakage():
+    factory = qwen()
+    private_path = r"C:\private-provider-config\missing-ca.pem"
+    provider = CompatibleProvider(
+        factory,
+        PRIVATE_SENTINEL,
+        provider_config(factory, ca_bundle_path=private_path),
+    )
+
+    with pytest.raises(CompatibleProviderError) as caught:
+        list(
+            provider.stream(
+                {"text": "input"},
+                optimize_request(factory),
+                CancellationToken(),
+            )
+        )
+
+    assert caught.value.code == "provider_invalid_response"
+    assert caught.value.retryable is False
+    assert private_path not in str(caught.value)
+    assert private_path not in repr(caught.value)
+
+
 @pytest.mark.parametrize(
     "response",
     [
@@ -539,3 +591,74 @@ def test_cancellation_before_send_and_after_content_stops_cleanly():
     token.cancel()
     assert list(stream) == []
     assert calls == 1
+
+
+def test_cancellation_closes_a_blocked_response_without_yielding_late_content():
+    factory = deepseek()
+    blocked = BlockingByteStream(sse("late-private-content"))
+    provider = build_provider(
+        factory,
+        lambda _: httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=blocked,
+        ),
+    )
+    token = CancellationToken()
+    chunks: list[str] = []
+    errors: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            chunks.extend(
+                provider.stream({"text": "input"}, optimize_request(factory), token)
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = Thread(target=consume, daemon=True)
+    thread.start()
+    assert blocked.started.wait(1.0)
+
+    token.cancel()
+
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+    assert blocked.close_calls >= 1
+    assert chunks == []
+    assert errors == []
+
+
+def test_cancellation_interrupts_retry_backoff_immediately(monkeypatch):
+    monkeypatch.setattr(provider_module, "RETRY_DELAYS_SECONDS", (30.0, 30.0))
+    factory = deepseek()
+    token = ObservedCancellationToken()
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    provider = CompatibleProvider(
+        factory,
+        PRIVATE_SENTINEL,
+        provider_config(factory),
+        transport=httpx.MockTransport(handler),
+    )
+    chunks: list[str] = []
+    thread = Thread(
+        target=lambda: chunks.extend(
+            provider.stream({"text": "input"}, optimize_request(factory), token)
+        ),
+        daemon=True,
+    )
+    thread.start()
+    assert token.waiting.wait(1.0)
+
+    token.cancel()
+
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+    assert calls == 1
+    assert chunks == []
