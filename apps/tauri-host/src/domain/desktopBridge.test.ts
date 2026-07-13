@@ -35,8 +35,17 @@ describe("desktop bridge", () => {
       message: null
     });
     await expect(bridge.listen((action) => actions.push(action))).resolves.toBe(unlisten);
+    await bridge.minimizeWindow();
+    await bridge.toggleMaximizeWindow();
+    await bridge.setWindowSize("wide");
     expect(actions).toEqual(["settings"]);
-    expect(calls).toEqual(["desktop_status", "reflex://host-action"]);
+    expect(calls).toEqual([
+      "desktop_status",
+      "reflex://host-action",
+      "minimize_window",
+      "toggle_maximize_window",
+      "set_window_size"
+    ]);
   });
 
   it("maps only fixed hotkey failures to the specific settings message", () => {

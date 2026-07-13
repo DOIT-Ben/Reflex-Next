@@ -1,4 +1,5 @@
 import type { TauriHostApi } from "./coreBridge";
+import type { WindowSizePreset } from "./viewControls";
 
 const HOST_ACTION_EVENT = "reflex://host-action";
 const HOTKEY_UNAVAILABLE_MESSAGE = "快捷键不可用，请更换组合后重试。";
@@ -14,6 +15,9 @@ export type DesktopStatus = {
 export type DesktopBridge = {
   status(): Promise<DesktopStatus>;
   listen(handler: (action: HostAction) => void): Promise<() => void>;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<void>;
+  setWindowSize(preset: WindowSizePreset): Promise<void>;
 };
 
 export function createDesktopBridge(host: TauriHostApi): DesktopBridge {
@@ -26,6 +30,15 @@ export function createDesktopBridge(host: TauriHostApi): DesktopBridge {
         const action = hostActionFrom(payload);
         if (action) handler(action);
       });
+    },
+    async minimizeWindow() {
+      await host.invoke("minimize_window");
+    },
+    async toggleMaximizeWindow() {
+      await host.invoke("toggle_maximize_window");
+    },
+    async setWindowSize(preset) {
+      await host.invoke("set_window_size", { preset });
     }
   };
 }

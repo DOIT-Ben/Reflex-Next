@@ -109,6 +109,7 @@ button:disabled {
   border: 1px solid rgb(255 255 255 / 72%);
   border-radius: 26px;
   box-shadow: 0 26px 72px rgb(54 70 100 / 14%), 0 4px 16px rgb(54 70 100 / 7%);
+  zoom: var(--view-scale, 1);
 }
 
 .top-bar {
@@ -200,6 +201,63 @@ button:disabled {
 .provider-pill .provider-state-label {
   color: var(--weak);
   font-size: 11px;
+}
+
+.view-controls,
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.view-controls {
+  margin-left: 8px;
+  padding: 3px;
+  background: rgb(255 255 255 / 64%);
+  border: 1px solid rgb(225 230 238 / 84%);
+  border-radius: 10px;
+}
+
+.window-controls {
+  padding-left: 4px;
+  margin-left: 2px;
+  border-left: 1px solid var(--line);
+}
+
+.view-control,
+.view-scale {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border-radius: 7px;
+  font-size: 14px;
+  line-height: 1;
+  transition: color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.view-scale {
+  width: 42px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+@media (hover: hover) {
+  .view-control:hover,
+  .view-scale:hover {
+    color: var(--accent);
+    background: var(--accent-soft);
+    transform: translateY(-1px);
+  }
+}
+
+.view-control:active,
+.view-scale:active {
+  transform: scale(0.94);
 }
 
 .icon-button {

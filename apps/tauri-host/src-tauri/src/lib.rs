@@ -57,6 +57,9 @@ pub fn run() {
             commands::show_main_window,
             commands::hide_main_window,
             commands::show_history_window,
+            commands::minimize_window,
+            commands::toggle_maximize_window,
+            commands::set_window_size,
             commands::desktop_status,
             commands::load_app_config,
             commands::save_app_config,
@@ -134,6 +137,9 @@ mod tests {
             "allow-runtime-plugin-call",
             "allow-runtime-plugin-cancel",
             "allow-show-history-window",
+            "allow-minimize-window",
+            "allow-toggle-maximize-window",
+            "allow-set-window-size",
         ] {
             assert!(permissions.contains(&permission), "missing {permission}");
         }

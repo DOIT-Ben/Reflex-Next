@@ -61,6 +61,12 @@
   } from "./domain/desktopBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
   import {
+    normalizeViewScale,
+    stepViewScale,
+    viewScaleLabel,
+    type WindowSizePreset
+  } from "./domain/viewControls";
+  import {
     createSettingsApi,
     type AppConfig,
     type SecretStatus,
@@ -288,6 +294,7 @@
   let moreActionsOpen = false;
   let moreActionsButton: HTMLButtonElement | null = null;
   let resultRatingBusy = false;
+  let viewScale = 1;
   let summary = "";
   let tr: (source: string, values?: Record<string, string | number>) => string = (source) => source;
 
@@ -295,6 +302,8 @@
     let disposed = false;
     let stopListening: (() => void) | null = null;
     let stopHistoryReuseListening: (() => void) | null = null;
+
+    viewScale = readViewScale();
 
     void createTauriHostApi().then(async (host) => {
       if (!host || disposed) return;
@@ -1397,6 +1406,23 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        changeViewScale("in");
+        return;
+      }
+      if (event.key === "-") {
+        event.preventDefault();
+        changeViewScale("out");
+        return;
+      }
+      if (event.key === "0") {
+        event.preventDefault();
+        setViewScale(1);
+        return;
+      }
+    }
     if (state.overlay === "template_manager") {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -1457,6 +1483,51 @@
     void hostApi?.invoke("hide_main_window").catch(() => undefined);
   }
 
+  function readViewScale(): number {
+    try {
+      return normalizeViewScale(Number(window.localStorage.getItem("reflex-view-scale") ?? 1));
+    } catch {
+      return 1;
+    }
+  }
+
+  function setViewScale(next: number) {
+    viewScale = normalizeViewScale(next);
+    try {
+      window.localStorage.setItem("reflex-view-scale", String(viewScale));
+    } catch {
+      // The view remains usable when browser storage is unavailable.
+    }
+  }
+
+  function changeViewScale(direction: "in" | "out") {
+    setViewScale(stepViewScale(viewScale, direction));
+  }
+
+  async function minimizeWindow() {
+    try {
+      await desktopBridge?.minimizeWindow();
+    } catch {
+      showToast("窗口操作暂不可用。");
+    }
+  }
+
+  async function toggleMaximizeWindow() {
+    try {
+      await desktopBridge?.toggleMaximizeWindow();
+    } catch {
+      showToast("窗口操作暂不可用。");
+    }
+  }
+
+  async function setWindowSize(preset: WindowSizePreset) {
+    try {
+      await desktopBridge?.setWindowSize(preset);
+    } catch {
+      showToast("窗口尺寸暂不可用。");
+    }
+  }
+
   function isGenerating(phase: HostState["phase"]): boolean {
     return phase === "analyzing_scene" || phase === "connecting_provider" || phase === "streaming";
   }
@@ -1501,10 +1572,10 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-<main class="app-shell" data-phase={state.phase} data-theme={settingsDraft.theme}>
+<main class="app-shell" data-phase={state.phase} data-theme={settingsDraft.theme} style={`--view-scale: ${viewScale}`}>
   <section class="window" aria-label="Reflex quick window">
     <header class="top-bar">
-      <div class="brand">
+      <div class="brand" data-tauri-drag-region="true">
         <span class="brand-mark">R</span>
         <strong>Reflex</strong>
       </div>
@@ -1523,6 +1594,19 @@
         <span class="provider-name">{tr(providerDisplayName(state.requestDraft.provider))}</span>
         <span class="provider-state-label">{providerStatusText}</span>
       </button>
+      <div class="view-controls" role="group" aria-label="视图控制">
+        <button class="view-control" type="button" aria-label="缩小界面" title="缩小界面" on:click={() => changeViewScale("out")}>−</button>
+        <button class="view-scale" type="button" title="重置缩放" on:click={() => setViewScale(1)}>{viewScaleLabel(viewScale)}</button>
+        <button class="view-control" type="button" aria-label="放大界面" title="放大界面" on:click={() => changeViewScale("in")}>+</button>
+        {#if desktopBridge}
+          <span class="window-controls" aria-label="窗口控制">
+            <button class="view-control" type="button" aria-label="紧凑窗口" title="紧凑窗口" on:click={() => setWindowSize("compact")}>⊡</button>
+            <button class="view-control" type="button" aria-label="宽窗口" title="宽窗口" on:click={() => setWindowSize("wide")}>↔</button>
+            <button class="view-control" type="button" aria-label="最小化窗口" title="最小化窗口" on:click={minimizeWindow}>—</button>
+            <button class="view-control" type="button" aria-label="最大化或恢复窗口" title="最大化或恢复窗口" on:click={toggleMaximizeWindow}>□</button>
+          </span>
+        {/if}
+      </div>
       <button class="icon-button" aria-label={t(uiLanguage, "settings")} on:click={beginSettings}>⚙</button>
     </header>
 

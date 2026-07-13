@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::config_store::{AppConfig, ConfigStore};
@@ -124,6 +124,17 @@ fn runtime_available_value() -> bool {
     crate::sidecar::resolve_runtime_paths().is_ok()
 }
 
+const WINDOW_CONTROL_UNAVAILABLE_MESSAGE: &str = "窗口操作暂不可用，请稍后重试。";
+
+fn window_size_preset(preset: &str) -> Option<(f64, f64)> {
+    match preset {
+        "compact" => Some((680.0, 480.0)),
+        "default" => Some((760.0, 540.0)),
+        "wide" => Some((900.0, 640.0)),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 pub async fn read_clipboard_text(app: AppHandle) -> Result<String, String> {
     crate::clipboard::read_clipboard_text(&app).map_err(str::to_string)
@@ -147,6 +158,42 @@ pub async fn hide_main_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn show_history_window(app: AppHandle) -> Result<(), String> {
     crate::window::show_history_window(&app).map_err(str::to_string)
+}
+
+#[tauri::command]
+pub async fn minimize_window(window: WebviewWindow) -> Result<(), String> {
+    require_main_window(window.label())?;
+    window
+        .minimize()
+        .map_err(|_| WINDOW_CONTROL_UNAVAILABLE_MESSAGE.to_string())
+}
+
+#[tauri::command]
+pub async fn toggle_maximize_window(window: WebviewWindow) -> Result<(), String> {
+    require_main_window(window.label())?;
+    let maximized = window
+        .is_maximized()
+        .map_err(|_| WINDOW_CONTROL_UNAVAILABLE_MESSAGE.to_string())?;
+    if maximized {
+        window
+            .unmaximize()
+            .map_err(|_| WINDOW_CONTROL_UNAVAILABLE_MESSAGE.to_string())
+    } else {
+        window
+            .maximize()
+            .map_err(|_| WINDOW_CONTROL_UNAVAILABLE_MESSAGE.to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn set_window_size(window: WebviewWindow, preset: String) -> Result<(), String> {
+    require_main_window(window.label())?;
+    let Some((width, height)) = window_size_preset(&preset) else {
+        return Err(WINDOW_CONTROL_UNAVAILABLE_MESSAGE.to_string());
+    };
+    window
+        .set_size(LogicalSize::new(width, height))
+        .map_err(|_| WINDOW_CONTROL_UNAVAILABLE_MESSAGE.to_string())
 }
 
 #[tauri::command]
@@ -1350,6 +1397,14 @@ mod tests {
     use crate::runtime_commands::{CommandKind, ValidatedCommand};
     use crate::secret_store::{CredentialBackend, SecretStore};
     use crate::sidecar::{EventEmitter, RuntimeController};
+
+    #[test]
+    fn window_size_presets_are_fixed_and_bounded() {
+        assert_eq!(super::window_size_preset("compact"), Some((680.0, 480.0)));
+        assert_eq!(super::window_size_preset("default"), Some((760.0, 540.0)));
+        assert_eq!(super::window_size_preset("wide"), Some((900.0, 640.0)));
+        assert_eq!(super::window_size_preset("1920x1080"), None);
+    }
 
     struct EmptyCredentialBackend;
 
