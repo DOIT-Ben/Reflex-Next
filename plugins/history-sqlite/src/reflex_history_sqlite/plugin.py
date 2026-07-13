@@ -191,8 +191,12 @@ class HistorySqlitePlugin:
                 self._maintenance.begin(cancellation, block_reads=True)
                 try:
                     repository.recover_interrupted_replace()
-                    if repository.has_rotation_checkpoint():
-                        raise HistoryPluginError("history_busy")
+                    try:
+                        if repository.has_rotation_checkpoint():
+                            raise HistoryPluginError("history_busy")
+                    except sqlite3.Error as error:
+                        if _sqlite_base_error_code(error) not in SQLITE_CORRUPTION_CODES:
+                            raise
                     result = repository.restore(backup_id, cancellation)
                     self._clear_recovery(service_snapshot.database_path)
                     return result

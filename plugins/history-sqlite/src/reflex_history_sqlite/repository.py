@@ -363,29 +363,72 @@ class HistoryRepository:
 
     def restore(self, backup_id: str, cancellation: Any) -> dict[str, Any]:
         selected = self._listed_backup(backup_id)
-        pre_restore = self.create_backup(cancellation)
         temporary = self._path.with_name(f".{self._path.name}.restore-{uuid.uuid4().hex}.tmp")
+        pre_restore_id: str | None = None
         try:
-            self._copy_database(self._backup_directory() / f"{selected['id']}.sqlite3", temporary, cancellation)
-            verification = self._verify_database(temporary, cancellation)
-            if (
-                verification["record_count"] != selected["record_count"]
-                or verification["corrupted"] != 0
-            ):
+            try:
+                self._copy_database(
+                    self._backup_directory() / f"{selected['id']}.sqlite3",
+                    temporary,
+                    cancellation,
+                )
+                verification = self._verify_database(temporary, cancellation)
+                self._require_indexes(temporary)
+            except OperationCancelled:
+                raise
+            except (HistoryPluginError, sqlite3.Error, OSError) as error:
+                raise HistoryPluginError("history_backup_invalid") from error
+            if not self._verification_matches_manifest(verification, selected):
                 raise HistoryPluginError("history_backup_invalid")
+
+            current_verification: dict[str, Any] | None = None
+            try:
+                current_verification = self._verify_database(
+                    self._path, cancellation
+                )
+                self._require_indexes(self._path)
+                if current_verification["corrupted"] != 0:
+                    current_verification = None
+            except OperationCancelled:
+                raise
+            except (HistoryPluginError, sqlite3.Error, OSError):
+                current_verification = None
+
+            if (
+                current_verification is not None
+                and current_verification["content_digest"]
+                == verification["content_digest"]
+            ):
+                temporary.unlink(missing_ok=True)
+                return {
+                    "restored": True,
+                    "backup_id": backup_id,
+                    "pre_restore_backup_id": None,
+                }
+
+            if current_verification is not None:
+                pre_restore_id = self.create_backup(cancellation)["id"]
             cancellation.raise_if_cancelled()
             self._replace_database(
                 temporary,
                 cancellation,
                 expected_record_count=selected["record_count"],
+                checkpoint_current=current_verification is not None,
             )
         except HistoryPluginError:
+            temporary.unlink(missing_ok=True)
+            raise
+        except OperationCancelled:
             temporary.unlink(missing_ok=True)
             raise
         except Exception as error:
             temporary.unlink(missing_ok=True)
             raise HistoryPluginError("history_recovery_required") from error
-        return {"restored": True, "backup_id": backup_id, "pre_restore_backup_id": pre_restore["id"]}
+        return {
+            "restored": True,
+            "backup_id": backup_id,
+            "pre_restore_backup_id": pre_restore_id,
+        }
 
     def has_rotation_checkpoint(self) -> bool:
         if not self.exists:
@@ -417,8 +460,10 @@ class HistoryRepository:
                     )
                     connection.commit()
                 self._rotation_phase_hook("metadata")
-            elif checkpoint["target_version"] != target_version:
-                raise HistoryPluginError("history_busy")
+            else:
+                self._validate_rotation_checkpoint(
+                    checkpoint, target_version, cancellation
+                )
             while True:
                 cancellation.raise_if_cancelled()
                 changed = self._reencrypt_batch(target_version, batch_size, cancellation)
@@ -545,17 +590,75 @@ class HistoryRepository:
             rows = self._all_rows(connection)
             record_count = verified = corrupted = 0
             key_versions: set[int] = set()
+            digest = hashlib.sha256()
             for row in rows:
                 record_count += 1
                 cancellation.raise_if_cancelled()
+                _update_digest(digest, "history_records")
+                for column in row.keys():
+                    _update_digest(digest, column)
+                    _update_digest(digest, row[column])
                 key_versions.add(row["key_version"])
                 if self._row_is_valid(row):
                     verified += 1
                 else:
                     corrupted += 1
-            return {"record_count": record_count, "verified": verified, "corrupted": corrupted, "key_versions": sorted(key_versions)}
+            for table, order_by in (
+                ("schema_meta", "key"),
+                ("repair_quarantine", "id"),
+                ("rotation_checkpoint", "id"),
+            ):
+                for row in connection.execute(
+                    f'SELECT * FROM "{table}" ORDER BY "{order_by}"'
+                ):
+                    _update_digest(digest, table)
+                    for column in row.keys():
+                        _update_digest(digest, column)
+                        _update_digest(digest, row[column])
+            for name, sql in connection.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type = 'index' AND tbl_name = 'history_records' "
+                "AND sql IS NOT NULL ORDER BY name"
+            ):
+                _update_digest(digest, "index")
+                _update_digest(digest, name)
+                _update_digest(digest, sql)
+            return {
+                "record_count": record_count,
+                "verified": verified,
+                "corrupted": corrupted,
+                "key_versions": sorted(key_versions),
+                "content_digest": digest.hexdigest(),
+            }
         finally:
             connection.close()
+
+    def _require_indexes(self, path: Path) -> None:
+        connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        try:
+            indexes = dict(
+                connection.execute(
+                    "SELECT name, sql FROM sqlite_master "
+                    "WHERE type = 'index' AND tbl_name = 'history_records' "
+                    "AND sql IS NOT NULL"
+                )
+            )
+            if indexes != dict(INDEX_DEFINITIONS):
+                raise HistoryPluginError("history_backup_invalid")
+        finally:
+            connection.close()
+
+    def _verification_matches_manifest(
+        self, verification: dict[str, Any], manifest: dict[str, Any]
+    ) -> bool:
+        return (
+            verification["record_count"] == manifest["record_count"]
+            and verification["verified"] == manifest["aead"]["verified"]
+            and verification["corrupted"] == 0
+            and manifest["aead"]["corrupted"] == 0
+            and [f"v{version}" for version in verification["key_versions"]]
+            == manifest["key_versions"]
+        )
 
     def _row_is_valid(self, row: sqlite3.Row) -> bool:
         metadata = self._metadata_from_summary(row)
@@ -626,14 +729,17 @@ class HistoryRepository:
         cancellation: Any,
         *,
         expected_record_count: int,
+        checkpoint_current: bool = True,
     ) -> None:
         rollback = self._path.with_name(f".{self._path.name}.rollback-{uuid.uuid4().hex}")
-        self._checkpoint_for_replace()
+        if checkpoint_current:
+            self._checkpoint_for_replace()
         self._write_replace_state(rollback, replacement)
         try:
             os.replace(self._path, rollback)
             os.replace(replacement, self._path)
             verification = self._verify_database(self._path, cancellation)
+            self._require_indexes(self._path)
             if (
                 verification["record_count"] != expected_record_count
                 or verification["corrupted"] != 0
@@ -768,6 +874,44 @@ class HistoryRepository:
             except sqlite3.OperationalError:
                 return None
 
+    def _validate_rotation_checkpoint(
+        self,
+        checkpoint: sqlite3.Row,
+        target_version: int,
+        cancellation: Any,
+    ) -> None:
+        valid_shape = (
+            checkpoint["target_version"] == target_version
+            and checkpoint["source_version"] == self._services.active_version
+            and checkpoint["source_version"] in self._keys
+            and checkpoint["target_version"] in self._keys
+            and checkpoint["phase"] in {"metadata", "reencrypt", "verified"}
+            and isinstance(checkpoint["rotation_id"], str)
+            and bool(checkpoint["rotation_id"])
+            and isinstance(checkpoint["backup_id"], str)
+            and (
+                checkpoint["high_water_mark"] is None
+                or isinstance(checkpoint["high_water_mark"], str)
+            )
+            and (
+                checkpoint["last_record_id"] is None
+                or isinstance(checkpoint["last_record_id"], str)
+            )
+        )
+        if not valid_shape:
+            raise HistoryPluginError("history_recovery_required")
+        try:
+            selected = self._listed_backup(checkpoint["backup_id"])
+            backup_path = self._backup_directory() / f"{selected['id']}.sqlite3"
+            verification = self._verify_database(backup_path, cancellation)
+            self._require_indexes(backup_path)
+        except OperationCancelled:
+            raise
+        except (HistoryPluginError, sqlite3.Error, OSError) as error:
+            raise HistoryPluginError("history_recovery_required") from error
+        if not self._verification_matches_manifest(verification, selected):
+            raise HistoryPluginError("history_recovery_required")
+
     def _clear_rotation_checkpoint(self) -> None:
         if not self.exists:
             return
@@ -804,7 +948,11 @@ class HistoryRepository:
         selected = self._listed_backup(backup_id)
         temporary = self._path.with_name(f".{self._path.name}.rotation-rollback-{uuid.uuid4().hex}.tmp")
         self._copy_database(self._backup_directory() / f"{selected['id']}.sqlite3", temporary, cancellation)
-        self._verify_database(temporary, cancellation)
+        verification = self._verify_database(temporary, cancellation)
+        self._require_indexes(temporary)
+        if not self._verification_matches_manifest(verification, selected):
+            temporary.unlink(missing_ok=True)
+            raise HistoryPluginError("history_recovery_required")
         self._replace_database(
             temporary,
             cancellation,
@@ -1177,6 +1325,26 @@ class HistoryRepository:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _update_digest(digest: Any, value: Any) -> None:
+    if value is None:
+        encoded = b""
+        kind = b"n"
+    elif isinstance(value, int):
+        encoded = str(value).encode("ascii")
+        kind = b"i"
+    elif isinstance(value, str):
+        encoded = value.encode("utf-8")
+        kind = b"s"
+    elif isinstance(value, (bytes, bytearray, memoryview)):
+        encoded = bytes(value)
+        kind = b"b"
+    else:
+        raise HistoryPluginError("history_backup_invalid")
+    digest.update(kind)
+    digest.update(len(encoded).to_bytes(8, "big"))
+    digest.update(encoded)
 
 
 def _fsync_directory(path: Path) -> None:
