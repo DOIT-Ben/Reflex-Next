@@ -5,6 +5,7 @@
   import StatusBar from "./components/shell/StatusBar.svelte";
   import type { NavRailItem, StatusTone } from "./components/shell/types";
   import ConfigSummary from "./components/workbench/ConfigSummary.svelte";
+  import AdjustPanel from "./components/workbench/AdjustPanel.svelte";
   import InputPane from "./components/workbench/InputPane.svelte";
   import ResultPane from "./components/workbench/ResultPane.svelte";
   import type {
@@ -23,7 +24,6 @@
     applyHistoryReuseIntent,
     applyHostAction,
     applyPersistedConfig,
-    applySceneSelection,
     applySettingsDraft,
     applyTranslationAsCurrentResult,
     cancelGeneration,
@@ -303,8 +303,6 @@
   };
   let toastVisible = false;
   let toastText = "✓ 已复制到剪贴板";
-  let moreActionsOpen = false;
-  let moreActionsButton: HTMLButtonElement | null = null;
   let resultRatingBusy = false;
   let viewScale = 1;
   let windowSizePreset: WindowSizePreset = "default";
@@ -316,7 +314,6 @@
   let navItems: NavRailItem[] = [];
   let configSummaryItems: ConfigSummaryItem[] = [];
   let resultMetaItems: ResultMetaItem[] = [];
-  let summary = "";
   let tr: (source: string, values?: Record<string, string | number>) => string = (source) => source;
 
   onMount(() => {
@@ -385,16 +382,6 @@
     };
   });
 
-  $: {
-    uiLanguage;
-    summary = [
-      modeLabel(state.requestDraft.mode),
-      styleLabel(state.requestDraft.style),
-      sceneLabel(state.requestDraft.scene),
-      tr(providerDisplayName(state.requestDraft.provider))
-    ].join(" · ");
-  }
-  $: inputCount = tr("{count} 字", { count: state.inputText.trim().length });
   $: canGenerate = state.canGenerate && !isGenerating(state.phase);
   $: translatorEnabled = persistedConfig?.enabled_plugins.includes("translator") ?? true;
   $: markdownPreviewEnabled = persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
@@ -771,7 +758,6 @@
 
   async function runOptimization() {
     if (!canGenerate) return;
-    moreActionsOpen = false;
     const requestId = `ui-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const controller = new AbortController();
     activeRun = controller;
@@ -932,7 +918,6 @@
     translationRun = null;
     translation = closeTranslation(translation);
     translationSourceResult = null;
-    if (restoreFocus) window.setTimeout(() => moreActionsButton?.focus());
   }
 
   async function copyTranslation() {
@@ -957,7 +942,6 @@
   function openMarkdownPreviewView() {
     const source = state.currentResult?.output;
     if (!source?.trim() || !markdownPreviewEnabled) return;
-    closeMoreActions();
     markdownPreview = openMarkdownPreview(markdownPreview, source);
     if (markdownPreview.phase !== "closed") {
       window.setTimeout(() => markdownPreviewCloseButton?.focus());
@@ -1004,12 +988,10 @@
     markdownPreviewRun?.abort();
     markdownPreviewRun = null;
     markdownPreview = closeMarkdownPreview(markdownPreview);
-    if (restoreFocus) window.setTimeout(() => moreActionsButton?.focus());
   }
 
   function openBatchView() {
     if (!batchRunnerEnabled) return;
-    closeMoreActions();
     if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
     if (translation.phase !== "closed") closeTranslationView();
     batch = openBatch(batch);
@@ -1022,11 +1004,9 @@
     batchRun = null;
     batch = closeBatch(batch);
     batchFileNotice = null;
-    if (restoreFocus) window.setTimeout(() => moreActionsButton?.focus());
   }
 
   function openTemplateManager() {
-    closeMoreActions();
     if (batch.phase !== "closed") closeBatchView();
     selectedTemplateId = null;
     templateDraft = createTemplateDraft();
@@ -1039,7 +1019,6 @@
   function closeTemplateManager(restoreFocus = false) {
     state = { ...state, overlay: null };
     templateNotice = null;
-    if (restoreFocus) window.setTimeout(() => moreActionsButton?.focus());
   }
 
   function selectTemplate(template: PromptTemplate) {
@@ -1293,15 +1272,6 @@
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
-  function toggleMoreActions() {
-    moreActionsOpen = !moreActionsOpen;
-  }
-
-  function closeMoreActions(restoreFocus = false) {
-    moreActionsOpen = false;
-    if (restoreFocus) moreActionsButton?.focus();
-  }
-
   async function rateCurrentResult(rating: number) {
     const historyId = state.currentResult?.historyId;
     if (!historyId || state.currentResult?.saveStatus !== "saved" || resultRatingBusy) return;
@@ -1331,15 +1301,7 @@
   }
 
   function openHistoryWindow() {
-    closeMoreActions();
     void hostApi?.invoke("show_history_window").catch(() => showToast("历史记录暂时不可用。"));
-  }
-
-  function runFromMoreActions(action: "replace" | "regenerate" | "adjust") {
-    closeMoreActions();
-    if (action === "replace") askReplaceClipboard();
-    else if (action === "regenerate") void runOptimization();
-    else beginAdjust();
   }
 
   function saveStatusLabel(): string {
@@ -1612,11 +1574,6 @@
       }
       return;
     }
-    if (moreActionsOpen && event.key === "Escape") {
-      event.preventDefault();
-      closeMoreActions(true);
-      return;
-    }
     const action = resolveHostShortcut(state, {
       key: event.key,
       ctrlKey: event.ctrlKey,
@@ -1727,9 +1684,6 @@
     return tr("自动识别");
   }
 
-  function chooseDraftScene(value: string) {
-    draft = applySceneSelection(draft, value);
-  }
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -1825,209 +1779,18 @@
     />
 
     {#if state.phase === "adjusting"}
-      <section class="adjust-view" aria-label={tr("生成设置")}>
-        <div class="badge">{t(uiLanguage, "current")}</div>
-        <h1>{tr("生成设置")}</h1>
-
-        <div class="settings-panel">
-          <div class="setting-row">
-            <span>{tr("模式")}</span>
-            <div class="segments">
-              {#each modes as item}
-                <button class:active={draft.mode === item.id} on:click={() => (draft = { ...draft, mode: item.id })}>
-                  {tr(item.label)}
-                </button>
-              {/each}
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <span>{tr("风格")}</span>
-            <div class="segments compact">
-              {#each styles as item}
-                <button class:active={draft.style === item.id} on:click={() => (draft = { ...draft, style: item.id })}>
-                  {tr(item.label)}
-                </button>
-              {/each}
-            </div>
-          </div>
-
-          <label class="setting-row">
-            <span>{tr("场景")}</span>
-            <select
-              value={draft.scene ?? ""}
-              on:change={(event) => chooseDraftScene(event.currentTarget.value)}
-            >
-              <option value="">{tr("自动识别")}</option>
-              {#each scenes as scene}
-                <option value={scene.id}>{tr(scene.label)}</option>
-              {/each}
-            </select>
-          </label>
-
-          <label class="setting-row">
-            <span>{tr("模型")}</span>
-            <select bind:value={draft.model}>
-              {#each draftProviderModels as model}<option value={model.id}>{tr(model.label)}</option>{/each}
-            </select>
-          </label>
-
-          <div class="setting-row current-input">
-            <span>{tr("当前输入")}</span>
-            <p>{state.inputText}</p>
-          </div>
-        </div>
-
-        <div class="footer-actions">
-          <button class="outline" on:click={cancelAdjustView}>{t(uiLanguage, "cancel")}</button>
-          <button class="primary small" on:click={applyAdjust}>{tr("应用")}</button>
-        </div>
-      </section>
-    {:else if false && isGenerating(state.phase)}
-      <section class="generation-view" aria-label={t(uiLanguage, "generating")}>
-        <div class="badge">{t(uiLanguage, "current")}</div>
-        <h1>{t(uiLanguage, "generating")}</h1>
-        <p class="subline">{summary}</p>
-        <div class="progress"><span style={`width: ${state.phase === "streaming" ? 76 : 48}%`}></span></div>
-        <article class="result-card streaming">
-          <pre>{state.output || t(uiLanguage, "generating")}</pre>
-          <span class="cursor">▋</span>
-        </article>
-        <div class="footer-meta">
-          <span>{state.phase === "analyzing_scene" ? t(uiLanguage, "analyzing") : state.phase === "connecting_provider" ? t(uiLanguage, "connecting") : t(uiLanguage, "streaming")}</span>
-          <button class="outline" on:click={cancelRun}>{t(uiLanguage, "cancelGeneration")}</button>
-        </div>
-      </section>
-    {:else if false && state.phase === "completed"}
-      <section class="complete-view" aria-label={t(uiLanguage, "completed")}>
-        <div class="badge">{t(uiLanguage, "current")}</div>
-        <h1>{t(uiLanguage, "completed")}</h1>
-        <p class="subline">{sceneLabel(state.currentResult?.scene ?? null)} · {styleLabel(state.currentResult?.style ?? state.requestDraft.style)} · {tr("约 {count} 字", { count: state.output.length })}</p>
-        <article class="result-card">
-          <pre>{state.output}</pre>
-        </article>
-        <div class="result-actions">
-          <button class="primary small" on:click={copyResult}>{t(uiLanguage, "copy")}</button>
-          <div class="more-actions">
-            <button
-              class="icon-button more-button"
-              aria-label={tr("更多操作")}
-              aria-expanded={moreActionsOpen}
-              bind:this={moreActionsButton}
-              on:click={toggleMoreActions}
-            >⋯</button>
-            {#if moreActionsOpen}
-              <div class="result-menu" role="menu" aria-label={tr("结果操作")}>
-                <button role="menuitem" on:click={() => runFromMoreActions("replace")}>{tr("替换剪贴板")}</button>
-                <button role="menuitem" on:click={() => runFromMoreActions("regenerate")}>{tr("重新生成")}</button>
-                <button role="menuitem" on:click={() => runFromMoreActions("adjust")}>{t(uiLanguage, "adjust")}</button>
-                <button role="menuitem" on:click={openTemplateManager}>{tr("模板管理")}</button>
-                <button
-                  role="menuitem"
-                  disabled={!state.currentResult?.sourceText?.trim()}
-                  title={!state.currentResult?.sourceText?.trim() ? tr("当前结果没有可用原文") : undefined}
-                  on:click={openResultCompare}
-                >{tr("对比原文")}</button>
-                <button role="menuitem" on:click={exportResultMarkdown}>{tr("导出 Markdown")}</button>
-                <button
-                  role="menuitem"
-                  disabled={!translatorEnabled || !state.currentResult?.output}
-                  on:click={openTranslationView}
-                >{tr("翻译")}</button>
-                <button
-                  role="menuitem"
-                  disabled={!markdownPreviewEnabled || !state.currentResult?.output}
-                  on:click={openMarkdownPreviewView}
-                >{tr("Markdown 预览")}</button>
-                <button role="menuitem" disabled={!batchRunnerEnabled} on:click={openBatchView}>{tr("批量处理")}</button>
-                <div class="rating-menu" aria-label={tr("评分")}>
-                  <span>{tr("评分")}</span>
-                  <div>
-                    {#each [1, 2, 3, 4, 5] as score}
-                      <button
-                        aria-label={`${tr("评分")} ${score}`}
-                        aria-pressed={state.currentResult?.rating === score}
-                        disabled={state.currentResult?.saveStatus !== "saved" || resultRatingBusy}
-                        on:click={() => rateCurrentResult(score)}
-                      >{score}</button>
-                    {/each}
-                  </div>
-                </div>
-                <button role="menuitem" on:click={openHistoryWindow}>{tr("查看历史")}</button>
-              </div>
-            {/if}
-          </div>
-        </div>
-        <p class="recent result-save-status" role="status" aria-live="polite">{saveStatusLabel()}</p>
-        {#if toastVisible}
-          <div class="toast">{toastText}</div>
-        {/if}
-      </section>
-    {:else if false && state.phase === "error"}
-      <section class="error-view" aria-label={t(uiLanguage, "failed")}>
-        <div class="badge">{t(uiLanguage, "current")}</div>
-        <h1>{t(uiLanguage, "failed")}</h1>
-        <p class="subline">{summary}</p>
-        <article class="error-panel">
-          <strong>{state.errorMessage ? tr(state.errorMessage) : t(uiLanguage, "noProvider")}</strong>
-          <span>
-            {tr(state.errorRecoverable ? "可以稍后重试，或检查当前 Provider 设置。" : "请检查文本或设置后再试。")}
-          </span>
-        </article>
-        <div class="error-actions">
-          {#if state.errorRecoverable}
-            <button class="primary small" on:click={retryRun}>{t(uiLanguage, "retry")}</button>
-          {/if}
-          <button class="outline" on:click={openSettingsView}>{t(uiLanguage, "openSettings")}</button>
-          <button class="outline" disabled={!state.diagnosticId} on:click={copyDiagnosticId}>{tr("复制诊断 ID")}</button>
-        </div>
-        <p class="recent">
-          {tr("诊断信息已隐藏，可复制诊断 ID 提供给支持人员。")}
-        </p>
-        {#if toastVisible}
-          <div class="toast">{toastText}</div>
-        {/if}
-      </section>
-    {:else if false}
-      <section class="default-view" aria-label={t(uiLanguage, "input")}>
-        <div class="badge">{t(uiLanguage, "current")}</div>
-        <label class="input-label" for="source-text">{t(uiLanguage, "input")}</label>
-        <div class="input-card">
-          <textarea
-            id="source-text"
-            aria-label={t(uiLanguage, "input")}
-            value={state.inputText}
-            on:input={(event) => setInput(event.currentTarget.value)}
-            placeholder={t(uiLanguage, "paste")}
-          ></textarea>
-          <div class="input-tools">
-            <div class="input-actions">
-              <button type="button" disabled={clipboardReading} on:click={readClipboard}>
-                {clipboardReading ? t(uiLanguage, "generating") : t(uiLanguage, "readClipboard")}
-              </button>
-              <button class="icon-button" type="button" aria-label={tr("清空输入")} disabled={!state.inputText} on:click={clearInput}>×</button>
-            </div>
-            <span>{inputCount}</span>
-          </div>
-        </div>
-        {#if state.inputNotice}
-          <p class="input-notice">{tr(state.inputNotice)}</p>
-        {/if}
-
-        <div class="summary-row">
-          <span>{summary}</span>
-          <div>
-            <button on:click={openTemplateManager}>{t(uiLanguage, "template")}</button>
-            <button disabled={!batchRunnerEnabled} on:click={openBatchView}>{t(uiLanguage, "batch")}</button>
-            <button on:click={beginAdjust}>{t(uiLanguage, "adjust")}</button>
-          </div>
-        </div>
-
-        <button class="generate-button" disabled={!canGenerate} on:click={runOptimization}>
-          {t(uiLanguage, "optimize")} <span>→</span>
-        </button>
-
-      </section>
+      <AdjustPanel
+        {draft}
+        inputText={state.inputText}
+        {modes}
+        {styles}
+        {scenes}
+        models={draftProviderModels}
+        translate={tr}
+        onDraftChange={(value) => (draft = value)}
+        onCancel={cancelAdjustView}
+        onApply={applyAdjust}
+      />
     {/if}
 
     {#if commandPaletteOpen}

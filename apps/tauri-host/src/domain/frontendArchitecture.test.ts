@@ -165,7 +165,8 @@ describe("production frontend architecture", () => {
       "StatusBar",
       "InputPane",
       "ConfigSummary",
-      "ResultPane"
+      "ResultPane",
+      "AdjustPanel"
     ]) {
       expect(appSource).toMatch(new RegExp(`import\\s+${component}\\s+from`));
       expect(appSource).toContain(`<${component}`);
@@ -186,6 +187,8 @@ describe("production frontend architecture", () => {
 
     const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
     expect(styles).toContain(".workbench-grid");
+    expect(styles).toContain(".adjust-dialog");
     expect(styles).toMatch(/@media\s*\(max-width:\s*620px\)/);
+    expect(appSource).not.toContain("false &&");
   });
 });

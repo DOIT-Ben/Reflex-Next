@@ -10,7 +10,7 @@ const messages = {
 } as const;
 
 const translations: Record<string, string> = {
-  "取消": "Cancel", "取消生成": "Cancel generation", "重试": "Retry", "中文": "Chinese", "正在保存": "Saving", "✓ 源码已复制": "Source copied", "写一封商务邮件\n解释什么是机器学习": "Write a business email\nExplain machine learning", "通义千问": "Qwen", "智谱 GLM": "Zhipu GLM", "M2.7 高速版": "M2.7 Highspeed",
+  "取消": "Cancel", "取消生成": "Cancel generation", "重试": "Retry", "中文": "Chinese", "正在保存": "Saving", "✓ 源码已复制": "Source copied", "写一封商务邮件\n解释什么是机器学习": "Write a business email\nExplain machine learning", "通义千问": "Qwen", "智谱 GLM": "Zhipu GLM", "M2.7 高速版": "M2.7 Highspeed", "调整生成方案": "Adjust generation", "仅影响下一次生成": "Applies to the next run only", "尚未输入内容": "No input yet",
   "清空输入": "Clear input", "导出 Markdown": "Export Markdown", "结果已导出为 Markdown": "Result exported as Markdown",
   "导入文件": "Import file", "下载模板": "Download template", "已从 {name} 导入 {count} 条提示词": "Imported {count} prompts from {name}", "请选择 CSV 或 TXT 文件。": "Select a CSV or TXT file.", "文件超过 200 万字符限制。": "The file exceeds the 2 million character limit.", "文件中没有可导入的内容。": "The file has no importable content.", "无法读取该文件，请重试。": "The file could not be read. Try again.",
   "对比原文": "Compare original", "结果对比": "Result comparison", "关闭结果对比": "Close result comparison", "优化结果": "Optimized result", "原文已复制": "Original copied", "优化结果已复制": "Optimized result copied", "当前结果没有可用原文": "This result has no original text available",
