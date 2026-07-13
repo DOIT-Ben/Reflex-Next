@@ -1,0 +1,4 @@
+prompt,notes
+"first line
+second line, ""quoted""","..\..\outside.csv"
+"\\server\share\file.txt","C:\Windows\system32"
