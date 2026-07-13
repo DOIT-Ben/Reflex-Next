@@ -31,6 +31,56 @@ param(
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$rustTestResourcePath = Join-Path $root "apps\tauri-host\src-tauri\resources\runtime\reflex-runtime.exe"
+
+if ($env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH) {
+  $candidatePath = [System.IO.Path]::GetFullPath($env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH)
+  $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd("\") + "\"
+  if (-not $candidatePath.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH must be located under the system temporary directory."
+  }
+  $rustTestResourcePath = $candidatePath
+}
+
+function New-RustTestResource {
+  param([string]$Path)
+
+  if (Test-Path -LiteralPath $Path -PathType Leaf) {
+    return $false
+  }
+  if (Test-Path -LiteralPath $Path) {
+    throw "Rust test resource path exists but is not a file: $Path"
+  }
+
+  $parent = Split-Path -Parent $Path
+  New-Item -ItemType Directory -Path $parent -Force | Out-Null
+  [System.IO.File]::WriteAllBytes($Path, [byte[]]::new(0))
+  return $true
+}
+
+function Remove-RustTestResource {
+  param(
+    [string]$Path,
+    [bool]$Created
+  )
+
+  if (-not $Created) {
+    return
+  }
+
+  Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+  $directory = Split-Path -Parent $Path
+  for ($index = 0; $index -lt 2; $index++) {
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+      break
+    }
+    if (@(Get-ChildItem -LiteralPath $directory -Force).Count -ne 0) {
+      break
+    }
+    Remove-Item -LiteralPath $directory -Force
+    $directory = Split-Path -Parent $directory
+  }
+}
 
 function New-VerificationStep {
   param(
@@ -180,13 +230,29 @@ foreach ($step in $steps) {
   }
 
   Write-Output ("[RUN] {0} | workdir={1}" -f $step.Id, $step.WorkDir)
-  Push-Location -LiteralPath $workDir
+  $locationPushed = $false
+  $createdRustTestResource = $false
   try {
+    if ($step.Id -eq "rust:tests") {
+      $createdRustTestResource = New-RustTestResource -Path $rustTestResourcePath
+      Write-Output ("[SETUP] rust:tests | temporary-resource-created={0}" -f $createdRustTestResource.ToString().ToLowerInvariant())
+    }
+
+    Push-Location -LiteralPath $workDir
+    $locationPushed = $true
     & $step.Executable @($step.Arguments)
     $exitCode = $LASTEXITCODE
   }
   finally {
-    Pop-Location
+    if ($locationPushed) {
+      Pop-Location
+    }
+    if ($step.Id -eq "rust:tests") {
+      Remove-RustTestResource -Path $rustTestResourcePath -Created $createdRustTestResource
+      if ($createdRustTestResource) {
+        Write-Output "[CLEANUP] rust:tests | temporary-resource-removed=true"
+      }
+    }
   }
 
   if ($exitCode -ne 0) {

@@ -76,6 +76,33 @@ Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[DRY-RUN\] rust
 Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[SKIP\] frontend:tests .*SkipFrontend' }).Count -eq 1) "-SkipFrontend must skip frontend tests."
 Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[SKIP\] frontend:build .*SkipFrontend' }).Count -eq 1) "-SkipFrontend must skip the frontend build."
 
+$resourceProbeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-rust-resource-contract-" + [guid]::NewGuid().ToString("N"))
+$resourceProbe = Join-Path $resourceProbeRoot "resources\runtime\reflex-runtime.exe"
+$resourceFakeBin = Join-Path $resourceProbeRoot "bin"
+New-Item -ItemType Directory -Path $resourceFakeBin -Force | Out-Null
+try {
+  $fakeUv = Join-Path $resourceFakeBin "uv.cmd"
+  $fakeCargo = Join-Path $resourceFakeBin "cargo.cmd"
+  [System.IO.File]::WriteAllText($fakeUv, "@exit /b 0`r`n", [System.Text.Encoding]::ASCII)
+  [System.IO.File]::WriteAllText($fakeCargo, "@if not exist `"$resourceProbe`" exit /b 41`r`n@exit /b 0`r`n", [System.Text.Encoding]::ASCII)
+
+  $originalPath = $env:PATH
+  $originalResourcePath = $env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH
+  $env:PATH = "$resourceFakeBin;$originalPath"
+  $env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH = $resourceProbe
+  $resourceLifecycle = Invoke-Verify -Arguments @("-PythonProject", "reflex-core", "-SkipFrontend")
+
+  Assert-True ($resourceLifecycle.ExitCode -eq 0) "Rust verification must create its temporary bundle resource before cargo runs."
+  Assert-True (($resourceLifecycle.Output | Where-Object { $_ -eq '[SETUP] rust:tests | temporary-resource-created=true' }).Count -eq 1) "Rust verification must report temporary resource creation."
+  Assert-True (($resourceLifecycle.Output | Where-Object { $_ -eq '[CLEANUP] rust:tests | temporary-resource-removed=true' }).Count -eq 1) "Rust verification must report temporary resource cleanup."
+  Assert-True (-not (Test-Path -LiteralPath $resourceProbe)) "Rust verification must remove the temporary resource after cargo exits."
+}
+finally {
+  $env:PATH = $originalPath
+  $env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH = $originalResourcePath
+  Remove-Item -LiteralPath $resourceProbeRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $fakeBin = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-verify-contract-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $fakeBin | Out-Null
 try {
