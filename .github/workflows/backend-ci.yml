@@ -22,6 +22,8 @@ on:
       - "tools/tests/fixtures/provider_smoke_*.py"
       - "tools/benchmark_backend.py"
       - "tools/tests/test_benchmark_backend.py"
+      - "tools/soak_backend.py"
+      - "tools/tests/test_soak_backend.py"
   push:
     branches:
       - main
@@ -46,6 +48,8 @@ on:
       - "tools/tests/fixtures/provider_smoke_*.py"
       - "tools/benchmark_backend.py"
       - "tools/tests/test_benchmark_backend.py"
+      - "tools/soak_backend.py"
+      - "tools/tests/test_soak_backend.py"
   workflow_dispatch:
 
 permissions:
@@ -89,12 +93,33 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache pinned Cargo tools
+        id: cargo-tools-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-audit.exe
+            ~/.cargo/bin/cargo-license.exe
+            ~/.cargo/bin/cargo-cyclonedx.exe
+          key: cargo-tools-windows-audit-0.22.2-license-0.6.1-cyclonedx-0.5.9
+
       - name: Install pinned dependency audit tools
+        if: steps.cargo-tools-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           cargo install cargo-audit --version 0.22.2 --locked
           cargo install cargo-license --version 0.6.1 --locked
           cargo install cargo-cyclonedx --version 0.5.9 --locked --jobs 2
+
+      - name: Verify pinned Cargo tool versions
+        shell: powershell
+        run: |
+          $auditVersion = cargo audit --version
+          if ($LASTEXITCODE -ne 0 -or $auditVersion -notmatch "0\.22\.2") { throw "cargo-audit version mismatch" }
+          $licenseVersion = cargo license --version
+          if ($LASTEXITCODE -ne 0 -or $licenseVersion -notmatch "0\.6\.1") { throw "cargo-license version mismatch" }
+          $cycloneDxVersion = cargo cyclonedx --version
+          if ($LASTEXITCODE -ne 0 -or $cycloneDxVersion -notmatch "0\.5\.9") { throw "cargo-cyclonedx version mismatch" }
 
       - name: Verify backend script contract
         shell: powershell

@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $verifyScript = Join-Path $root "tools\verify_backend.ps1"
+$workflowPath = Join-Path $root ".github\workflows\backend-ci.yml"
 $powershell = Join-Path $PSHOME "powershell.exe"
 
 function Assert-True {
@@ -34,6 +35,14 @@ function Invoke-Verify {
 }
 
 Assert-True (Test-Path -LiteralPath $verifyScript -PathType Leaf) "tools\verify_backend.ps1 is missing."
+Assert-True (Test-Path -LiteralPath $workflowPath -PathType Leaf) ".github\workflows\backend-ci.yml is missing."
+$workflow = [System.IO.File]::ReadAllText($workflowPath, [System.Text.Encoding]::UTF8)
+Assert-True ($workflow -match 'uses: actions/cache@v4') "Windows CI must cache pinned Cargo tool binaries."
+Assert-True ($workflow -match 'cargo-tools-windows-audit-0\.22\.2-license-0\.6\.1-cyclonedx-0\.5\.9') "Cargo tool cache key must include every pinned version."
+Assert-True ($workflow -match "if: steps\.cargo-tools-cache\.outputs\.cache-hit != 'true'") "Pinned Cargo tools must install only on a cache miss."
+foreach ($version in @("0.22.2", "0.6.1", "0.5.9")) {
+  Assert-True ($workflow -match [regex]::Escape($version)) "Windows CI must verify pinned Cargo tool version $version."
+}
 
 $list = Invoke-Verify -Arguments @("-ListSteps")
 Assert-True ($list.ExitCode -eq 0) "-ListSteps must return exit code 0."
@@ -70,6 +79,8 @@ Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] supply-chain:sb
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] supply-chain:sbom .*heavy=True .*generate_release_sbom\.ps1 -Verify' }).Count -eq 1) "Live SBOM generation must be a resource-bounded heavy verification step."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:provider-smoke-contract .*lock=packages\\reflex-runtime\\uv\.lock .*test_provider_smoke\.py -q' }).Count -eq 1) "Provider smoke contract tests must use the frozen Runtime environment."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:benchmark-contract .*lock=packages\\reflex-runtime\\uv\.lock .*test_benchmark_backend\.py -q' }).Count -eq 1) "Backend benchmark contract tests must use the frozen Runtime environment."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:soak-contract .*lock=packages\\reflex-runtime\\uv\.lock .*test_soak_backend\.py -q' }).Count -eq 1) "Soak-tool contract tests must use the frozen Runtime environment."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:soak-smoke .*heavy=True .*soak_backend\.py --iterations 100 .*--batch-size 4' }).Count -eq 1) "A bounded 100-iteration Runtime soak must be part of full verification."
 
 $dryRun = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipHeavy")
 Assert-True ($dryRun.ExitCode -eq 0) "The focused dry-run must return exit code 0."
@@ -77,6 +88,7 @@ Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] python:ref
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] python:' }).Count -eq 1) "The focused dry-run must select only one Python project."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] rust:tests .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip Rust tests."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] security:dependency-audit .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip live dependency auditing."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] tools:soak-smoke .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip the live Runtime soak."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] frontend:tests .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip frontend tests."
 
 $frontendSkip = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipFrontend")

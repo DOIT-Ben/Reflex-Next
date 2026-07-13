@@ -171,6 +171,23 @@ $steps += New-VerificationStep `
   -Executable "uv" `
   -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_benchmark_backend.py", "-q")
 
+$steps += New-VerificationStep `
+  -Id "tools:soak-contract" `
+  -Category "tools" `
+  -WorkDir "." `
+  -LockFile "packages\reflex-runtime\uv.lock" `
+  -Executable "uv" `
+  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_soak_backend.py", "-q")
+
+$steps += New-VerificationStep `
+  -Id "tools:soak-smoke" `
+  -Category "tools" `
+  -WorkDir "." `
+  -LockFile "packages\reflex-runtime\uv.lock" `
+  -Executable "uv" `
+  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "python", "tools\soak_backend.py", "--iterations", "100", "--batch-size", "4", "--timeout-seconds", "5", "--cancel-every", "2") `
+  -Heavy $true
+
 foreach ($project in $pythonProjects) {
   $steps += New-VerificationStep `
     -Id ("python:" + $project.Name) `
