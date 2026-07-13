@@ -7,7 +7,6 @@
   "permissions": [
     "allow-read-clipboard-text",
     "allow-write-clipboard-text",
-    "allow-show-main-window",
     "allow-hide-main-window",
     "allow-show-history-window",
     "allow-minimize-window",
@@ -25,8 +24,6 @@
     "allow-provider-secret-status",
     "allow-save-provider-secret",
     "allow-delete-provider-secret",
-    "core:app:allow-register-listener",
-    "core:app:allow-remove-listener",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

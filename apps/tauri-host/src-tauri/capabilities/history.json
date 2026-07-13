@@ -11,8 +11,7 @@
     "allow-history-admin-operation",
     "allow-history-operation-cancel",
     "allow-history-reuse-intent",
-    "core:app:allow-register-listener",
-    "core:app:allow-remove-listener",
+    "allow-load-app-config",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

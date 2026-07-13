@@ -127,7 +127,6 @@ mod tests {
             .collect::<Vec<_>>();
 
         for permission in [
-            "allow-show-main-window",
             "allow-hide-main-window",
             "allow-load-app-config",
             "allow-save-app-config",
@@ -144,7 +143,9 @@ mod tests {
         ] {
             assert!(permissions.contains(&permission), "missing {permission}");
         }
-        assert!(!permissions.contains(&"allow-configure-provider"));
+        for permission in ["allow-show-main-window", "allow-configure-provider"] {
+            assert!(!permissions.contains(&permission));
+        }
         for permission in [
             "allow-configure-plugin",
             "allow-configure-history-keys",
