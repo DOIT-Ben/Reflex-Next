@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "exit_codes": {
+    "passed": 0,
+    "vulnerability": 20,
+    "forbidden_license": 21,
+    "tool_failure": 22
+  },
+  "tools": {
+    "pip_audit": "2.9.0",
+    "pip_licenses": "5.0.0",
+    "cargo_audit": "0.21.2",
+    "cargo_license": "0.6.1",
+    "npm": "10.9.2"
+  },
+  "python_projects": [
+    "packages/reflex-core",
+    "packages/reflex-runtime",
+    "plugins/batch-runner",
+    "plugins/history-sqlite",
+    "plugins/markdown-preview",
+    "plugins/provider-minimax",
+    "plugins/provider-openai-compatible",
+    "plugins/semantic-detector",
+    "plugins/translator"
+  ],
+  "licenses": {
+    "ignore_internal_package_prefixes": [
+      "reflex-"
+    ],
+    "unknown_markers": [
+      "",
+      "unknown",
+      "none",
+      "n/a"
+    ],
+    "allowed_expressions": {
+      "python": [
+        "Apache-2.0",
+        "Apache-2.0 OR BSD-3-Clause",
+        "BSD-3-Clause",
+        "MIT",
+        "MPL-2.0",
+        "PSF-2.0"
+      ],
+      "rust": [
+        "(MIT OR Apache-2.0) AND Unicode-3.0",
+        "0BSD OR Apache-2.0 OR MIT",
+        "Apache-2.0",
+        "Apache-2.0 AND MIT",
+        "Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT",
+        "Apache-2.0 OR BSD-2-Clause OR MIT",
+        "Apache-2.0 OR BSD-3-Clause",
+        "Apache-2.0 OR BSD-3-Clause OR MIT",
+        "Apache-2.0 OR CC0-1.0 OR MIT-0",
+        "Apache-2.0 OR LGPL-2.1-or-later OR MIT",
+        "Apache-2.0 OR MIT",
+        "Apache-2.0 OR MIT OR Zlib",
+        "Apache-2.0 WITH LLVM-exception",
+        "BSD-3-Clause",
+        "BSD-3-Clause AND MIT",
+        "BSD-3-Clause OR MIT",
+        "BSL-1.0",
+        "ISC",
+        "MIT",
+        "MIT OR Unlicense",
+        "MPL-2.0",
+        "Unicode-3.0",
+        "Zlib"
+      ],
+      "npm": [
+        "0BSD",
+        "Apache-2.0",
+        "Apache-2.0 OR MIT",
+        "BSD-3-Clause",
+        "ISC",
+        "MIT",
+        "MPL-2.0"
+      ]
+    },
+    "package_overrides": {
+      "python": {
+        "anyio@4.14.1": "MIT",
+        "bleach@6.4.0": "Apache-2.0",
+        "cffi@2.1.0": "MIT",
+        "httpcore@1.0.9": "BSD-3-Clause",
+        "idna@3.18": "BSD-3-Clause",
+        "markdown@3.10.2": "BSD-3-Clause",
+        "pycparser@3.0": "BSD-3-Clause",
+        "typing_extensions@4.16.0": "PSF-2.0",
+        "webencodings@0.5.1": "BSD-3-Clause"
+      },
+      "rust": {},
+      "npm": {}
+    },
+    "forbidden_patterns": [
+      "(?i)AGPL|GNU Affero",
+      "(?i)(?<!L)GPL(?:[- .]?3|v3)",
+      "(?i)SSPL|Server Side Public License",
+      "(?i)BUSL|Business Source License",
+      "(?i)Commons Clause",
+      "(?i)Elastic License"
+    ]
+  }
+}

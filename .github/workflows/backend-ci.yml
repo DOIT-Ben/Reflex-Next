@@ -12,6 +12,9 @@ on:
       - "tools/tests/verify_backend_contract.ps1"
       - "tools/scan_release_secrets.ps1"
       - "tools/tests/scan_release_secrets_contract.ps1"
+      - "tools/audit_dependencies.ps1"
+      - "tools/tests/audit_dependencies_contract.ps1"
+      - "tools/policies/dependency-audit-policy.json"
   push:
     branches:
       - main
@@ -26,6 +29,9 @@ on:
       - "tools/tests/verify_backend_contract.ps1"
       - "tools/scan_release_secrets.ps1"
       - "tools/tests/scan_release_secrets_contract.ps1"
+      - "tools/audit_dependencies.ps1"
+      - "tools/tests/audit_dependencies_contract.ps1"
+      - "tools/policies/dependency-audit-policy.json"
   workflow_dispatch:
 
 permissions:
@@ -68,6 +74,12 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install pinned dependency audit tools
+        shell: powershell
+        run: |
+          cargo install cargo-audit --version 0.21.2 --locked
+          cargo install cargo-license --version 0.6.1 --locked
 
       - name: Verify backend script contract
         shell: powershell

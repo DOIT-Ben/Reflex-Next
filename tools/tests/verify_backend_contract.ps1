@@ -64,12 +64,15 @@ Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:tests 
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:build .*npm run build' }).Count -eq 1) "Frontend production build must be part of verification."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:secret-contract .*lock=none .*powershell .*scan_release_secrets_contract\.ps1' }).Count -eq 1) "Secret scanner contract tests must be part of verification."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:secret-scan .*lock=none .*powershell .*scan_release_secrets\.ps1' }).Count -eq 1) "Tracked-file secret scanning must be part of verification."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:dependency-contract .*heavy=False .*audit_dependencies_contract\.ps1' }).Count -eq 1) "Dependency-audit contract tests must be part of verification."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:dependency-audit .*heavy=True .*audit_dependencies\.ps1' }).Count -eq 1) "The live dependency gate must be a resource-bounded heavy verification step."
 
 $dryRun = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipHeavy")
 Assert-True ($dryRun.ExitCode -eq 0) "The focused dry-run must return exit code 0."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] python:reflex-core ' }).Count -eq 1) "The focused dry-run must select reflex-core."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] python:' }).Count -eq 1) "The focused dry-run must select only one Python project."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] rust:tests .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip Rust tests."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] security:dependency-audit .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip live dependency auditing."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] frontend:tests .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip frontend tests."
 
 $frontendSkip = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipFrontend")
@@ -77,6 +80,11 @@ Assert-True ($frontendSkip.ExitCode -eq 0) "The frontend-skip dry-run must retur
 Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[DRY-RUN\] rust:tests ' }).Count -eq 1) "-SkipFrontend must not skip Rust tests."
 Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[SKIP\] frontend:tests .*SkipFrontend' }).Count -eq 1) "-SkipFrontend must skip frontend tests."
 Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[SKIP\] frontend:build .*SkipFrontend' }).Count -eq 1) "-SkipFrontend must skip the frontend build."
+
+$dependencySkip = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipFrontend", "-SkipDependencyAudit")
+Assert-True ($dependencySkip.ExitCode -eq 0) "The dependency-audit skip dry-run must return exit code 0."
+Assert-True (($dependencySkip.Output | Where-Object { $_ -match '^\[SKIP\] security:dependency-audit .*SkipDependencyAudit' }).Count -eq 1) "-SkipDependencyAudit must skip only the live dependency gate."
+Assert-True (($dependencySkip.Output | Where-Object { $_ -match '^\[DRY-RUN\] security:dependency-contract ' }).Count -eq 1) "-SkipDependencyAudit must keep dependency contract tests enabled."
 
 $resourceProbeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-rust-resource-contract-" + [guid]::NewGuid().ToString("N"))
 $resourceProbe = Join-Path $resourceProbeRoot "resources\runtime\reflex-runtime.exe"
@@ -92,7 +100,7 @@ try {
   $originalResourcePath = $env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH
   $env:PATH = "$resourceFakeBin;$originalPath"
   $env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH = $resourceProbe
-  $resourceLifecycle = Invoke-Verify -Arguments @("-PythonProject", "reflex-core", "-SkipFrontend")
+  $resourceLifecycle = Invoke-Verify -Arguments @("-PythonProject", "reflex-core", "-SkipFrontend", "-SkipDependencyAudit")
 
   Assert-True ($resourceLifecycle.ExitCode -eq 0) "Rust verification must create its temporary bundle resource before cargo runs."
   Assert-True (($resourceLifecycle.Output | Where-Object { $_ -eq '[SETUP] rust:tests | temporary-resource-created=true' }).Count -eq 1) "Rust verification must report temporary resource creation."

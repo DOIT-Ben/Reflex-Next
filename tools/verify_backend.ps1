@@ -4,6 +4,7 @@ param(
   [switch]$DryRun,
   [switch]$SkipFrontend,
   [switch]$SkipHeavy,
+  [switch]$SkipDependencyAudit,
   [ValidateSet(
     "reflex-core",
     "reflex-runtime",
@@ -137,6 +138,14 @@ $steps += New-VerificationStep `
   -Executable "powershell" `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\scan_release_secrets.ps1")
 
+$steps += New-VerificationStep `
+  -Id "security:dependency-contract" `
+  -Category "security" `
+  -WorkDir "." `
+  -LockFile "" `
+  -Executable "powershell" `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\audit_dependencies_contract.ps1")
+
 foreach ($project in $pythonProjects) {
   $steps += New-VerificationStep `
     -Id ("python:" + $project.Name) `
@@ -147,6 +156,15 @@ foreach ($project in $pythonProjects) {
     -Arguments @("run", "--frozen", "--extra", "dev", "pytest", "tests") `
     -PythonProjectName $project.Name
 }
+
+$steps += New-VerificationStep `
+  -Id "security:dependency-audit" `
+  -Category "security" `
+  -WorkDir "." `
+  -LockFile "" `
+  -Executable "powershell" `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\audit_dependencies.ps1") `
+  -Heavy $true
 
 $steps += New-VerificationStep `
   -Id "rust:tests" `
@@ -202,6 +220,10 @@ function Get-SkipReason {
 
   if ($SkipHeavy -and $Step.Heavy) {
     return "SkipHeavy"
+  }
+
+  if ($SkipDependencyAudit -and $Step.Id -eq "security:dependency-audit") {
+    return "SkipDependencyAudit"
   }
 
   if ($SkipFrontend -and $Step.Frontend) {
