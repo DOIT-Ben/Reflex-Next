@@ -1899,6 +1899,44 @@ pre {
   }
 }
 
+@media (max-width: 480px) {
+  .settings-dialog {
+    padding: 10px;
+  }
+
+  .settings-grid,
+  .api-key-row {
+    grid-template-columns: 1fr;
+  }
+
+  .api-key-row > button {
+    width: 100%;
+  }
+
+  .settings-nav button {
+    min-width: 86px;
+  }
+
+  .settings-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .settings-save-notice {
+    grid-column: 1 / -1;
+    min-height: 18px;
+  }
+
+  .settings-footer button {
+    width: 100%;
+  }
+
+  .semantic-model-actions button {
+    flex: 1 1 130px;
+  }
+}
+
 @media (max-width: 520px) {
   .translation-toolbar {
     align-items: stretch;
