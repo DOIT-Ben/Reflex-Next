@@ -801,7 +801,7 @@ provides-extras = ["dev"]
 [[package]]
 name = "reflex-plugin-semantic-detector"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "reflex-core" },
 ]
