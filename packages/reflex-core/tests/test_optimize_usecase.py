@@ -23,6 +23,34 @@ def event_types(events):
     return [envelope.event.type for envelope in events]
 
 
+class ManualTimer:
+    def __init__(self, callback):
+        self.callback = callback
+        self.started = False
+        self.cancelled = False
+
+    def start(self):
+        self.started = True
+
+    def cancel(self):
+        self.cancelled = True
+
+    def fire(self):
+        if self.started and not self.cancelled:
+            self.callback()
+
+
+class ManualTimerFactory:
+    def __init__(self):
+        self.timers = []
+
+    def __call__(self, seconds, callback):
+        assert seconds == 120.0
+        timer = ManualTimer(callback)
+        self.timers.append(timer)
+        return timer
+
+
 def test_normal_event_sequence_and_final_result():
     events = list(make_use_case().optimize(OptimizeRequest("input"), request_id="req-1"))
 
@@ -132,6 +160,60 @@ def test_request_stops_at_120_second_deadline_without_emitting_late_chunk():
         "recoverable": True,
         "action": "retry",
     }
+
+
+def test_deadline_watchdog_actively_cancels_blocked_provider_as_timeout():
+    timer_factory = ManualTimerFactory()
+    token = CancellationToken()
+    cancellation_notified = []
+
+    class BlockingProvider:
+        id = "fixture"
+        model = "fixture-model"
+
+        def stream(self, rendered_request, request, cancellation):
+            del rendered_request, request
+            cancellation.register(lambda: cancellation_notified.append(True))
+            timer_factory.timers[0].fire()
+            cancellation.raise_if_cancelled()
+            yield "late"
+
+    use_case = OptimizeUseCase(
+        scene_detector=FakeSceneDetector(
+            SceneDetectionResult("report_writing", 0.9, "fake")
+        ),
+        template_resolver=FakeTemplateResolver(),
+        provider=BlockingProvider(),
+        timer_factory=timer_factory,
+    )
+
+    events = list(use_case.optimize(OptimizeRequest("input"), cancellation=token))
+
+    assert cancellation_notified == [True]
+    assert token.is_cancelled
+    assert EventType.CHUNK not in event_types(events)
+    assert EventType.DONE not in event_types(events)
+    assert events[-1].event.data["code"] == "request_timeout"
+
+
+def test_success_cancels_watchdog_before_done_and_prevents_late_expiry():
+    timer_factory = ManualTimerFactory()
+    token = CancellationToken()
+    use_case = OptimizeUseCase(
+        scene_detector=FakeSceneDetector(
+            SceneDetectionResult("report_writing", 0.9, "fake")
+        ),
+        template_resolver=FakeTemplateResolver(),
+        provider=FakeProvider(("done",)),
+        timer_factory=timer_factory,
+    )
+
+    events = list(use_case.optimize(OptimizeRequest("input"), cancellation=token))
+    timer_factory.timers[0].fire()
+
+    assert EventType.DONE in event_types(events)
+    assert timer_factory.timers[0].cancelled
+    assert not token.is_cancelled
 
 
 def test_stream_output_exceeding_utf8_byte_limit_is_nonrecoverable_error():

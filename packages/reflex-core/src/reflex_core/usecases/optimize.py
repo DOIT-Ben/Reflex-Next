@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from threading import Event, Lock, Timer
 from time import monotonic
-from typing import Callable
+from typing import Any, Callable
 
 from ..cancellation import CancellationToken, OperationCancelled
 from ..events import (
@@ -28,6 +29,48 @@ _MAX_OUTPUT_CHUNKS = 50_000
 _MAX_REQUEST_SECONDS = 120.0
 
 
+class _RequestDeadline:
+    def __init__(
+        self,
+        token: CancellationToken,
+        timer_factory: Callable[[float, Callable[[], None]], Any],
+    ) -> None:
+        self._token = token
+        self._expired = Event()
+        self._lock = Lock()
+        self._closed = False
+        self._timer = timer_factory(_MAX_REQUEST_SECONDS, self.expire)
+
+    @property
+    def expired(self) -> bool:
+        return self._expired.is_set()
+
+    def start(self) -> None:
+        if hasattr(self._timer, "daemon"):
+            self._timer.daemon = True
+        self._timer.start()
+
+    def expire(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._expired.set()
+        self._token.cancel()
+
+    def try_complete(self) -> bool:
+        with self._lock:
+            if self._expired.is_set():
+                return False
+            self._closed = True
+        self._timer.cancel()
+        return True
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+        self._timer.cancel()
+
+
 class OptimizeUseCase:
     """Coordinate validation, scene routing, template rendering and provider streaming."""
 
@@ -38,11 +81,13 @@ class OptimizeUseCase:
         template_resolver: TemplateResolver,
         provider: Provider,
         clock: Callable[[], float] = monotonic,
+        timer_factory: Callable[[float, Callable[[], None]], Any] = Timer,
     ) -> None:
         self._scene_detector = scene_detector
         self._template_resolver = template_resolver
         self._provider = provider
         self._clock = clock
+        self._timer_factory = timer_factory
 
     def optimize(
         self,
@@ -53,6 +98,26 @@ class OptimizeUseCase:
     ) -> Iterator[EventEnvelope]:
         current_request_id = request_id or new_request_id()
         token = cancellation or CancellationToken()
+        deadline = _RequestDeadline(token, self._timer_factory)
+        deadline.start()
+        try:
+            yield from self._run_optimize(
+                request,
+                current_request_id=current_request_id,
+                token=token,
+                deadline=deadline,
+            )
+        finally:
+            deadline.close()
+
+    def _run_optimize(
+        self,
+        request: OptimizeRequest,
+        *,
+        current_request_id: str,
+        token: CancellationToken,
+        deadline: _RequestDeadline,
+    ) -> Iterator[EventEnvelope]:
         started_at = self._clock()
 
         try:
@@ -82,7 +147,7 @@ class OptimizeUseCase:
         )
 
         if token.is_cancelled:
-            yield self._cancelled(current_request_id)
+            yield self._cancellation_terminal(current_request_id, deadline)
             return
 
         detected_scene = self._resolve_scene(request)
@@ -97,10 +162,10 @@ class OptimizeUseCase:
         )
 
         if token.is_cancelled:
-            yield self._cancelled(current_request_id)
+            yield self._cancellation_terminal(current_request_id, deadline)
             return
         if self._deadline_exceeded(started_at):
-            token.cancel()
+            deadline.expire()
             yield self._request_timeout(current_request_id)
             return
 
@@ -121,10 +186,10 @@ class OptimizeUseCase:
             return
 
         if token.is_cancelled:
-            yield self._cancelled(current_request_id)
+            yield self._cancellation_terminal(current_request_id, deadline)
             return
         if self._deadline_exceeded(started_at):
-            token.cancel()
+            deadline.expire()
             yield self._request_timeout(current_request_id)
             return
 
@@ -136,10 +201,10 @@ class OptimizeUseCase:
             output_chunks = 0
             for raw_chunk in self._provider.stream(rendered, request, token):
                 if token.is_cancelled:
-                    yield self._cancelled(current_request_id)
+                    yield self._cancellation_terminal(current_request_id, deadline)
                     return
                 if self._deadline_exceeded(started_at):
-                    token.cancel()
+                    deadline.expire()
                     yield self._request_timeout(current_request_id)
                     return
                 chunk = sanitize_text(raw_chunk)
@@ -159,10 +224,10 @@ class OptimizeUseCase:
                 yield self._envelope(current_request_id, chunk_event(chunk))
 
             if token.is_cancelled:
-                yield self._cancelled(current_request_id)
+                yield self._cancellation_terminal(current_request_id, deadline)
                 return
             if self._deadline_exceeded(started_at):
-                token.cancel()
+                deadline.expire()
                 yield self._request_timeout(current_request_id)
                 return
 
@@ -177,6 +242,10 @@ class OptimizeUseCase:
                         action="retry",
                     ),
                 )
+                return
+
+            if not deadline.try_complete():
+                yield self._request_timeout(current_request_id)
                 return
 
             yield self._envelope(
@@ -195,8 +264,11 @@ class OptimizeUseCase:
                 metric_event(elapsed_seconds=max(0.0, self._clock() - started_at)),
             )
         except OperationCancelled:
-            yield self._cancelled(current_request_id)
+            yield self._cancellation_terminal(current_request_id, deadline)
         except Exception as exc:
+            if deadline.expired:
+                yield self._request_timeout(current_request_id)
+                return
             code, message, recoverable, action = safe_provider_error(exc)
             yield self._envelope(
                 current_request_id,
@@ -247,6 +319,14 @@ class OptimizeUseCase:
 
     def _deadline_exceeded(self, started_at: float) -> bool:
         return self._clock() - started_at >= _MAX_REQUEST_SECONDS
+
+    @classmethod
+    def _cancellation_terminal(
+        cls, request_id: str, deadline: _RequestDeadline
+    ) -> EventEnvelope:
+        if deadline.expired:
+            return cls._request_timeout(request_id)
+        return cls._cancelled(request_id)
 
     @classmethod
     def _request_timeout(cls, request_id: str) -> EventEnvelope:
