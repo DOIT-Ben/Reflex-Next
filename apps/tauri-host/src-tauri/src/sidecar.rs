@@ -57,6 +57,9 @@ pub trait ChildProcess: Send {
     fn take_stderr(&mut self) -> Option<Box<dyn Read + Send>> {
         None
     }
+    fn terminator(&self) -> Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>> {
+        None
+    }
     fn wait_for(&mut self, timeout: Duration) -> io::Result<bool> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
@@ -118,7 +121,7 @@ fn build_process_command(launch: &LaunchSpec) -> Result<Command, &'static str> {
 }
 
 struct OsChildProcess {
-    child: Child,
+    child: Arc<Mutex<Child>>,
     stdin: Option<ChildStdin>,
     stdout: Option<ChildStdout>,
     stderr: Option<ChildStderr>,
@@ -130,14 +133,18 @@ impl OsChildProcess {
             stdin: child.stdin.take(),
             stdout: child.stdout.take(),
             stderr: child.stderr.take(),
-            child,
+            child: Arc::new(Mutex::new(child)),
         }
     }
 }
 
 impl ChildProcess for OsChildProcess {
     fn has_exited(&mut self) -> io::Result<bool> {
-        self.child.try_wait().map(|status| status.is_some())
+        self.child
+            .lock()
+            .map_err(|_| io::Error::other("child process lock poisoned"))?
+            .try_wait()
+            .map(|status| status.is_some())
     }
 
     fn write_stdin(&mut self, bytes: &[u8]) -> io::Result<()> {
@@ -170,12 +177,24 @@ impl ChildProcess for OsChildProcess {
             .map(|stream| Box::new(stream) as Box<dyn Read + Send>)
     }
 
+    fn terminator(&self) -> Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>> {
+        let child = self.child.clone();
+        Some(Arc::new(move || terminate_os_child(&child)))
+    }
+
     fn terminate(&mut self) -> io::Result<()> {
-        match self.child.kill() {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::InvalidInput => Ok(()),
-            Err(error) => Err(error),
-        }
+        terminate_os_child(&self.child)
+    }
+}
+
+fn terminate_os_child(child: &Arc<Mutex<Child>>) -> io::Result<()> {
+    let mut child = child
+        .lock()
+        .map_err(|_| io::Error::other("child process lock poisoned"))?;
+    match child.kill() {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::InvalidInput => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
@@ -842,6 +861,10 @@ where
                 return Err(RUNTIME_UNAVAILABLE_MESSAGE);
             }
         }
+        if child.unhealthy.load(Ordering::Acquire) {
+            fail_all_requests(&self.emitter, &child.active_requests);
+            return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+        }
         Ok(child.active_requests.clone())
     }
 
@@ -908,6 +931,7 @@ where
         let active_requests = Arc::new(Mutex::new(HashMap::new()));
         let stopping = Arc::new(AtomicBool::new(false));
         let unhealthy = Arc::new(AtomicBool::new(false));
+        let terminator = process.terminator();
 
         if let Some(stdout) = process.take_stdout() {
             spawn_stdout_reader(
@@ -916,6 +940,7 @@ where
                 active_requests.clone(),
                 stopping.clone(),
                 unhealthy.clone(),
+                terminator,
             );
         }
         if let Some(stderr) = process.take_stderr() {
@@ -1176,6 +1201,7 @@ fn spawn_stdout_reader(
     active_requests: ActiveRequests,
     stopping: Arc<AtomicBool>,
     unhealthy: Arc<AtomicBool>,
+    terminator: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>>,
 ) {
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
@@ -1204,6 +1230,9 @@ fn spawn_stdout_reader(
         if !stopping.load(Ordering::Acquire) {
             unhealthy.store(true, Ordering::Release);
             fail_all_requests(&emitter, &active_requests);
+            if let Some(terminate) = terminator {
+                let _ = terminate();
+            }
         }
     });
 }
@@ -3168,6 +3197,7 @@ mod tests {
             active_requests.clone(),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            None,
         );
 
         std::thread::sleep(std::time::Duration::from_millis(80));
@@ -3291,6 +3321,87 @@ mod tests {
     }
 
     #[test]
+    fn unexpected_stdout_eof_fails_once_clears_routes_terminates_and_restarts() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
+        let terminated = Arc::new(AtomicBool::new(false));
+        let first = FakeProcess::with_stdout_reader_and_termination_probe(
+            writes.clone(),
+            Box::new(WriteGatedReader::new(
+                writes.clone(),
+                release.clone(),
+                vec![(
+                    1,
+                    br#"{"version":1,"request_id":"req-crash","event":{"type":"chunk","data":{"text":"partial"}}}
+"#
+                    .to_vec(),
+                )],
+            )),
+            terminated.clone(),
+        );
+        let factory = FakeProcessFactory::new(vec![first, FakeProcess::running(writes.clone())]);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sidecar =
+            RuntimeSidecar::new(factory.clone(), Arc::new(RecordingEmitter(events.clone())));
+
+        sidecar.send(optimize_command("req-crash")).unwrap();
+        wait_for_event(&events, |payload| {
+            payload["request_id"] == "req-crash" && payload["event"]["type"] == "chunk"
+        });
+        release.store(true, Ordering::Release);
+        wait_for_event(&events, |payload| {
+            payload["request_id"] == "req-crash"
+                && payload["event"]["type"] == "error"
+                && payload["event"]["data"]["code"] == "runtime_unavailable"
+        });
+        wait_for_active_requests_empty(&sidecar);
+
+        let request_events = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|payload| payload["request_id"] == "req-crash")
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            request_events
+                .iter()
+                .filter(|payload| matches!(
+                    payload["event"]["type"].as_str(),
+                    Some("done" | "error")
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            request_events.last().unwrap()["event"]["data"]["message"],
+            RUNTIME_UNAVAILABLE_MESSAGE
+        );
+        assert!(terminated.load(Ordering::Acquire));
+
+        sidecar.send(optimize_command("req-after-crash")).unwrap();
+        assert_eq!(factory.launch_count(), 2);
+    }
+
+    #[test]
+    fn unhealthy_detected_during_write_never_reports_send_success() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let terminated = Arc::new(AtomicBool::new(false));
+        let factory = FakeProcessFactory::new(vec![FakeProcess::with_eof_before_flush_returns(
+            writes,
+            terminated.clone(),
+        )]);
+        let sidecar = RuntimeSidecar::new(factory, Arc::new(FakeEmitter));
+
+        assert_eq!(
+            sidecar.send(optimize_command("req-unhealthy-write")),
+            Err(RUNTIME_UNAVAILABLE_MESSAGE)
+        );
+        wait_for_active_requests_empty(&sidecar);
+        assert!(terminated.load(Ordering::Acquire));
+    }
+
+    #[test]
     fn sends_commands_serially_then_requests_shutdown_only_for_its_owned_child() {
         let writes = Arc::new(Mutex::new(Vec::new()));
         let factory = FakeProcessFactory::new(vec![FakeProcess::running(writes.clone())]);
@@ -3358,8 +3469,14 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(lines.len(), 4);
         for pair in lines.chunks_exact(2) {
-            assert!(pair[0].contains(r#""type":"configure_provider""#));
-            assert!(pair[1].contains(r#""type":"optimize""#));
+            let configure: Value = serde_json::from_str(&pair[0]).unwrap();
+            let optimize: Value = serde_json::from_str(&pair[1]).unwrap();
+            assert_eq!(configure["type"], "configure_provider");
+            assert_eq!(optimize["type"], "optimize");
+            assert_eq!(
+                configure["payload"]["config"]["model"],
+                optimize["payload"]["model"]
+            );
         }
     }
 
@@ -3452,6 +3569,8 @@ mod tests {
         fail_after_writes: Option<usize>,
         writes: Arc<Mutex<Vec<Vec<u8>>>>,
         stdout: Option<Box<dyn Read + Send>>,
+        termination_probe: Option<Arc<AtomicBool>>,
+        wait_for_termination_on_flush: bool,
     }
 
     struct HoldOpenReader {
@@ -3568,6 +3687,8 @@ mod tests {
                 fail_after_writes: None,
                 writes,
                 stdout: None,
+                termination_probe: None,
+                wait_for_termination_on_flush: false,
             }
         }
 
@@ -3579,6 +3700,8 @@ mod tests {
                 fail_after_writes: None,
                 writes,
                 stdout: None,
+                termination_probe: None,
+                wait_for_termination_on_flush: false,
             }
         }
 
@@ -3590,6 +3713,8 @@ mod tests {
                 fail_after_writes: Some(count),
                 writes,
                 stdout: None,
+                termination_probe: None,
+                wait_for_termination_on_flush: false,
             }
         }
 
@@ -3601,6 +3726,8 @@ mod tests {
                 fail_after_writes: None,
                 writes,
                 stdout: Some(Box::new(Cursor::new(stdout))),
+                termination_probe: None,
+                wait_for_termination_on_flush: false,
             }
         }
 
@@ -3615,6 +3742,41 @@ mod tests {
                 fail_after_writes: None,
                 writes,
                 stdout: Some(stdout),
+                termination_probe: None,
+                wait_for_termination_on_flush: false,
+            }
+        }
+
+        fn with_eof_before_flush_returns(
+            writes: Arc<Mutex<Vec<Vec<u8>>>>,
+            termination_probe: Arc<AtomicBool>,
+        ) -> Self {
+            Self {
+                exited: false,
+                exits_after_write: false,
+                has_exited_script: VecDeque::new(),
+                fail_after_writes: None,
+                writes,
+                stdout: Some(Box::new(Cursor::new(Vec::new()))),
+                termination_probe: Some(termination_probe),
+                wait_for_termination_on_flush: true,
+            }
+        }
+
+        fn with_stdout_reader_and_termination_probe(
+            writes: Arc<Mutex<Vec<Vec<u8>>>>,
+            stdout: Box<dyn Read + Send>,
+            termination_probe: Arc<AtomicBool>,
+        ) -> Self {
+            Self {
+                exited: false,
+                exits_after_write: false,
+                has_exited_script: VecDeque::new(),
+                fail_after_writes: None,
+                writes,
+                stdout: Some(stdout),
+                termination_probe: Some(termination_probe),
+                wait_for_termination_on_flush: false,
             }
         }
 
@@ -3629,6 +3791,8 @@ mod tests {
                 fail_after_writes: None,
                 writes,
                 stdout: Some(stdout),
+                termination_probe: None,
+                wait_for_termination_on_flush: false,
             }
         }
 
@@ -3644,6 +3808,8 @@ mod tests {
                 fail_after_writes: None,
                 writes,
                 stdout: Some(stdout),
+                termination_probe: None,
+                wait_for_termination_on_flush: false,
             }
         }
     }
@@ -3669,11 +3835,42 @@ mod tests {
         }
 
         fn flush_stdin(&mut self) -> io::Result<()> {
+            if self.wait_for_termination_on_flush {
+                let probe = self.termination_probe.as_ref().unwrap();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+                while !probe.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                if !probe.load(Ordering::Acquire) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "fixture termination callback timed out",
+                    ));
+                }
+            }
             Ok(())
         }
 
         fn take_stdout(&mut self) -> Option<Box<dyn Read + Send>> {
             self.stdout.take()
+        }
+
+        fn terminator(&self) -> Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>> {
+            self.termination_probe.as_ref().map(|probe| {
+                let probe = probe.clone();
+                Arc::new(move || {
+                    probe.store(true, Ordering::Release);
+                    Ok(())
+                }) as Arc<dyn Fn() -> io::Result<()> + Send + Sync>
+            })
+        }
+
+        fn terminate(&mut self) -> io::Result<()> {
+            self.exited = true;
+            if let Some(probe) = &self.termination_probe {
+                probe.store(true, Ordering::Release);
+            }
+            Ok(())
         }
     }
 
