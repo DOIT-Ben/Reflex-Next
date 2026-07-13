@@ -56,6 +56,7 @@ def test_allowed_fields_are_structured_and_sensitive_content_is_removed(tmp_path
         level="warning",
         provider_id="minimax",
         code="provider_authentication_failed",
+        model="api_key=model-secret",
         url="https://user:password@example.test/v1/chat?token=query-secret&q=private-text#fragment",
         message=(
             "Authorization: Basic header-secret api_key=message-secret "
@@ -77,10 +78,9 @@ def test_allowed_fields_are_structured_and_sensitive_content_is_removed(tmp_path
         "level",
         "provider_id",
         "code",
-        "url",
-        "message",
+        "model",
     }
-    assert record["url"] == "https://example.test/v1/chat"
+    assert record["model"] == "api_key=[REDACTED]"
     serialized = json.dumps(record, ensure_ascii=False)
     for secret in (
         "password",
@@ -88,6 +88,7 @@ def test_allowed_fields_are_structured_and_sensitive_content_is_removed(tmp_path
         "private-text",
         "header-secret",
         "message-secret",
+        "model-secret",
         "generic-secret",
         "complete private",
         "field-secret",
@@ -163,7 +164,7 @@ def test_storage_failures_do_not_escape_or_create_partial_state(tmp_path):
     writer.close()
 
 
-def test_corrupt_active_file_is_isolated_without_blocking_new_records(tmp_path):
+def test_corrupt_active_file_is_discarded_without_blocking_new_records(tmp_path):
     directory = tmp_path / "diagnostics"
     directory.mkdir()
     active = directory / "runtime-diagnostics.jsonl"
@@ -175,7 +176,7 @@ def test_corrupt_active_file_is_isolated_without_blocking_new_records(tmp_path):
     assert writer.emit("runtime_recovered", status="ready") is True
     writer.close()
     assert json.loads(active.read_text(encoding="utf-8").strip())["event"] == "runtime_recovered"
-    assert (directory / "runtime-diagnostics.1.jsonl").read_bytes() == b"not-json\xff\n"
+    assert not (directory / "runtime-diagnostics.1.jsonl").exists()
 
 
 def test_close_is_idempotent_and_stops_future_writes(tmp_path):

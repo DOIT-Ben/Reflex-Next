@@ -39,8 +39,6 @@ _ALLOWED_FIELDS: Final = frozenset(
         "duration_ms",
         "chunk_count",
         "cancel_latency_ms",
-        "url",
-        "message",
     }
 )
 _URL_PATTERN: Final = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
@@ -163,11 +161,11 @@ class DiagnosticWriter:
     def _prepare_storage_locked(self) -> bool:
         try:
             self._directory.mkdir(parents=True, exist_ok=True)
-            if self._active_path.exists() and (
-                self._file_size(self._active_path) > self._max_file_bytes
-                or not self._is_valid_jsonl(self._active_path)
-            ):
-                self._rotate_locked()
+            if self._active_path.exists():
+                if self._file_size(self._active_path) > self._max_file_bytes:
+                    self._rotate_locked()
+                elif not self._is_valid_jsonl(self._active_path):
+                    self._active_path.unlink()
             return self._prune_total_locked(0)
         except (OSError, UnicodeError, ValueError, TypeError):
             return False
@@ -191,10 +189,6 @@ class DiagnosticWriter:
             if name not in fields:
                 continue
             value = fields[name]
-            if name == "url":
-                if isinstance(value, str):
-                    record[name] = self._safe_url(value)
-                continue
             if isinstance(value, str):
                 record[name] = self._safe_string(value)
             elif isinstance(value, bool):
