@@ -18,6 +18,8 @@ fn main() {
             "runtime_plugin_call",
             "runtime_plugin_cancel",
             "history_export",
+            "diagnostic_bundle_export",
+            "diagnostic_bundle_cancel",
             "history_admin_operation",
             "history_operation_cancel",
             "history_reuse_intent",

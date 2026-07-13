@@ -33,6 +33,47 @@ pub struct HistoryOperationControl {
     commit_lock: Mutex<()>,
 }
 
+pub struct DiagnosticExportControl {
+    running: AtomicBool,
+    cancelled: AtomicBool,
+}
+
+impl DiagnosticExportControl {
+    pub fn new() -> Self {
+        Self {
+            running: AtomicBool::new(false),
+            cancelled: AtomicBool::new(false),
+        }
+    }
+
+    fn begin(&self) -> Result<(), String> {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(crate::diagnostic_bundle::DIAGNOSTIC_EXPORT_BUSY_MESSAGE.to_string());
+        }
+        self.cancelled.store(false, Ordering::Release);
+        Ok(())
+    }
+
+    fn finish(&self) {
+        self.cancelled.store(false, Ordering::Release);
+        self.running.store(false, Ordering::Release);
+    }
+
+    fn cancel(&self) {
+        if self.running.load(Ordering::Acquire) {
+            self.cancelled.store(true, Ordering::Release);
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
 impl HistoryOperationControl {
     pub fn new() -> Self {
         Self {
@@ -650,6 +691,50 @@ pub async fn history_export(
     );
     control.finish();
     Ok(if result? { "completed" } else { "cancelled" }.to_string())
+}
+
+#[tauri::command]
+pub async fn diagnostic_bundle_export(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    control: State<'_, DiagnosticExportControl>,
+) -> Result<String, String> {
+    require_main_window(window.label())?;
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("导出诊断包")
+        .set_file_name("reflex-diagnostics.zip")
+        .add_filter("诊断包", &["zip"])
+        .blocking_save_file();
+    let Some(target) = selected.and_then(|path| path.into_path().ok()) else {
+        return Ok("cancelled".to_string());
+    };
+    let diagnostics_directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| crate::diagnostic_bundle::DIAGNOSTIC_EXPORT_ERROR_MESSAGE.to_string())?
+        .join("diagnostics");
+    control.begin()?;
+    let result =
+        crate::diagnostic_bundle::export_diagnostic_bundle(&diagnostics_directory, &target, || {
+            control.is_cancelled()
+        });
+    control.finish();
+    match result.map_err(str::to_string)? {
+        crate::diagnostic_bundle::ExportOutcome::Written => Ok("completed".to_string()),
+        crate::diagnostic_bundle::ExportOutcome::Cancelled => Ok("cancelled".to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn diagnostic_bundle_cancel(
+    window: tauri::WebviewWindow,
+    control: State<'_, DiagnosticExportControl>,
+) -> Result<(), String> {
+    require_main_window(window.label())?;
+    control.cancel();
+    Ok(())
 }
 
 #[tauri::command]
@@ -1435,6 +1520,20 @@ mod tests {
         assert!(super::require_main_window("main").is_ok());
         assert!(super::require_main_window("history").is_err());
         assert!(super::require_main_window("forged").is_err());
+    }
+
+    #[test]
+    fn diagnostic_export_control_serializes_runs_and_resets_cancellation() {
+        let control = super::DiagnosticExportControl::new();
+        assert!(control.begin().is_ok());
+        assert!(control.begin().is_err());
+        control.cancel();
+        assert!(control.is_cancelled());
+        control.finish();
+        assert!(!control.is_cancelled());
+        assert!(control.begin().is_ok());
+        assert!(!control.is_cancelled());
+        control.finish();
     }
 
     struct EmptyCredentialBackend;

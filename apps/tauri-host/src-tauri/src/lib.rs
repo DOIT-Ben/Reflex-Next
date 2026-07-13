@@ -2,6 +2,7 @@ mod clipboard;
 mod commands;
 mod config_store;
 mod desktop;
+mod diagnostic_bundle;
 mod diagnostics;
 mod history_export;
 mod history_key_store;
@@ -9,6 +10,7 @@ mod plugin_commands;
 mod runtime_commands;
 mod secret_store;
 mod sidecar;
+mod sensitive_scan;
 mod window;
 
 pub fn run() {
@@ -34,6 +36,7 @@ pub fn run() {
         .setup(|app| {
             configure_bundled_runtime(app);
             let app_data_dir = app.path().app_data_dir()?;
+            let _ = diagnostic_bundle::cleanup_pending_export(&app_data_dir.join("diagnostics"));
             let diagnostics = diagnostics::HostDiagnostics::from_environment(&app_data_dir);
             configure_runtime_diagnostics(&app_data_dir, diagnostics.enabled());
             history_export::cleanup_pending_export(&history_export::pending_export_journal(
@@ -59,6 +62,7 @@ pub fn run() {
             app.manage(secret_store::SecretStore::windows());
             app.manage(history_key_store::HistoryKeyStore::windows());
             app.manage(commands::HistoryOperationControl::new());
+            app.manage(commands::DiagnosticExportControl::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -84,6 +88,8 @@ pub fn run() {
             commands::runtime_plugin_call,
             commands::runtime_plugin_cancel,
             commands::history_export,
+            commands::diagnostic_bundle_export,
+            commands::diagnostic_bundle_cancel,
             commands::history_admin_operation,
             commands::history_operation_cancel,
             commands::history_reuse_intent
@@ -164,6 +170,8 @@ mod tests {
             "allow-minimize-window",
             "allow-toggle-maximize-window",
             "allow-set-window-size",
+            "allow-diagnostic-bundle-export",
+            "allow-diagnostic-bundle-cancel",
         ] {
             assert!(permissions.contains(&permission), "missing {permission}");
         }
@@ -198,6 +206,8 @@ mod tests {
             assert!(permissions.contains(&permission));
         }
         for forbidden in [
+            "allow-diagnostic-bundle-export",
+            "allow-diagnostic-bundle-cancel",
             "allow-show-history-window",
             "allow-runtime-list-providers",
             "allow-configure-history-keys",
