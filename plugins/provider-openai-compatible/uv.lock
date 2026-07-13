@@ -141,30 +141,12 @@ requires-dist = [{ name = "pytest", marker = "extra == 'dev'" }]
 provides-extras = ["dev"]
 
 [[package]]
-name = "reflex-provider-minimax"
-version = "0.1.0"
-source = { editable = "../provider-minimax" }
-dependencies = [
-    { name = "httpx" },
-    { name = "reflex-core" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.28,<0.29" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "reflex-core", editable = "../../packages/reflex-core" },
-]
-provides-extras = ["dev"]
-
-[[package]]
 name = "reflex-provider-openai-compatible"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "reflex-core" },
-    { name = "reflex-provider-minimax" },
 ]
 
 [package.optional-dependencies]
@@ -177,7 +159,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28,<0.29" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "reflex-core", editable = "../../packages/reflex-core" },
-    { name = "reflex-provider-minimax", editable = "../provider-minimax" },
 ]
 provides-extras = ["dev"]
 

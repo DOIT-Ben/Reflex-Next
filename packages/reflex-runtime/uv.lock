@@ -400,7 +400,6 @@ source = { editable = "../../plugins/provider-openai-compatible" }
 dependencies = [
     { name = "httpx" },
     { name = "reflex-core" },
-    { name = "reflex-provider-minimax" },
 ]
 
 [package.metadata]
@@ -408,7 +407,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28,<0.29" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "reflex-core", editable = "../reflex-core" },
-    { name = "reflex-provider-minimax", editable = "../../plugins/provider-minimax" },
 ]
 provides-extras = ["dev"]
 

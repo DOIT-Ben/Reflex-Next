@@ -7,7 +7,7 @@ name = "reflex-provider-openai-compatible"
 version = "0.1.0"
 description = "OpenAI-compatible provider plugins for Reflex Next."
 requires-python = ">=3.11"
-dependencies = ["httpx>=0.28,<0.29", "reflex-core", "reflex-provider-minimax"]
+dependencies = ["httpx>=0.28,<0.29", "reflex-core"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
@@ -23,8 +23,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "../../packages/reflex-core/src", "../provider-minimax/src"]
+pythonpath = ["src", "../../packages/reflex-core/src"]
 
 [tool.uv.sources]
 reflex-core = { path = "../../packages/reflex-core", editable = true }
-reflex-provider-minimax = { path = "../provider-minimax", editable = true }
