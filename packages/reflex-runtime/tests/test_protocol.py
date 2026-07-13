@@ -182,6 +182,9 @@ def test_private_history_path_and_policy_repr_and_str_hide_the_payload(command_t
         "D:\\AppData\\Reflex Next\\history.sqlite3",
         "D:\\AppData\\Reflex Next\\other\\history.sqlite3",
         "D:\\AppData\\Reflex Next\\history\\other.sqlite3",
+        r"\\server\share\history\history.sqlite3",
+        r"\\?\D:\AppData\Reflex Next\history\history.sqlite3",
+        "D:\\AppData\\Reflex Next\\history\\history.sqlite3\n",
         "",
     ],
 )

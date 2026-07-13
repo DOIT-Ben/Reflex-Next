@@ -445,7 +445,11 @@ fn has_exact_fields(payload: &serde_json::Map<String, Value>, fields: &[&str]) -
 
 fn is_history_database_path(value: &str) -> bool {
     let path = Path::new(value);
-    path.is_absolute()
+    value.len() <= 4096
+        && !value.starts_with(r"\\")
+        && !value.starts_with("//")
+        && !value.chars().any(char::is_control)
+        && path.is_absolute()
         && path.file_name().and_then(|name| name.to_str()) == Some("history.sqlite3")
         && path
             .parent()
@@ -637,6 +641,9 @@ mod tests {
             std::path::Path::new("D:/app-data/history.sqlite3"),
             std::path::Path::new("D:/app-data/other/history.sqlite3"),
             std::path::Path::new("D:/app-data/history/other.sqlite3"),
+            std::path::Path::new(r"\\server\share\history\history.sqlite3"),
+            std::path::Path::new(r"\\?\D:\app-data\history\history.sqlite3"),
+            std::path::Path::new("D:/app-data/history/history.sqlite3\n"),
         ] {
             assert!(super::configure_history_path_command(path).is_err());
         }

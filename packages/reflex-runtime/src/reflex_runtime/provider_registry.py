@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from pathlib import PurePosixPath, PureWindowsPath
 from threading import RLock
 from types import MappingProxyType
 from typing import Any
@@ -142,7 +143,7 @@ def _provider_config(factory: Any, raw_config: dict[str, object]) -> ProviderCon
         if not isinstance(ca_bundle_path, str):
             raise provider_configuration_invalid()
         ca_bundle_path = ca_bundle_path.strip()
-        if not ca_bundle_path or len(ca_bundle_path) > 2048:
+        if not _valid_ca_bundle_path(ca_bundle_path):
             raise provider_configuration_invalid()
 
     return ProviderConfig(
@@ -177,4 +178,44 @@ def _valid_https_url(value: str) -> bool:
         and parsed.password is None
         and not parsed.query
         and not parsed.fragment
+    )
+
+
+def _valid_ca_bundle_path(value: str) -> bool:
+    if not value or len(value) > 2048 or any(ord(character) < 32 for character in value):
+        return False
+    lower = value.lower()
+    if value.startswith(("\\\\", "//")) or lower.startswith(("file:", "http:", "https:")):
+        return False
+    raw_segments = [segment for segment in value.replace("\\", "/").split("/") if segment]
+    if any(
+        segment in {".", ".."}
+        or segment.endswith((" ", "."))
+        or _reserved_windows_name(segment)
+        for segment in raw_segments
+        if not segment.endswith(":")
+    ):
+        return False
+    windows_path = PureWindowsPath(value)
+    posix_path = PurePosixPath(value)
+    is_windows_absolute = (
+        windows_path.is_absolute()
+        and len(windows_path.drive) == 2
+        and windows_path.drive[0].isalpha()
+        and windows_path.drive[1] == ":"
+    )
+    path = windows_path if is_windows_absolute else posix_path
+    return (is_windows_absolute or posix_path.is_absolute()) and path.suffix.lower() in {
+        ".pem",
+        ".crt",
+        ".cer",
+    }
+
+
+def _reserved_windows_name(value: str) -> bool:
+    stem = value.split(".", 1)[0].upper()
+    return stem in {"CON", "PRN", "AUX", "NUL"} or (
+        len(stem) == 4
+        and stem[:3] in {"COM", "LPT"}
+        and stem[3] in "123456789"
     )

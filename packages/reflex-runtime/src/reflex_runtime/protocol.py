@@ -237,7 +237,12 @@ def _validate_history_path(payload: dict[str, Any]) -> None:
     message = "invalid history path command"
     _require_fields(payload, CONFIGURE_HISTORY_PATH_FIELDS, message)
     database_path = payload.get("database_path")
-    if not isinstance(database_path, str) or len(database_path) > 4096:
+    if (
+        not isinstance(database_path, str)
+        or len(database_path) > 4096
+        or database_path.startswith(("\\\\", "//"))
+        or any(ord(character) < 32 for character in database_path)
+    ):
         raise ProtocolError(message)
     path = Path(database_path)
     if (

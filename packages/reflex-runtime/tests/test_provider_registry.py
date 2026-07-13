@@ -125,6 +125,14 @@ def test_registry_returns_stable_safe_errors(provider_id, model, code):
         {"model": "not-allowed"},
         {"model": "model-a", "base_url": "http://api.example.test"},
         {"model": "model-a", "ca_bundle_path": 42},
+        {"model": "model-a", "ca_bundle_path": "certs/root.pem"},
+        {"model": "model-a", "ca_bundle_path": "file:///C:/certs/root.pem"},
+        {"model": "model-a", "ca_bundle_path": r"\\server\share\root.pem"},
+        {"model": "model-a", "ca_bundle_path": r"\\?\C:\certs\root.pem"},
+        {"model": "model-a", "ca_bundle_path": r"C:\certs\..\root.pem"},
+        {"model": "model-a", "ca_bundle_path": "C:\\certs\\root\n.pem"},
+        {"model": "model-a", "ca_bundle_path": r"C:\certs\CON.pem"},
+        {"model": "model-a", "ca_bundle_path": r"C:\certs\root.txt"},
     ],
 )
 def test_registry_rejects_invalid_provider_configuration(raw_config):
@@ -135,6 +143,28 @@ def test_registry_rejects_invalid_provider_configuration(raw_config):
 
     assert caught.value.code == "provider_invalid_response"
     assert caught.value.action == "settings"
+
+
+@pytest.mark.parametrize(
+    "ca_bundle_path",
+    [
+        r"C:\certs\root.pem",
+        r"D:\Reflex Certificates\company-root.CRT",
+        r"E:/certificates/company.cer",
+        "/etc/ssl/certs/company.pem",
+    ],
+)
+def test_registry_accepts_local_absolute_certificate_bundle_paths(ca_bundle_path):
+    factory = RecordingFactory()
+    registry = ProviderRegistry({"minimax": factory})
+
+    registry.configure(
+        "minimax",
+        "fixture-secret",
+        {"model": "model-a", "ca_bundle_path": ca_bundle_path},
+    )
+
+    assert factory.calls[0][1].ca_bundle_path == ca_bundle_path
 
 
 def test_registry_catalog_is_stable_and_ignores_factory_claimed_release_status():

@@ -108,7 +108,7 @@ impl AppConfig {
             &["light", "dark", "system"],
         );
         let hotkey = normalized_bounded_string(object.get("hotkey"), &defaults.hotkey, 128);
-        let ca_bundle_path = normalized_optional_string(object.get("ca_bundle_path"), 2048);
+        let ca_bundle_path = normalized_ca_bundle_path(object.get("ca_bundle_path"));
         let history_redaction = if source_version == u64::from(CURRENT_CONFIG_VERSION) {
             normalized_choice(
                 object.get("history_redaction"),
@@ -443,6 +443,62 @@ fn normalized_optional_string(value: Option<&Value>, max_len: usize) -> Option<S
     }
 }
 
+fn normalized_ca_bundle_path(value: Option<&Value>) -> Option<String> {
+    let value = normalized_optional_string(value, 2048)?;
+    let path = Path::new(&value);
+    let lower = value.to_ascii_lowercase();
+    let has_unsafe_segment = value
+        .split(['\\', '/'])
+        .filter(|segment| !segment.is_empty() && !segment.ends_with(':'))
+        .any(|segment| {
+            let normalized = segment.trim_end_matches([' ', '.']);
+            segment != normalized
+                || matches!(normalized, "." | "..")
+                || is_reserved_windows_name(normalized)
+        });
+    let extension_is_safe = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "pem" | "crt" | "cer"
+            )
+        });
+    if !path.is_absolute()
+        || value.starts_with(r"\\")
+        || value.starts_with("//")
+        || lower.starts_with("file:")
+        || lower.starts_with("http:")
+        || lower.starts_with("https:")
+        || value.chars().any(char::is_control)
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+        || has_unsafe_segment
+        || !extension_is_safe
+    {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn is_reserved_windows_name(value: &str) -> bool {
+    let stem = value
+        .split_once('.')
+        .map_or(value, |(stem, _)| stem)
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || stem
+            .strip_prefix("COM")
+            .or_else(|| stem.strip_prefix("LPT"))
+            .is_some_and(|suffix| suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -538,6 +594,43 @@ mod tests {
             Some("C:\\certs\\root.pem")
         );
         assert_eq!(config.extensions.get("future_flag"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn custom_ca_bundle_accepts_only_local_absolute_certificate_files() {
+        for invalid in [
+            "certs/root.pem",
+            "file:///C:/certs/root.pem",
+            "https://example.test/root.pem",
+            r"\\server\share\root.pem",
+            r"\\?\C:\certs\root.pem",
+            r"C:\certs\..\root.pem",
+            r"C:\certs\root.txt",
+            "C:\\certs\\root\n.pem",
+            r"C:\certs\CON.pem",
+        ] {
+            let config = AppConfig::from_value(json!({
+                "version": 2,
+                "ca_bundle_path": invalid,
+            }))
+            .unwrap();
+
+            assert_eq!(config.ca_bundle_path, None, "expected deny: {invalid:?}");
+        }
+
+        for valid in [
+            r"C:\certs\root.pem",
+            r"D:\Reflex Certificates\company-root.CRT",
+            r"E:/certificates/company.cer",
+        ] {
+            let config = AppConfig::from_value(json!({
+                "version": 2,
+                "ca_bundle_path": valid,
+            }))
+            .unwrap();
+
+            assert_eq!(config.ca_bundle_path.as_deref(), Some(valid));
+        }
     }
 
     #[test]
