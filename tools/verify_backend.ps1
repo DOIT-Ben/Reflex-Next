@@ -1,0 +1,203 @@
+[CmdletBinding()]
+param(
+  [switch]$ListSteps,
+  [switch]$DryRun,
+  [switch]$SkipFrontend,
+  [switch]$SkipHeavy,
+  [ValidateSet(
+    "reflex-core",
+    "reflex-runtime",
+    "batch-runner",
+    "history-sqlite",
+    "markdown-preview",
+    "provider-minimax",
+    "provider-openai-compatible",
+    "semantic-detector",
+    "translator"
+  )]
+  [string[]]$PythonProject = @(
+    "reflex-core",
+    "reflex-runtime",
+    "batch-runner",
+    "history-sqlite",
+    "markdown-preview",
+    "provider-minimax",
+    "provider-openai-compatible",
+    "semantic-detector",
+    "translator"
+  )
+)
+
+$ErrorActionPreference = "Stop"
+
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+
+function New-VerificationStep {
+  param(
+    [string]$Id,
+    [string]$Category,
+    [string]$WorkDir,
+    [string]$LockFile,
+    [string]$Executable,
+    [string[]]$Arguments,
+    [bool]$Heavy = $false,
+    [bool]$Frontend = $false,
+    [string]$PythonProjectName = ""
+  )
+
+  return [PSCustomObject]@{
+    Id = $Id
+    Category = $Category
+    WorkDir = $WorkDir
+    LockFile = $LockFile
+    Executable = $Executable
+    Arguments = $Arguments
+    Heavy = $Heavy
+    Frontend = $Frontend
+    PythonProjectName = $PythonProjectName
+  }
+}
+
+$pythonProjects = @(
+  @{ Name = "reflex-core"; Path = "packages\reflex-core" },
+  @{ Name = "reflex-runtime"; Path = "packages\reflex-runtime" },
+  @{ Name = "batch-runner"; Path = "plugins\batch-runner" },
+  @{ Name = "history-sqlite"; Path = "plugins\history-sqlite" },
+  @{ Name = "markdown-preview"; Path = "plugins\markdown-preview" },
+  @{ Name = "provider-minimax"; Path = "plugins\provider-minimax" },
+  @{ Name = "provider-openai-compatible"; Path = "plugins\provider-openai-compatible" },
+  @{ Name = "semantic-detector"; Path = "plugins\semantic-detector" },
+  @{ Name = "translator"; Path = "plugins\translator" }
+)
+
+$steps = @()
+foreach ($project in $pythonProjects) {
+  $steps += New-VerificationStep `
+    -Id ("python:" + $project.Name) `
+    -Category "python" `
+    -WorkDir $project.Path `
+    -LockFile "uv.lock" `
+    -Executable "uv" `
+    -Arguments @("run", "--frozen", "--extra", "dev", "pytest", "tests") `
+    -PythonProjectName $project.Name
+}
+
+$steps += New-VerificationStep `
+  -Id "rust:tests" `
+  -Category "rust" `
+  -WorkDir "apps\tauri-host\src-tauri" `
+  -LockFile "Cargo.lock" `
+  -Executable "cargo" `
+  -Arguments @("test", "--locked", "--", "--test-threads=2") `
+  -Heavy $true
+
+$steps += New-VerificationStep `
+  -Id "frontend:install" `
+  -Category "frontend" `
+  -WorkDir "apps\tauri-host" `
+  -LockFile "package-lock.json" `
+  -Executable "npm" `
+  -Arguments @("ci") `
+  -Heavy $true `
+  -Frontend $true
+
+$steps += New-VerificationStep `
+  -Id "frontend:tests" `
+  -Category "frontend" `
+  -WorkDir "apps\tauri-host" `
+  -LockFile "package-lock.json" `
+  -Executable "npm" `
+  -Arguments @("test", "--", "--maxWorkers=2") `
+  -Heavy $true `
+  -Frontend $true
+
+$steps += New-VerificationStep `
+  -Id "frontend:build" `
+  -Category "frontend" `
+  -WorkDir "apps\tauri-host" `
+  -LockFile "package-lock.json" `
+  -Executable "npm" `
+  -Arguments @("run", "build") `
+  -Heavy $true `
+  -Frontend $true
+
+function Get-CommandText {
+  param($Step)
+
+  return (@($Step.Executable) + @($Step.Arguments)) -join " "
+}
+
+function Get-SkipReason {
+  param($Step)
+
+  if ($Step.Category -eq "python" -and $PythonProject -notcontains $Step.PythonProjectName) {
+    return "PythonProject"
+  }
+
+  if ($SkipHeavy -and $Step.Heavy) {
+    return "SkipHeavy"
+  }
+
+  if ($SkipFrontend -and $Step.Frontend) {
+    return "SkipFrontend"
+  }
+
+  return ""
+}
+
+if ($ListSteps) {
+  foreach ($step in $steps) {
+    $commandText = Get-CommandText -Step $step
+    Write-Output ("[STEP] {0} | category={1} | heavy={2} | workdir={3} | lock={4} | command={5}" -f $step.Id, $step.Category, $step.Heavy, $step.WorkDir, $step.LockFile, $commandText)
+  }
+  return
+}
+
+foreach ($step in $steps) {
+  $skipReason = Get-SkipReason -Step $step
+  if ($skipReason) {
+    Write-Output ("[SKIP] {0} | reason={1}" -f $step.Id, $skipReason)
+    continue
+  }
+
+  $workDir = Join-Path $root $step.WorkDir
+  $lockFile = Join-Path $workDir $step.LockFile
+  if (-not (Test-Path -LiteralPath $workDir -PathType Container)) {
+    throw "Verification work directory is missing: $($step.WorkDir)"
+  }
+  if (-not (Test-Path -LiteralPath $lockFile -PathType Leaf)) {
+    throw "Verification lock file is missing: $($step.WorkDir)\$($step.LockFile)"
+  }
+
+  $commandText = Get-CommandText -Step $step
+  if ($DryRun) {
+    Write-Output ("[DRY-RUN] {0} | workdir={1} | command={2}" -f $step.Id, $step.WorkDir, $commandText)
+    continue
+  }
+
+  if (-not (Get-Command $step.Executable -ErrorAction SilentlyContinue)) {
+    throw "Required command is unavailable: $($step.Executable)"
+  }
+
+  Write-Output ("[RUN] {0} | workdir={1}" -f $step.Id, $step.WorkDir)
+  Push-Location -LiteralPath $workDir
+  try {
+    & $step.Executable @($step.Arguments)
+    $exitCode = $LASTEXITCODE
+  }
+  finally {
+    Pop-Location
+  }
+
+  if ($exitCode -ne 0) {
+    throw "Verification step failed with exit code ${exitCode}: $($step.Id)"
+  }
+  Write-Output ("[PASS] {0}" -f $step.Id)
+}
+
+if ($DryRun) {
+  Write-Output "Backend verification dry-run passed."
+}
+else {
+  Write-Output "Backend verification passed."
+}

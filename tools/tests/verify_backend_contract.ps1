@@ -1,0 +1,94 @@
+$ErrorActionPreference = "Stop"
+
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$verifyScript = Join-Path $root "tools\verify_backend.ps1"
+$powershell = Join-Path $PSHOME "powershell.exe"
+
+function Assert-True {
+  param(
+    [bool]$Condition,
+    [string]$Message
+  )
+
+  if (-not $Condition) {
+    throw $Message
+  }
+}
+
+function Invoke-Verify {
+  param([string[]]$Arguments)
+
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $output = @(& $powershell -NoProfile -ExecutionPolicy Bypass -File $verifyScript @Arguments 2>&1)
+    $exitCode = $LASTEXITCODE
+  }
+  finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  return [PSCustomObject]@{
+    ExitCode = $exitCode
+    Output = @($output | ForEach-Object { $_.ToString() })
+  }
+}
+
+Assert-True (Test-Path -LiteralPath $verifyScript -PathType Leaf) "tools\verify_backend.ps1 is missing."
+
+$list = Invoke-Verify -Arguments @("-ListSteps")
+Assert-True ($list.ExitCode -eq 0) "-ListSteps must return exit code 0."
+
+$pythonSteps = @($list.Output | Where-Object { $_ -match '^\[STEP\] python:' })
+Assert-True ($pythonSteps.Count -eq 9) "-ListSteps must expose exactly 9 Python test steps."
+Assert-True (($pythonSteps | Where-Object { $_ -notmatch 'uv run --frozen --extra dev pytest tests' }).Count -eq 0) "Every Python step must use frozen dev dependencies."
+Assert-True (($pythonSteps | Where-Object { $_ -notmatch 'lock=uv\.lock' }).Count -eq 0) "Every Python step must declare uv.lock usage."
+
+$requiredPythonIds = @(
+  "python:reflex-core",
+  "python:reflex-runtime",
+  "python:batch-runner",
+  "python:history-sqlite",
+  "python:markdown-preview",
+  "python:provider-minimax",
+  "python:provider-openai-compatible",
+  "python:semantic-detector",
+  "python:translator"
+)
+foreach ($id in $requiredPythonIds) {
+  Assert-True (($list.Output | Where-Object { $_ -match ('^\[STEP\] ' + [regex]::Escape($id) + ' ') }).Count -eq 1) "Missing step: $id"
+}
+
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] rust:tests .*cargo test --locked -- --test-threads=2' }).Count -eq 1) "Rust tests must use Cargo.lock and at most 2 test threads."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:install .*npm ci' }).Count -eq 1) "Frontend install must use package-lock.json through npm ci."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:tests .*npm test -- --maxWorkers=2' }).Count -eq 1) "Vitest must use at most 2 workers."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:build .*npm run build' }).Count -eq 1) "Frontend production build must be part of verification."
+
+$dryRun = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipHeavy")
+Assert-True ($dryRun.ExitCode -eq 0) "The focused dry-run must return exit code 0."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] python:reflex-core ' }).Count -eq 1) "The focused dry-run must select reflex-core."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] python:' }).Count -eq 1) "The focused dry-run must select only one Python project."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] rust:tests .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip Rust tests."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] frontend:tests .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip frontend tests."
+
+$frontendSkip = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipFrontend")
+Assert-True ($frontendSkip.ExitCode -eq 0) "The frontend-skip dry-run must return exit code 0."
+Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[DRY-RUN\] rust:tests ' }).Count -eq 1) "-SkipFrontend must not skip Rust tests."
+Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[SKIP\] frontend:tests .*SkipFrontend' }).Count -eq 1) "-SkipFrontend must skip frontend tests."
+Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[SKIP\] frontend:build .*SkipFrontend' }).Count -eq 1) "-SkipFrontend must skip the frontend build."
+
+$fakeBin = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-verify-contract-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $fakeBin | Out-Null
+try {
+  $fakeUv = Join-Path $fakeBin "uv.cmd"
+  [System.IO.File]::WriteAllText($fakeUv, "@exit /b 23`r`n", [System.Text.Encoding]::ASCII)
+  $originalPath = $env:PATH
+  $env:PATH = "$fakeBin;$originalPath"
+  $failure = Invoke-Verify -Arguments @("-PythonProject", "reflex-core", "-SkipHeavy")
+  Assert-True ($failure.ExitCode -ne 0) "A failed verification step must return a nonzero exit code."
+}
+finally {
+  $env:PATH = $originalPath
+  Remove-Item -LiteralPath $fakeBin -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Write-Output "verify_backend contract checks passed."
