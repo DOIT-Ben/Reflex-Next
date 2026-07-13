@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import bleach
 import markdown
@@ -16,8 +17,9 @@ _ALLOWED_TAGS = frozenset(
         "table", "tbody", "td", "th", "thead", "tr", "ul",
     }
 )
-_ALLOWED_ATTRIBUTES = {"a": ["href", "title"], "code": ["class"]}
 _ALLOWED_PROTOCOLS = frozenset({"http", "https", "mailto"})
+_MAX_INPUT_CHARS = 100_000
+_MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 
 
 class MarkdownPreviewError(RuntimeError):
@@ -60,26 +62,75 @@ class MarkdownPreviewPlugin:
             clean_html = bleach.clean(
                 rendered,
                 tags=_ALLOWED_TAGS,
-                attributes=_ALLOWED_ATTRIBUTES,
+                attributes=_allow_attribute,
                 protocols=_ALLOWED_PROTOCOLS,
                 strip=True,
                 strip_comments=True,
             ).strip()
+            output_size = len(clean_html.encode("utf-8"))
         except Exception:
             raise MarkdownPreviewError("markdown_render_failed") from None
         cancellation.raise_if_cancelled()
-        if len(clean_html) > 2_000_000:
+        if output_size > _MAX_OUTPUT_BYTES:
             raise MarkdownPreviewError("markdown_output_too_large")
-        return {"html": clean_html, "source": text} if operation == "export" else {"html": clean_html}
+        if operation == "export":
+            return {"html": clean_html, "source": text}
+        return {"html": clean_html}
 
 
 def _validated_text(payload: object) -> str:
     if not isinstance(payload, dict) or set(payload) != {"text"}:
         raise MarkdownPreviewError("markdown_payload_invalid")
+    text = payload.get("text")
+    if not isinstance(text, str):
+        raise MarkdownPreviewError("markdown_payload_invalid")
+    if len(text) > _MAX_INPUT_CHARS:
+        raise MarkdownPreviewError("markdown_input_too_large")
     try:
-        return validate_input(payload.get("text"))
+        return validate_input(text, max_length=_MAX_INPUT_CHARS)
     except (InputValidationError, TypeError):
         raise MarkdownPreviewError("markdown_payload_invalid") from None
+
+
+def _allow_attribute(tag: str, name: str, value: str) -> bool:
+    if tag == "code":
+        return name == "class"
+    if tag != "a":
+        return False
+    if name == "title":
+        return True
+    return name == "href" and _is_safe_link(value)
+
+
+def _is_safe_link(value: str) -> bool:
+    if not value or "\\" in value:
+        return False
+    if any(
+        character.isspace() or ord(character) < 0x20 or ord(character) == 0x7F
+        for character in value
+    ):
+        return False
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+        hostname = parsed.hostname
+        username = parsed.username
+        password = parsed.password
+    except (TypeError, ValueError):
+        return False
+
+    scheme = parsed.scheme.lower()
+    if scheme in {"http", "https"}:
+        return bool(
+            parsed.netloc
+            and hostname
+            and username is None
+            and password is None
+            and (port is None or 0 < port <= 65_535)
+        )
+    if scheme == "mailto":
+        return not parsed.netloc and bool(parsed.path)
+    return False
 
 
 def plugin() -> MarkdownPreviewPlugin:

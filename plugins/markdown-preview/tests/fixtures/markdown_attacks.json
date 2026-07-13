@@ -1,0 +1,122 @@
+{
+  "dangerous_urls": [
+    {
+      "id": "javascript",
+      "source": "[link](javascript:alert(1))"
+    },
+    {
+      "id": "javascript-mixed-case",
+      "source": "[link](JaVaScRiPt:alert(1))"
+    },
+    {
+      "id": "javascript-entity-colon",
+      "source": "<a href=\"javascript&#58;alert(1)\">link</a>"
+    },
+    {
+      "id": "data-html",
+      "source": "<a href=\"data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==\">link</a>"
+    },
+    {
+      "id": "file-windows",
+      "source": "[link](file:///C:/Windows/win.ini)"
+    },
+    {
+      "id": "unc-path",
+      "source": "[link](\\\\\\\\server\\\\share\\\\secret.txt)"
+    },
+    {
+      "id": "scheme-relative-path",
+      "source": "[link](//server/share/secret.txt)"
+    },
+    {
+      "id": "parent-relative-path",
+      "source": "[link](../secret.txt)"
+    },
+    {
+      "id": "root-relative-path",
+      "source": "[link](/etc/passwd)"
+    },
+    {
+      "id": "tauri-protocol",
+      "source": "[link](tauri://localhost/secret)"
+    },
+    {
+      "id": "asset-protocol",
+      "source": "[link](asset://localhost/secret)"
+    },
+    {
+      "id": "ipc-protocol",
+      "source": "[link](ipc://localhost/command)"
+    },
+    {
+      "id": "http-credentials",
+      "source": "[link](http://user:password@example.com/private)"
+    },
+    {
+      "id": "https-credentials",
+      "source": "[link](https://user@example.com/private)"
+    },
+    {
+      "id": "malformed-ipv6",
+      "source": "<a href=\"https://[::1\">link</a>"
+    },
+    {
+      "id": "control-character-scheme",
+      "source": "<a href=\"java\nscript:alert(1)\">link</a>"
+    }
+  ],
+  "active_markup": [
+    {
+      "id": "script",
+      "source": "<script>alert(1)</script>"
+    },
+    {
+      "id": "svg-script-event",
+      "source": "<svg onload=\"alert(1)\"><script>alert(2)</script><animate onbegin=\"alert(3)\" /></svg>"
+    },
+    {
+      "id": "svg-link",
+      "source": "<svg><a href=\"javascript:alert(1)\" xlink:href=\"file:///etc/passwd\">link</a></svg>"
+    },
+    {
+      "id": "mathml-link",
+      "source": "<math><a href=\"data:text/html,attack\">link</a></math>"
+    },
+    {
+      "id": "image-event",
+      "source": "<img src=\"https://example.com/x.png\" onerror=\"alert(1)\">"
+    },
+    {
+      "id": "iframe-srcdoc",
+      "source": "<iframe srcdoc=\"<script>alert(1)</script>\" src=\"file:///etc/passwd\"></iframe>"
+    },
+    {
+      "id": "object-data",
+      "source": "<object data=\"javascript:alert(1)\"></object>"
+    },
+    {
+      "id": "embed-source",
+      "source": "<embed src=\"data:text/html,attack\">"
+    },
+    {
+      "id": "event-attributes",
+      "source": "<a href=\"https://example.com\" onclick=\"alert(1)\" onmouseover=\"alert(2)\">link</a>"
+    },
+    {
+      "id": "form-action",
+      "source": "<form action=\"file:///etc/passwd\"><input formaction=\"tauri://localhost/command\"></form>"
+    },
+    {
+      "id": "meta-refresh",
+      "source": "<meta http-equiv=\"refresh\" content=\"0;url=javascript:alert(1)\">"
+    },
+    {
+      "id": "base-element",
+      "source": "<base href=\"file:///C:/Windows/\"><a href=\"win.ini\">link</a>"
+    },
+    {
+      "id": "style-element",
+      "source": "<style>@import 'file:///etc/passwd';</style><p style=\"background:url(javascript:alert(1))\">text</p>"
+    }
+  ]
+}
