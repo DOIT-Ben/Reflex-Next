@@ -163,6 +163,7 @@ describe("production frontend architecture", () => {
       "ReflexTitleBar",
       "NavRail",
       "StatusBar",
+      "SettingsDialog",
       "InputPane",
       "ConfigSummary",
       "ResultPane",

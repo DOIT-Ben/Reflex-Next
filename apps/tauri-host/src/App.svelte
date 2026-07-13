@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import SettingsDialog from "./components/settings/SettingsDialog.svelte";
+  import type { SettingsSection } from "./components/settings/types";
   import NavRail from "./components/shell/NavRail.svelte";
   import ReflexTitleBar from "./components/shell/ReflexTitleBar.svelte";
   import StatusBar from "./components/shell/StatusBar.svelte";
@@ -38,10 +40,8 @@
     providerDisplayName,
     resolveHostShortcut,
     retryAfterError,
-    SETTINGS_PLUGIN_IDS,
     settingsDraftFromConfig,
     startGeneration,
-    updateHistorySettingsDraft,
     updateInput,
     updatePluginSettingsDraft,
     type HostState,
@@ -150,7 +150,6 @@
     type TemplateDraft
   } from "./domain/templateLibrary";
   import {
-    providerCatalog,
     providerModels,
     resolveProviderAvailability,
     type ProviderAvailability
@@ -167,8 +166,7 @@
   import {
     listSceneOptions,
     type OptimizeMode,
-    type OptimizeStyle,
-    type ScenePolicy
+    type OptimizeStyle
   } from "./domain/reflexSession";
 
   const modes: Array<{ id: OptimizeMode; label: string }> = [
@@ -182,41 +180,6 @@
     { id: "creative", label: "创意" }
   ];
   const scenes = listSceneOptions();
-  const clipboardPolicies: Array<{ id: HostSettingsDraft["clipboard_policy"]; label: string }> = [
-    { id: "startup", label: "启动时读取" },
-    { id: "manual", label: "仅手动读取" },
-    { id: "auto_replace", label: "生成后自动替换" }
-  ];
-  const scenePolicies: Array<{ id: ScenePolicy; label: string }> = [
-    { id: "auto", label: "自动" },
-    { id: "ask", label: "每次询问" },
-    { id: "manual", label: "手动固定" }
-  ];
-  const historyRedactionOptions: Array<{
-    id: HostSettingsDraft["history_redaction"];
-    label: string;
-  }> = [
-    { id: "secrets", label: "隐藏敏感内容" },
-    { id: "none", label: "保留原文" }
-  ];
-  const settingsPlugins: Array<{
-    id: SettingsPluginId;
-    label: string;
-    description: string;
-  }> = [
-    { id: SETTINGS_PLUGIN_IDS[0], label: "翻译", description: "跨语言转换" },
-    { id: SETTINGS_PLUGIN_IDS[1], label: "Markdown 预览", description: "渲染 Markdown 内容" },
-    { id: SETTINGS_PLUGIN_IDS[2], label: "批处理", description: "导入与导出批量提示词" },
-    { id: SETTINGS_PLUGIN_IDS[3], label: "语义识别", description: "使用已安装的本地模型增强场景识别" }
-  ];
-  const settingsSections = [
-    { id: "provider", label: "模型与 Provider" },
-    { id: "defaults", label: "默认行为" },
-    { id: "clipboard", label: "剪贴板" },
-    { id: "privacy", label: "安全与隐私" },
-    { id: "plugins", label: "插件" }
-  ] as const;
-  type SettingsSection = (typeof settingsSections)[number]["id"];
   const translationTargets: Array<{ id: TranslationTarget; label: string }> = [
     { id: "auto", label: "自动" },
     { id: "zh", label: "中文" },
@@ -226,15 +189,6 @@
     { id: "split", label: "分栏" },
     { id: "source", label: "源码" },
     { id: "preview", label: "预览" }
-  ];
-  const uiLanguages: Array<{ id: AppConfig["language"]; label: string }> = [
-    { id: "zh-CN", label: "简体中文" },
-    { id: "en-US", label: "English" }
-  ];
-  const themes: Array<{ id: AppConfig["theme"]; label: string }> = [
-    { id: "system", label: "跟随系统" },
-    { id: "light", label: "浅色" },
-    { id: "dark", label: "深色" }
   ];
   const batchFormats: Array<{ id: BatchFormat; label: string }> = [
     { id: "txt", label: "TXT 每行一条" },
@@ -1395,24 +1349,6 @@
     void refreshSemanticModelStatus();
   }
 
-  function setHistoryEnabled(enabled: boolean) {
-    settingsDraft = updateHistorySettingsDraft(settingsDraft, {
-      history_enabled: enabled
-    });
-  }
-
-  function setPrivacyMode(enabled: boolean) {
-    settingsDraft = updateHistorySettingsDraft(settingsDraft, {
-      privacy_mode: enabled
-    });
-  }
-
-  function setHistoryRedaction(value: HostSettingsDraft["history_redaction"]) {
-    settingsDraft = updateHistorySettingsDraft(settingsDraft, {
-      history_redaction: value
-    });
-  }
-
   function setPluginEnabled(pluginId: SettingsPluginId, enabled: boolean) {
     settingsDraft = updatePluginSettingsDraft(settingsDraft, pluginId, enabled);
     if (pluginId === "semantic-detector" && !enabled) {
@@ -1424,13 +1360,6 @@
   function selectSettingsSection(section: SettingsSection) {
     settingsSection = section;
     if (section === "plugins") void refreshSemanticModelStatus();
-  }
-
-  function pluginDescription(plugin: (typeof settingsPlugins)[number]): string {
-    if (plugin.id !== "semantic-detector") return plugin.description;
-    return semanticDetectorEnabled
-      ? "已启用。仅在优化时检查已安装的本地模型；模型不可用时自动回退通用场景。"
-      : "未启用。启用后只检查本地已安装模型，不会自动下载。";
   }
 
   async function refreshSemanticModelStatus() {
@@ -2212,277 +2141,38 @@
     {/if}
 
     {#if state.overlay === "settings"}
-      <div class="settings-layer" role="presentation">
-        <section class="settings-dialog" aria-label={t(uiLanguage, "settings")}>
-          <div class="settings-head">
-            <div>
-              <h2>{t(uiLanguage, "settings")}</h2>
-              <p>{tr("管理模型、默认行为和本地隐私。")}</p>
-            </div>
-            <button class="icon-button" aria-label={tr("关闭设置")} on:click={cancelSettingsView}>×</button>
-          </div>
-
-          <div class="settings-layout">
-            <nav class="settings-nav" aria-label={tr("设置分类")}>
-              {#each settingsSections as section}
-                <button
-                  type="button"
-                  class:active={settingsSection === section.id}
-                  aria-pressed={settingsSection === section.id}
-                  on:click={() => selectSettingsSection(section.id)}
-                >
-                  {tr(section.label)}
-                </button>
-              {/each}
-            </nav>
-
-            <div class="settings-content">
-              {#if settingsSection === "provider"}
-                <h3>{tr("模型与 Provider")}</h3>
-                <div class="settings-grid">
-                  <label>
-                    <span>{tr("默认 Provider")}</span>
-                    <select value={settingsDraft.default_provider ?? "minimax"} disabled={settingsBusy} on:change={(event) => selectSettingsProvider(event.currentTarget.value)}>
-                      {#each providerCatalog as provider}<option value={provider.id}>{tr(provider.label)}</option>{/each}
-                    </select>
-                  </label>
-                  <label>
-                    <span>{tr("默认模型")}</span>
-                    <select bind:value={settingsDraft.default_model} disabled={settingsBusy}>
-                      {#each settingsProviderModels as model}<option value={model.id}>{tr(model.label)}</option>{/each}
-                    </select>
-                  </label>
-                </div>
-
-                <div class="api-key-row">
-                  <label>
-                    <span>API Key</span>
-                    <input
-                      type="password"
-                      bind:value={secretInput}
-                      autocomplete="off"
-                      spellcheck="false"
-                      disabled={secretBusy}
-                      placeholder={tr("输入新的 API Key")}
-                      aria-describedby="secret-feedback"
-                    />
-                  </label>
-                  <button class="outline" type="button" disabled={secretBusy} on:click={saveSecret}>
-                    {tr(secretBusy ? "正在保存" : "保存密钥")}
-                  </button>
-                  <button
-                    class="outline danger"
-                    type="button"
-                    disabled={secretBusy || !secretStatus.configured}
-                    on:click={deleteSecret}
-                  >
-                    {tr("删除密钥")}
-                  </button>
-                </div>
-                <p id="secret-feedback" class="settings-feedback" aria-live="polite">
-                  {tr(secretNotice ?? "密钥只保存在系统安全存储中，输入不会保留。")}
-                </p>
-                <div class="credential-status" class:configured={secretStatus.configured}>
-                  <span class="status-dot" aria-hidden="true"></span>
-                  <div>
-                    <strong>{tr(secretStatus.configured ? "密钥已保存" : "尚未配置密钥")}</strong>
-                    <span>
-                      {secretStatus.configured && secretStatus.maskedTail
-                        ? tr("尾号 {tail}", { tail: secretStatus.maskedTail })
-                        : tr("保存后即可使用当前 Provider")}
-                    </span>
-                  </div>
-                </div>
-              {:else if settingsSection === "defaults"}
-                <h3>{tr("默认行为")}</h3>
-                <div class="settings-grid">
-                  <div>
-                    <span class="field-label">{tr("默认模式")}</span>
-                    <div class="segments compact">
-                      {#each modes as item}
-                        <button type="button" class:active={settingsDraft.default_mode === item.id} on:click={() => (settingsDraft = { ...settingsDraft, default_mode: item.id })}>
-                          {tr(item.label)}
-                        </button>
-                      {/each}
-                    </div>
-                  </div>
-                  <div>
-                    <span class="field-label">{tr("默认风格")}</span>
-                    <div class="segments compact">
-                      {#each styles as item}
-                        <button type="button" class:active={settingsDraft.default_style === item.id} on:click={() => (settingsDraft = { ...settingsDraft, default_style: item.id })}>
-                          {tr(item.label)}
-                        </button>
-                      {/each}
-                    </div>
-                  </div>
-                </div>
-                <div class="settings-block">
-                  <span class="field-label">{tr("场景识别策略")}</span>
-                  <div class="segments compact">
-                    {#each scenePolicies as item}
-                      <button type="button" class:active={settingsDraft.scene_policy === item.id} on:click={() => (settingsDraft = { ...settingsDraft, scene_policy: item.id })}>
-                        {tr(item.label)}
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-                <div class="settings-block">
-                  <span class="field-label">{tr("界面与输出语言")}</span>
-                  <div class="segments compact">
-                    {#each uiLanguages as language}
-                      <button type="button" class:active={settingsDraft.language === language.id} on:click={() => (settingsDraft = { ...settingsDraft, language: language.id })}>
-                        {tr(language.label)}
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-                <div class="settings-block">
-                  <span class="field-label">{tr("界面主题")}</span>
-                  <div class="segments compact">
-                    {#each themes as theme}
-                      <button type="button" class:active={settingsDraft.theme === theme.id} on:click={() => (settingsDraft = { ...settingsDraft, theme: theme.id })}>
-                        {tr(theme.label)}
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-                <label class="desktop-hotkey">
-                  <span>{tr("全局快捷键")}</span>
-                  <input
-                    bind:value={settingsDraft.hotkey}
-                    disabled={settingsBusy}
-                    autocomplete="off"
-                    spellcheck="false"
-                  />
-                  <small class:available={desktopStatus.hotkeyActive}>
-                    {tr(desktopStatus.message ?? (desktopStatus.hotkeyActive ? "当前快捷键已启用" : "保存后启用快捷键"))}
-                  </small>
-                </label>
-              {:else if settingsSection === "clipboard"}
-                <h3>{tr("剪贴板")}</h3>
-                <div class="settings-block">
-                  <span class="field-label">{tr("读取与替换策略")}</span>
-                  <div class="segments compact">
-                    {#each clipboardPolicies as item}
-                      <button type="button" class:active={settingsDraft.clipboard_policy === item.id} on:click={() => (settingsDraft = { ...settingsDraft, clipboard_policy: item.id })}>
-                        {tr(item.label)}
-                      </button>
-                    {/each}
-                  </div>
-                  <p class="warning-note">{tr("自动替换会覆盖当前剪贴板内容，首次使用仍需确认。")}</p>
-                </div>
-              {:else if settingsSection === "privacy"}
-                <h3>{tr("安全与隐私")}</h3>
-                <div class="settings-choice-list">
-                  <label class="settings-toggle">
-                    <span>
-                      <strong>{tr("保存历史记录")}</strong>
-                      <small>{tr("记录优化结果，便于稍后查看")}</small>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={settingsDraft.history_enabled}
-                      disabled={settingsBusy}
-                      on:change={(event) => setHistoryEnabled(event.currentTarget.checked)}
-                    />
-                  </label>
-                  <label class="settings-toggle">
-                    <span>
-                      <strong>{tr("隐私模式")}</strong>
-                      <small>{tr("减少本地内容保留")}</small>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={settingsDraft.privacy_mode}
-                      disabled={settingsBusy}
-                      on:change={(event) => setPrivacyMode(event.currentTarget.checked)}
-                    />
-                  </label>
-                </div>
-                <div class="settings-block">
-                  <span class="field-label">{tr("历史内容处理")}</span>
-                  <div class="segments compact">
-                    {#each historyRedactionOptions as item}
-                      <button
-                        type="button"
-                        class:active={settingsDraft.history_redaction === item.id}
-                        disabled={settingsBusy}
-                        on:click={() => setHistoryRedaction(item.id)}
-                      >
-                        {tr(item.label)}
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-              {:else}
-                <h3>{tr("插件")}</h3>
-                <div class="settings-choice-list">
-                  {#each settingsPlugins as plugin}
-                    <label class="settings-toggle">
-                      <span>
-                        <strong>{tr(plugin.label)}</strong>
-                        <small>{tr(pluginDescription(plugin))}</small>
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={settingsDraft.enabled_plugins.includes(plugin.id)}
-                        disabled={settingsBusy}
-                        on:change={(event) => setPluginEnabled(plugin.id, event.currentTarget.checked)}
-                      />
-                    </label>
-                  {/each}
-                </div>
-                {#if semanticDetectorEnabled}
-                  <section
-                    class="semantic-model-card"
-                    class:semantic-model-ready={semanticModel.phase === "ready"}
-                    class:semantic-model-error={semanticModel.phase === "error"}
-                    aria-label={tr("本地语义模型")}
-                    aria-busy={semanticModel.phase === "loading" || semanticModel.phase === "downloading" || semanticModel.phase === "deleting"}
-                  >
-                    <div>
-                      <strong>{tr("本地语义模型")}</strong>
-                      <p class:semantic-model-status-error={semanticModel.phase === "error"} role={semanticModel.phase === "error" ? "alert" : "status"} aria-live="polite">{tr(semanticModelStatusText())}</p>
-                    </div>
-                    {#if semanticModel.phase === "downloading"}
-                      <progress max="100" value={semanticModel.percent} aria-label={tr("模型下载进度")}></progress>
-                    {/if}
-                    <div class="semantic-model-actions">
-                      <button
-                        class="outline"
-                        type="button"
-                        disabled={!semanticDetectorActive || ["loading", "downloading", "deleting"].includes(semanticModel.phase)}
-                        on:click={refreshSemanticModelStatus}
-                      >{tr("检查状态")}</button>
-                      {#if semanticModel.phase === "downloading"}
-                        <button class="outline" type="button" on:click={cancelSemanticModelDownload}>{tr("取消下载")}</button>
-                      {:else if semanticModel.phase === "ready"}
-                        <button class="outline danger" type="button" disabled={!semanticDetectorActive} on:click={deleteSemanticModel}>{tr("删除模型")}</button>
-                      {:else}
-                        <button
-                          class="primary small"
-                          type="button"
-                          disabled={!semanticDetectorActive || ["loading", "deleting"].includes(semanticModel.phase)}
-                          on:click={downloadSemanticModel}
-                        >{tr("下载模型")}</button>
-                      {/if}
-                    </div>
-                  </section>
-                {/if}
-              {/if}
-            </div>
-          </div>
-
-          <div class="settings-footer">
-            <p class="settings-save-notice" aria-live="polite">{settingsNotice ? tr(settingsNotice) : ""}</p>
-            <button class="outline" type="button" disabled={settingsBusy} on:click={cancelSettingsView}>{t(uiLanguage, "cancel")}</button>
-            <button class="primary small" type="button" disabled={settingsBusy} on:click={saveSettings}>
-              {tr(settingsBusy ? "正在保存" : "保存设置")}
-            </button>
-          </div>
-        </section>
-      </div>
+      <SettingsDialog
+        draft={settingsDraft}
+        section={settingsSection}
+        busy={settingsBusy}
+        {secretBusy}
+        {secretInput}
+        {secretStatus}
+        {secretNotice}
+        notice={settingsNotice}
+        models={settingsProviderModels}
+        {modes}
+        {styles}
+        {desktopStatus}
+        {semanticModel}
+        semanticEnabled={semanticDetectorEnabled}
+        semanticActive={semanticDetectorActive}
+        semanticStatusText={semanticModelStatusText()}
+        translate={tr}
+        onClose={cancelSettingsView}
+        onSave={saveSettings}
+        onSectionChange={selectSettingsSection}
+        onDraftChange={(value) => (settingsDraft = value)}
+        onProviderChange={selectSettingsProvider}
+        onSecretInput={(value) => (secretInput = value)}
+        onSaveSecret={saveSecret}
+        onDeleteSecret={deleteSecret}
+        onPluginChange={setPluginEnabled}
+        onSemanticRefresh={refreshSemanticModelStatus}
+        onSemanticCancel={cancelSemanticModelDownload}
+        onSemanticDelete={deleteSemanticModel}
+        onSemanticDownload={downloadSemanticModel}
+      />
     {/if}
   </section>
 </main>
