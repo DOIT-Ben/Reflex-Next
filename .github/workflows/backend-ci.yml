@@ -10,6 +10,8 @@ on:
       - "template-packs/**"
       - "tools/verify_backend.ps1"
       - "tools/tests/verify_backend_contract.ps1"
+      - "tools/scan_release_secrets.ps1"
+      - "tools/tests/scan_release_secrets_contract.ps1"
   push:
     branches:
       - main
@@ -22,6 +24,8 @@ on:
       - "template-packs/**"
       - "tools/verify_backend.ps1"
       - "tools/tests/verify_backend_contract.ps1"
+      - "tools/scan_release_secrets.ps1"
+      - "tools/tests/scan_release_secrets_contract.ps1"
   workflow_dispatch:
 
 permissions:

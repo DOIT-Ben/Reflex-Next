@@ -121,6 +121,22 @@ $pythonProjects = @(
 )
 
 $steps = @()
+$steps += New-VerificationStep `
+  -Id "security:secret-contract" `
+  -Category "security" `
+  -WorkDir "." `
+  -LockFile "" `
+  -Executable "powershell" `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\scan_release_secrets_contract.ps1")
+
+$steps += New-VerificationStep `
+  -Id "security:secret-scan" `
+  -Category "security" `
+  -WorkDir "." `
+  -LockFile "" `
+  -Executable "powershell" `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\scan_release_secrets.ps1")
+
 foreach ($project in $pythonProjects) {
   $steps += New-VerificationStep `
     -Id ("python:" + $project.Name) `
@@ -198,7 +214,8 @@ function Get-SkipReason {
 if ($ListSteps) {
   foreach ($step in $steps) {
     $commandText = Get-CommandText -Step $step
-    Write-Output ("[STEP] {0} | category={1} | heavy={2} | workdir={3} | lock={4} | command={5}" -f $step.Id, $step.Category, $step.Heavy, $step.WorkDir, $step.LockFile, $commandText)
+    $lockLabel = if ([string]::IsNullOrWhiteSpace($step.LockFile)) { "none" } else { $step.LockFile }
+    Write-Output ("[STEP] {0} | category={1} | heavy={2} | workdir={3} | lock={4} | command={5}" -f $step.Id, $step.Category, $step.Heavy, $step.WorkDir, $lockLabel, $commandText)
   }
   return
 }
@@ -211,12 +228,14 @@ foreach ($step in $steps) {
   }
 
   $workDir = Join-Path $root $step.WorkDir
-  $lockFile = Join-Path $workDir $step.LockFile
   if (-not (Test-Path -LiteralPath $workDir -PathType Container)) {
     throw "Verification work directory is missing: $($step.WorkDir)"
   }
-  if (-not (Test-Path -LiteralPath $lockFile -PathType Leaf)) {
-    throw "Verification lock file is missing: $($step.WorkDir)\$($step.LockFile)"
+  if (-not [string]::IsNullOrWhiteSpace($step.LockFile)) {
+    $lockFile = Join-Path $workDir $step.LockFile
+    if (-not (Test-Path -LiteralPath $lockFile -PathType Leaf)) {
+      throw "Verification lock file is missing: $($step.WorkDir)\$($step.LockFile)"
+    }
   }
 
   $commandText = Get-CommandText -Step $step

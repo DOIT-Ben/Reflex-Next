@@ -62,6 +62,8 @@ Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] rust:tests .*ca
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:install .*npm ci' }).Count -eq 1) "Frontend install must use package-lock.json through npm ci."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:tests .*npm test -- --maxWorkers=2' }).Count -eq 1) "Vitest must use at most 2 workers."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:build .*npm run build' }).Count -eq 1) "Frontend production build must be part of verification."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:secret-contract .*lock=none .*powershell .*scan_release_secrets_contract\.ps1' }).Count -eq 1) "Secret scanner contract tests must be part of verification."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] security:secret-scan .*lock=none .*powershell .*scan_release_secrets\.ps1' }).Count -eq 1) "Tracked-file secret scanning must be part of verification."
 
 $dryRun = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipHeavy")
 Assert-True ($dryRun.ExitCode -eq 0) "The focused dry-run must return exit code 0."
