@@ -154,11 +154,14 @@ button:disabled {
   font-weight: 560;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .provider-pill:hover {
   border-color: var(--line-strong);
   background: var(--accent-soft);
+  box-shadow: 0 5px 14px rgb(45 53 102 / 9%);
+  transform: translateY(-1px);
 }
 
 .provider-pill:focus-visible {
@@ -202,6 +205,7 @@ button:disabled {
   color: var(--muted);
   background: transparent;
   border-radius: 10px;
+  transition: color 160ms ease, background 160ms ease, transform 160ms ease;
 }
 
 .default-view,
@@ -329,6 +333,7 @@ select {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 10px;
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .summary-row button {
@@ -348,6 +353,8 @@ select {
   border-radius: 14px;
   font-size: 15px;
   font-weight: 760;
+  box-shadow: 0 10px 20px rgb(83 97 200 / 18%);
+  transition: background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .generate-button span {
@@ -453,6 +460,7 @@ select {
   color: #fff;
   background: var(--accent);
   border: 1px solid var(--accent);
+  box-shadow: 0 7px 16px rgb(83 97 200 / 16%);
 }
 
 .primary.small {
@@ -461,6 +469,54 @@ select {
 
 .outline {
   color: var(--text);
+}
+
+@media (hover: hover) {
+  .primary:not(:disabled):hover,
+  .generate-button:not(:disabled):hover {
+    background: color-mix(in srgb, var(--accent) 88%, white);
+    box-shadow: 0 11px 24px rgb(83 97 200 / 24%);
+    transform: translateY(-1px);
+  }
+
+  .outline:not(:disabled):hover,
+  .summary-row button:not(:disabled):hover,
+  .segments button:not(:disabled):hover {
+    color: var(--text);
+    background: color-mix(in srgb, var(--surface) 58%, var(--accent-soft));
+    border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+    box-shadow: 0 5px 12px rgb(45 53 102 / 8%);
+    transform: translateY(-1px);
+  }
+
+  .icon-button:not(:disabled):hover {
+    color: var(--text);
+    background: var(--accent-soft);
+    transform: rotate(4deg);
+  }
+
+  .template-list input:hover,
+  .template-list select:hover,
+  .template-fields input:hover,
+  .template-fields textarea:hover,
+  .template-variables input:hover {
+    border-color: var(--line-strong);
+  }
+
+  .template-list-items > button:not(.active):hover {
+    border-color: color-mix(in srgb, var(--line) 56%, var(--accent-soft));
+    transform: translateX(2px);
+  }
+}
+
+.primary:not(:disabled):active,
+.outline:not(:disabled):active,
+.generate-button:not(:disabled):active,
+.summary-row button:not(:disabled):active,
+.segments button:not(:disabled):active,
+.provider-pill:not(:disabled):active {
+  transform: translateY(0) scale(0.985);
+  box-shadow: none;
 }
 
 .subline {
