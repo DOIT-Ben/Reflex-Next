@@ -101,8 +101,8 @@ button:disabled {
 
 .window {
   position: relative;
-  width: min(780px, 100%);
-  height: min(560px, 100vh);
+  width: min(760px, 100%);
+  height: min(540px, 100vh);
   min-height: 0;
   overflow: hidden;
   background: var(--window);
@@ -114,8 +114,8 @@ button:disabled {
 .top-bar {
   display: flex;
   align-items: center;
-  height: 64px;
-  padding: 0 26px;
+  height: 58px;
+  padding: 0 22px;
   background: color-mix(in srgb, var(--surface) 86%, var(--accent-soft));
   border-bottom: 1px solid rgb(225 230 238 / 78%);
   border-radius: 25px 25px 0 0;
@@ -218,18 +218,18 @@ button:disabled {
 .complete-view,
 .error-view {
   position: relative;
-  height: calc(100% - 64px);
+  height: calc(100% - 58px);
   min-height: 0;
-  padding: 24px 30px 26px;
+  padding: 20px 24px 22px;
   overflow: auto;
 }
 
 .badge {
   position: absolute;
-  top: 16px;
-  right: 30px;
-  min-width: 92px;
-  padding: 7px 13px;
+  top: 12px;
+  right: 24px;
+  min-width: 82px;
+  padding: 5px 11px;
   color: var(--accent);
   text-align: center;
   background: var(--accent-soft);
@@ -256,10 +256,10 @@ h1 {
 }
 
 .input-card {
-  height: clamp(178px, calc(100vh - 302px), 238px);
+  height: clamp(164px, calc(100vh - 304px), 214px);
   background: color-mix(in srgb, var(--surface) 92%, var(--accent-soft));
   border: 1px solid var(--line);
-  border-radius: 20px;
+  border-radius: 16px;
   box-shadow: 0 8px 22px rgb(54 70 100 / 5%);
   transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
@@ -273,7 +273,7 @@ h1 {
 textarea {
   width: 100%;
   height: calc(100% - 44px);
-  padding: 19px 20px;
+  padding: 16px;
   resize: none;
   color: var(--text);
   background: transparent;
@@ -286,9 +286,9 @@ textarea {
 .input-tools {
   display: flex;
   justify-content: space-between;
-  height: 40px;
-  margin: 0 12px 10px;
-  padding: 0 9px;
+  height: 36px;
+  margin: 0 10px 8px;
+  padding: 0 8px;
   align-items: center;
   background: rgb(255 255 255 / 72%);
   border: 1px solid rgb(225 230 238 / 82%);
@@ -335,8 +335,8 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 50px;
-  margin-top: 14px;
+  min-height: 44px;
+  margin-top: 12px;
   font-size: 13px;
   font-weight: 650;
 }
@@ -354,8 +354,8 @@ select {
 
 .summary-row button {
   min-width: 76px;
-  height: 34px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 10px;
 }
 
 .summary-row > div {
@@ -368,11 +368,11 @@ select {
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 52px;
-  margin-top: 12px;
+  height: 46px;
+  margin-top: 10px;
   color: #fff;
   background: var(--accent);
-  border-radius: 16px;
+  border-radius: 14px;
   font-size: 15px;
   font-weight: 760;
   box-shadow: 0 12px 22px rgb(80 101 199 / 22%);
@@ -471,10 +471,10 @@ select {
 
 .primary,
 .outline {
-  min-height: 44px;
-  padding: 0 24px;
-  border-radius: 12px;
-  font-size: 14px;
+  min-height: 38px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-size: 13px;
   font-weight: 760;
 }
 
@@ -686,21 +686,21 @@ pre {
   background: rgb(28 29 32 / 30%);
 }
 
-.template-layer { position: absolute; inset: 0; z-index: 11; display: grid; place-items: center; padding: 12px; background: rgb(31 35 47 / 38%); backdrop-filter: blur(8px); }
-.template-dialog { display: flex; flex-direction: column; width: min(840px, 100%); height: min(540px, calc(100% - 24px)); min-height: 0; padding: 22px 24px; overflow: hidden; background: color-mix(in srgb, var(--window) 94%, white); border: 1px solid color-mix(in srgb, var(--line-strong) 68%, white); border-radius: 18px; box-shadow: 0 28px 80px rgb(22 27 40 / 25%), 0 2px 8px rgb(22 27 40 / 8%); }
-.template-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
-.template-head h2 { margin: 0; color: var(--text); font-size: 22px; line-height: 1.2; }
-.template-head p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+.template-layer { position: absolute; inset: 0; z-index: 11; display: grid; place-items: center; padding: 18px; background: rgb(31 35 47 / 34%); backdrop-filter: blur(6px); }
+.template-dialog { display: flex; flex-direction: column; width: min(760px, 100%); height: min(500px, calc(100% - 36px)); min-height: 0; padding: 18px 20px; overflow: hidden; background: color-mix(in srgb, var(--window) 94%, white); border: 1px solid color-mix(in srgb, var(--line-strong) 68%, white); border-radius: 16px; box-shadow: 0 22px 60px rgb(22 27 40 / 20%), 0 2px 8px rgb(22 27 40 / 8%); }
+.template-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.template-head h2 { margin: 0; color: var(--text); font-size: 19px; line-height: 1.2; }
+.template-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
 .template-head .icon-button { width: 34px; height: 34px; border-radius: 50%; color: var(--muted); background: color-mix(in srgb, var(--surface) 72%, var(--accent-soft)); }
 .template-head .icon-button:hover { color: var(--text); background: var(--accent-soft); }
-.template-layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); flex: 1; min-height: 0; gap: 22px; margin-top: 20px; }
-.template-list { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 10px; min-height: 0; padding: 14px; background: color-mix(in srgb, var(--accent-soft) 58%, var(--surface)); border: 1px solid color-mix(in srgb, var(--line) 85%, var(--accent-soft)); border-radius: 14px; }
+.template-layout { display: grid; grid-template-columns: 212px minmax(0, 1fr); flex: 1; min-height: 0; gap: 16px; margin-top: 14px; }
+.template-list { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 8px; min-height: 0; padding: 10px; background: color-mix(in srgb, var(--accent-soft) 58%, var(--surface)); border: 1px solid color-mix(in srgb, var(--line) 85%, var(--accent-soft)); border-radius: 12px; }
 .template-list input, .template-list select, .template-fields input, .template-fields textarea, .template-variables input { width: 100%; min-width: 0; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease; }
-.template-list input, .template-list select, .template-fields input, .template-variables input { height: 38px; padding: 0 11px; }
-.template-list > .outline { min-height: 38px; border-radius: 10px; background: color-mix(in srgb, var(--surface) 84%, white); }
+.template-list input, .template-list select, .template-fields input, .template-variables input { height: 34px; padding: 0 10px; }
+.template-list > .outline { min-height: 34px; border-radius: 9px; background: color-mix(in srgb, var(--surface) 84%, white); }
 .template-list input:focus-visible, .template-list select:focus-visible, .template-fields input:focus-visible, .template-fields textarea:focus-visible, .template-variables input:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 72%, transparent); }
 .template-list-items { display: grid; align-content: start; gap: 4px; min-height: 0; padding-top: 6px; overflow: auto; border-top: 1px solid color-mix(in srgb, var(--line) 80%, transparent); }
-.template-list-items > button { display: grid; width: 100%; gap: 4px; padding: 10px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 10px; transition: background 160ms ease, border-color 160ms ease, transform 160ms ease; }
+.template-list-items > button { display: grid; width: 100%; gap: 3px; padding: 8px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 9px; transition: background 160ms ease, border-color 160ms ease, transform 160ms ease; }
 .template-list-items > button:hover { background: color-mix(in srgb, var(--surface) 66%, var(--accent-soft)); }
 .template-list-items > button.active { background: var(--surface); border-color: color-mix(in srgb, var(--accent) 28%, var(--line)); box-shadow: 0 4px 12px rgb(45 53 102 / 8%); }
 .template-list-items strong { color: var(--text); font-size: 13px; }
@@ -711,12 +711,12 @@ pre {
 .template-fields .wide { grid-column: 1 / -1; }
 .template-fields .wide:nth-child(3),
 .template-fields .wide:nth-child(4) { grid-column: auto; }
-.template-fields textarea { min-height: 72px; padding: 10px 12px; resize: vertical; font-size: 13px; line-height: 1.55; }
+.template-fields textarea { min-height: 64px; padding: 9px 10px; resize: vertical; font-size: 12px; line-height: 1.5; }
 .template-variables { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-height: 132px; margin-top: 12px; padding: 12px; overflow: auto; background: color-mix(in srgb, var(--surface) 72%, var(--accent-soft)); border-radius: 12px; }
 .template-variables h3 { grid-column: 1 / -1; margin: 0; color: var(--text); font-size: 13px; }
 .template-notice { min-height: 18px; margin: 10px 0 0; color: #b42318; font-size: 12px; }
-.template-footer { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center; padding-top: 16px; margin-top: 14px; border-top: 1px solid var(--line); }
-.template-footer button { min-height: 38px; padding: 0 14px; border-radius: 10px; font-size: 13px; }
+.template-footer { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; align-items: center; padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--line); }
+.template-footer button { min-height: 34px; padding: 0 12px; border-radius: 9px; font-size: 12px; }
 
 .batch-dialog {
   display: flex;
