@@ -13,6 +13,7 @@ fn main() {
             "runtime_available",
             "runtime_optimize",
             "runtime_cancel",
+            "runtime_list_providers",
             "runtime_list_plugins",
             "runtime_plugin_call",
             "runtime_plugin_cancel",

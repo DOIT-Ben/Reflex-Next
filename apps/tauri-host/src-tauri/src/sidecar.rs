@@ -17,10 +17,17 @@ pub const DUPLICATE_REQUEST_MESSAGE: &str = "运行请求重复。";
 pub const REQUEST_NOT_FOUND_MESSAGE: &str = "目标请求不存在。";
 pub const REQUEST_SESSION_FULL_MESSAGE: &str = "运行会话已满，请重启应用。";
 const MAX_SEEN_REQUEST_IDS: usize = 100_000;
+const MAX_RUNTIME_EVENT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PROVIDER_CATALOG_BYTES: usize = 2 * 1024 * 1024;
+const MAX_PROVIDERS: usize = 64;
+const MAX_PROVIDER_DISPLAY_NAME_LENGTH: usize = 80;
+const MAX_PROVIDER_MODELS: usize = 256;
+const MAX_PROVIDER_MODEL_ID_LENGTH: usize = 256;
 const PRIVATE_CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(2);
 pub const CORE_EVENT_NAME: &str = "reflex://core-event";
 pub const PLUGIN_EVENT_NAME: &str = "reflex://plugin-event";
 pub const CAPABILITY_LIST_EVENT_NAME: &str = "reflex://capability-list";
+pub const PROVIDER_CATALOG_EVENT_NAME: &str = "reflex://provider-catalog";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimePaths {
@@ -312,6 +319,7 @@ impl HostRequestRegistry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResponseContract {
     Core,
+    ProviderCatalog,
     CapabilityList,
     Plugin {
         plugin_id: String,
@@ -325,6 +333,7 @@ impl ResponseContract {
 
         match command.kind {
             CommandKind::Cancel => None,
+            CommandKind::ListProviders => Some(Self::ProviderCatalog),
             CommandKind::ListPlugins => Some(Self::CapabilityList),
             CommandKind::PluginCall | CommandKind::PluginAdminCall => Some(Self::Plugin {
                 plugin_id: command.payload["plugin_id"].as_str()?.to_string(),
@@ -344,6 +353,7 @@ impl ResponseContract {
     fn event_name(&self) -> &'static str {
         match self {
             Self::Core => CORE_EVENT_NAME,
+            Self::ProviderCatalog => PROVIDER_CATALOG_EVENT_NAME,
             Self::CapabilityList => CAPABILITY_LIST_EVENT_NAME,
             Self::Plugin { .. } => PLUGIN_EVENT_NAME,
         }
@@ -1204,20 +1214,39 @@ fn spawn_stdout_reader(
     terminator: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>>,
 ) {
     std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else {
-                break;
+        let mut stdout = BufReader::new(stdout);
+        loop {
+            let line = match read_bounded_line(&mut stdout, MAX_RUNTIME_EVENT_BYTES) {
+                Ok(BoundedLine::Line(line)) => line,
+                Ok(BoundedLine::Eof) => break,
+                Ok(BoundedLine::TooLong) | Err(_) => {
+                    unhealthy.store(true, Ordering::Release);
+                    fail_all_requests(&emitter, &active_requests);
+                    break;
+                }
             };
             if line.trim().is_empty() {
                 continue;
             }
             let request_id = request_id_from_raw_event(&line);
+            let provider_catalog_declared = raw_declares_provider_catalog(&line);
+            let provider_catalog_expected = request_id.as_deref().is_some_and(|request_id| {
+                request_expects_provider_catalog(&active_requests, request_id)
+            });
             match parse_sidecar_event(&line) {
                 Ok(parsed) => {
-                    route_parsed_event(&emitter, &active_requests, parsed);
+                    if route_parsed_event(&emitter, &active_requests, parsed) {
+                        unhealthy.store(true, Ordering::Release);
+                        fail_all_requests(&emitter, &active_requests);
+                        break;
+                    }
                 }
                 Err(_) => {
-                    if let Some(request_id) = request_id {
+                    if provider_catalog_expected || provider_catalog_declared {
+                        unhealthy.store(true, Ordering::Release);
+                        fail_all_requests(&emitter, &active_requests);
+                        break;
+                    } else if let Some(request_id) = request_id {
                         fail_request(&emitter, &active_requests, &request_id);
                     } else {
                         unhealthy.store(true, Ordering::Release);
@@ -1237,14 +1266,78 @@ fn spawn_stdout_reader(
     });
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum BoundedLine {
+    Line(String),
+    Eof,
+    TooLong,
+}
+
+fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result<BoundedLine> {
+    let mut bytes = Vec::new();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if bytes.is_empty() {
+                return Ok(BoundedLine::Eof);
+            }
+            return String::from_utf8(bytes)
+                .map(BoundedLine::Line)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid Runtime output"));
+        }
+
+        if bytes.len() > max_bytes
+            && !(bytes.len() == max_bytes.saturating_add(1)
+                && bytes.last() == Some(&b'\r')
+                && available.first() == Some(&b'\n'))
+        {
+            return Ok(BoundedLine::TooLong);
+        }
+
+        if let Some(newline_index) = available.iter().position(|byte| *byte == b'\n') {
+            let content_end = newline_index
+                - usize::from(newline_index > 0 && available[newline_index - 1] == b'\r');
+            let remaining = max_bytes.saturating_add(1).saturating_sub(bytes.len());
+            if content_end > remaining {
+                bytes.extend_from_slice(&available[..remaining]);
+                reader.consume(remaining);
+                return Ok(BoundedLine::TooLong);
+            }
+            bytes.extend_from_slice(&available[..content_end]);
+            reader.consume(newline_index + 1);
+            if newline_index == 0 && bytes.last() == Some(&b'\r') {
+                bytes.pop();
+            }
+            if bytes.len() > max_bytes {
+                return Ok(BoundedLine::TooLong);
+            }
+            return String::from_utf8(bytes)
+                .map(BoundedLine::Line)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid Runtime output"));
+        }
+
+        let remaining = max_bytes.saturating_add(1).saturating_sub(bytes.len());
+        let consumed = available.len().min(remaining);
+        bytes.extend_from_slice(&available[..consumed]);
+        reader.consume(consumed);
+        if bytes.len() > max_bytes {
+            if bytes.len() == max_bytes.saturating_add(1) && bytes.last() == Some(&b'\r') {
+                continue;
+            }
+            return Ok(BoundedLine::TooLong);
+        }
+    }
+}
+
 fn spawn_stderr_drainer(stderr: Box<dyn Read + Send>) {
     std::thread::spawn(move || {
-        for line in BufReader::new(stderr).lines() {
-            if line.is_err() {
-                break;
-            }
-        }
+        let mut stderr = stderr;
+        let _ = drain_stderr(&mut stderr);
     });
+}
+
+fn drain_stderr<R: Read>(stderr: &mut R) -> io::Result<u64> {
+    io::copy(stderr, &mut io::sink())
 }
 
 fn request_id_from_raw_event(raw: &str) -> Option<String> {
@@ -1254,6 +1347,20 @@ fn request_id_from_raw_event(raw: &str) -> Option<String> {
         .as_str()
         .filter(|request_id| is_safe_request_id(request_id))
         .map(str::to_string)
+}
+
+fn raw_declares_provider_catalog(raw: &str) -> bool {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .is_some_and(|value| value.get("type").and_then(Value::as_str) == Some("provider_catalog"))
+}
+
+fn request_expects_provider_catalog(active_requests: &ActiveRequests, request_id: &str) -> bool {
+    active_requests
+        .lock()
+        .ok()
+        .and_then(|active| active.get(request_id).cloned())
+        .is_some_and(|request| request.contract == ResponseContract::ProviderCatalog)
 }
 
 fn public_route(target: &str) -> Result<RequestRoute, &'static str> {
@@ -1303,24 +1410,28 @@ fn route_parsed_event(
     emitter: &Arc<dyn EventEmitter>,
     active_requests: &ActiveRequests,
     parsed: ParsedSidecarEvent,
-) {
+) -> bool {
+    let parsed_is_provider_catalog = parsed.event_name == PROVIDER_CATALOG_EVENT_NAME;
     let request = active_requests
         .lock()
         .ok()
         .and_then(|active| active.get(&parsed.request_id).cloned());
     let Some(request) = request else {
-        return;
+        return parsed_is_provider_catalog;
     };
     if !request.contract.matches(&parsed) {
+        let provider_catalog_violation =
+            request.contract == ResponseContract::ProviderCatalog || parsed_is_provider_catalog;
         remove_active_request(active_requests, &parsed.request_id, &request);
         dispatch_failure(emitter, &request, &parsed.request_id);
-        return;
+        return provider_catalog_violation;
     }
     let terminal = parsed.terminal;
     if terminal {
         remove_active_request(active_requests, &parsed.request_id, &request);
     }
     request.dispatch(emitter, parsed.payload, terminal);
+    false
 }
 
 fn remove_active_request(
@@ -1389,6 +1500,12 @@ fn safe_failure_payload(request_id: &str, contract: &ResponseContract) -> Value 
                     "action": "retry"
                 }
             }
+        }),
+        ResponseContract::ProviderCatalog => serde_json::json!({
+            "version": 1,
+            "request_id": request_id,
+            "type": "provider_catalog_error",
+            "code": "runtime_unavailable"
         }),
         ResponseContract::CapabilityList => serde_json::json!({
             "version": 1,
@@ -1621,6 +1738,9 @@ pub fn parse_sidecar_event(raw: &str) -> Result<ParsedSidecarEvent, &'static str
 
     match object.get("type").and_then(Value::as_str) {
         Some("plugin_event") => parse_plugin_event(value.clone(), object, request_id),
+        Some("provider_catalog") => {
+            parse_provider_catalog(value.clone(), object, request_id, raw.len())
+        }
         Some("capability_list") => parse_capability_list(value.clone(), object, request_id),
         _ => Err(RUNTIME_UNAVAILABLE_MESSAGE),
     }
@@ -1719,6 +1839,99 @@ fn validate_plugin_event_data(value: &Value) -> bool {
                 && validate_plugin_event_data(value)
         }),
     }
+}
+
+fn parse_provider_catalog(
+    value: Value,
+    object: &serde_json::Map<String, Value>,
+    request_id: &str,
+    raw_len: usize,
+) -> Result<ParsedSidecarEvent, &'static str> {
+    let providers = object.get("providers").and_then(Value::as_array);
+    if raw_len > MAX_PROVIDER_CATALOG_BYTES
+        || !has_exact_keys(object, &["version", "request_id", "type", "providers"])
+        || !providers.is_some_and(|providers| validate_provider_descriptors(providers))
+    {
+        return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+    }
+    Ok(ParsedSidecarEvent {
+        event_name: PROVIDER_CATALOG_EVENT_NAME,
+        request_id: request_id.to_string(),
+        terminal: true,
+        payload: value,
+    })
+}
+
+fn validate_provider_descriptors(providers: &[Value]) -> bool {
+    if providers.len() > MAX_PROVIDERS {
+        return false;
+    }
+    let mut previous_id: Option<&str> = None;
+    for provider in providers {
+        let Some(descriptor) = provider.as_object() else {
+            return false;
+        };
+        if !has_exact_keys(
+            descriptor,
+            &[
+                "id",
+                "name",
+                "models",
+                "default_model",
+                "release_status",
+                "session_configured",
+            ],
+        ) {
+            return false;
+        }
+        let Some(provider_id) = descriptor.get("id").and_then(Value::as_str) else {
+            return false;
+        };
+        if !crate::runtime_commands::is_safe_id(provider_id)
+            || previous_id.is_some_and(|previous| previous >= provider_id)
+            || !descriptor
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| is_safe_public_text(name, MAX_PROVIDER_DISPLAY_NAME_LENGTH))
+            || !matches!(
+                descriptor.get("release_status").and_then(Value::as_str),
+                Some("supported" | "experimental")
+            )
+            || !descriptor
+                .get("session_configured")
+                .is_some_and(Value::is_boolean)
+            || !validate_provider_models(descriptor)
+        {
+            return false;
+        }
+        previous_id = Some(provider_id);
+    }
+    true
+}
+
+fn validate_provider_models(descriptor: &serde_json::Map<String, Value>) -> bool {
+    let Some(models) = descriptor.get("models").and_then(Value::as_array) else {
+        return false;
+    };
+    if models.is_empty() || models.len() > MAX_PROVIDER_MODELS {
+        return false;
+    }
+    let mut unique = HashSet::with_capacity(models.len());
+    let models_valid = models.iter().all(|model| {
+        model
+            .as_str()
+            .filter(|model| is_safe_public_text(model, MAX_PROVIDER_MODEL_ID_LENGTH))
+            .is_some_and(|model| unique.insert(model))
+    });
+    let default_model = descriptor.get("default_model").and_then(Value::as_str);
+    models_valid && default_model.is_some_and(|default_model| unique.contains(default_model))
+}
+
+fn is_safe_public_text(value: &str, max_chars: usize) -> bool {
+    let char_count = value.chars().count();
+    value == value.trim()
+        && (1..=max_chars).contains(&char_count)
+        && value.chars().all(|character| !character.is_control())
 }
 
 fn parse_capability_list(
@@ -1841,7 +2054,7 @@ fn is_safe_request_id(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, VecDeque};
-    use std::io::{self, Cursor, Read};
+    use std::io::{self, BufReader, Cursor, Read};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Barrier, Mutex};
 
@@ -1859,7 +2072,7 @@ mod tests {
         spawn_stdout_reader, ChildProcess, EventEmitter, HostRequestRegistry, OsProcessFactory,
         ParsedSidecarEvent, ProcessFactory, PythonLauncher, RuntimeController, RuntimeSidecar,
         CAPABILITY_LIST_EVENT_NAME, CORE_EVENT_NAME, PLUGIN_EVENT_NAME,
-        RUNTIME_UNAVAILABLE_MESSAGE,
+        PROVIDER_CATALOG_EVENT_NAME, RUNTIME_UNAVAILABLE_MESSAGE,
     };
 
     #[test]
@@ -2160,12 +2373,232 @@ mod tests {
                 r#"{"version":1,"request_id":"list-1","type":"capability_list","plugins":[]}"#,
                 CAPABILITY_LIST_EVENT_NAME,
             ),
+            (
+                r#"{"version":1,"request_id":"providers-1","type":"provider_catalog","providers":[{"id":"minimax","name":"MiniMax","models":["MiniMax-M2.7-highspeed"],"default_model":"MiniMax-M2.7-highspeed","release_status":"supported","session_configured":false}]}"#,
+                PROVIDER_CATALOG_EVENT_NAME,
+            ),
         ];
 
         for (raw, event_name) in cases {
             let parsed = parse_sidecar_event(raw).unwrap();
             assert_eq!(parsed.event_name, event_name);
         }
+    }
+
+    #[test]
+    fn provider_catalog_rejects_unknown_fields_states_ordering_and_unbounded_values() {
+        let invalid = [
+            json!({
+                "version": 1,
+                "request_id": "providers-extra",
+                "type": "provider_catalog",
+                "providers": [{
+                    "id": "minimax",
+                    "name": "MiniMax",
+                    "models": ["model-a"],
+                    "default_model": "model-a",
+                    "release_status": "supported",
+                    "session_configured": false,
+                    "credential_configured": true
+                }]
+            }),
+            json!({
+                "version": 1,
+                "request_id": "providers-state",
+                "type": "provider_catalog",
+                "providers": [{
+                    "id": "minimax",
+                    "name": "MiniMax",
+                    "models": ["model-a"],
+                    "default_model": "model-a",
+                    "release_status": "stable",
+                    "session_configured": false
+                }]
+            }),
+            json!({
+                "version": 1,
+                "request_id": "providers-order",
+                "type": "provider_catalog",
+                "providers": [
+                    {"id":"zhipu","name":"Zhipu","models":["model-z"],"default_model":"model-z","release_status":"experimental","session_configured":false},
+                    {"id":"minimax","name":"MiniMax","models":["model-a"],"default_model":"model-a","release_status":"supported","session_configured":false}
+                ]
+            }),
+            json!({
+                "version": 1,
+                "request_id": "providers-models",
+                "type": "provider_catalog",
+                "providers": [{
+                    "id": "minimax",
+                    "name": "MiniMax",
+                    "models": (0..257).map(|index| format!("model-{index}")).collect::<Vec<_>>(),
+                    "default_model": "model-0",
+                    "release_status": "supported",
+                    "session_configured": false
+                }]
+            }),
+            json!({
+                "version": 1,
+                "request_id": "providers-count",
+                "type": "provider_catalog",
+                "providers": (0..65).map(|index| json!({
+                    "id": format!("provider-{index:02}"),
+                    "name": format!("Provider {index}"),
+                    "models": ["model-a"],
+                    "default_model": "model-a",
+                    "release_status": "experimental",
+                    "session_configured": false
+                })).collect::<Vec<_>>()
+            }),
+        ];
+
+        for envelope in invalid {
+            assert_eq!(
+                parse_sidecar_event(&envelope.to_string()),
+                Err(RUNTIME_UNAVAILABLE_MESSAGE)
+            );
+        }
+    }
+
+    #[test]
+    fn provider_catalog_rejects_an_oversized_wire_envelope() {
+        let mut raw = json!({
+            "version": 1,
+            "request_id": "providers-oversized",
+            "type": "provider_catalog",
+            "providers": []
+        })
+        .to_string();
+        raw.push_str(&" ".repeat(super::MAX_PROVIDER_CATALOG_BYTES - raw.len() + 1));
+
+        assert_eq!(parse_sidecar_event(&raw), Err(RUNTIME_UNAVAILABLE_MESSAGE));
+    }
+
+    #[test]
+    fn bounded_stdout_reader_accepts_a_normal_line_at_eof_without_newline() {
+        let raw = r#"{"version":1,"request_id":"providers-eof","type":"provider_catalog","providers":[]}"#;
+        let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+        assert_eq!(
+            super::read_bounded_line(&mut reader, super::MAX_RUNTIME_EVENT_BYTES).unwrap(),
+            super::BoundedLine::Line(raw.to_string())
+        );
+        assert_eq!(
+            super::read_bounded_line(&mut reader, super::MAX_RUNTIME_EVENT_BYTES).unwrap(),
+            super::BoundedLine::Eof
+        );
+    }
+
+    #[test]
+    fn oversized_stdout_line_stops_at_the_sentinel_and_terminates_runtime() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let bytes_read = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let terminated = Arc::new(AtomicBool::new(false));
+        let first = FakeProcess::with_stdout_reader_and_termination_probe(
+            writes.clone(),
+            Box::new(CountingByteReader {
+                bytes_read: bytes_read.clone(),
+            }),
+            terminated.clone(),
+        );
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![first]),
+            Arc::new(NamedRecordingEmitter(events.clone())),
+        );
+
+        sidecar
+            .send(ValidatedCommand {
+                request_id: "providers-too-long".to_string(),
+                kind: CommandKind::ListProviders,
+                payload: json!({}),
+            })
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline && !terminated.load(Ordering::Acquire) {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        assert!(terminated.load(Ordering::Acquire));
+        assert!(bytes_read.load(Ordering::Acquire) <= super::MAX_RUNTIME_EVENT_BYTES + 8_192);
+        assert!(events.lock().unwrap().iter().any(|(name, payload)| {
+            name == PROVIDER_CATALOG_EVENT_NAME
+                && payload["request_id"] == "providers-too-long"
+                && payload["type"] == "provider_catalog_error"
+                && payload["code"] == "runtime_unavailable"
+        }));
+    }
+
+    #[test]
+    fn stderr_drainer_consumes_large_unbroken_output_without_line_allocation() {
+        let bytes = vec![b'x'; 256 * 1024];
+        let mut stderr = Cursor::new(bytes.clone());
+
+        let drained = super::drain_stderr(&mut stderr).unwrap();
+
+        assert_eq!(drained, bytes.len() as u64);
+        assert_eq!(stderr.position(), bytes.len() as u64);
+    }
+
+    #[test]
+    fn malformed_provider_catalog_marks_runtime_unhealthy_returns_safe_error_and_restarts() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
+        let terminated = Arc::new(AtomicBool::new(false));
+        let malformed = br#"{"version":1,"request_id":"providers-bad","type":"provider_catalog","providers":[{"id":"minimax","name":"MiniMax","models":["model-a"],"default_model":"model-a","release_status":"stable","session_configured":false}]}
+"#
+        .to_vec();
+        let first = FakeProcess::with_stdout_reader_and_termination_probe(
+            writes.clone(),
+            Box::new(WriteGatedReader::new(
+                writes.clone(),
+                release.clone(),
+                vec![(1, malformed)],
+            )),
+            terminated.clone(),
+        );
+        let factory = FakeProcessFactory::new(vec![first, FakeProcess::running(writes)]);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sidecar = RuntimeSidecar::new(
+            factory.clone(),
+            Arc::new(NamedRecordingEmitter(events.clone())),
+        );
+
+        sidecar
+            .send(ValidatedCommand {
+                request_id: "providers-bad".to_string(),
+                kind: CommandKind::ListProviders,
+                payload: json!({}),
+            })
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while std::time::Instant::now() < deadline
+            && !events.lock().unwrap().iter().any(|(name, payload)| {
+                name == PROVIDER_CATALOG_EVENT_NAME
+                    && payload["request_id"] == "providers-bad"
+                    && payload["type"] == "provider_catalog_error"
+                    && payload["code"] == "runtime_unavailable"
+            })
+        {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(events.lock().unwrap().iter().any(|(name, payload)| {
+            name == PROVIDER_CATALOG_EVENT_NAME
+                && payload["request_id"] == "providers-bad"
+                && payload["type"] == "provider_catalog_error"
+                && payload["code"] == "runtime_unavailable"
+        }));
+        assert!(terminated.load(Ordering::Acquire));
+
+        sidecar
+            .send(ValidatedCommand {
+                request_id: "providers-after-bad".to_string(),
+                kind: CommandKind::ListProviders,
+                payload: json!({}),
+            })
+            .unwrap();
+        assert_eq!(factory.launch_count(), 2);
+        release.store(true, Ordering::Release);
     }
 
     #[test]
@@ -3589,6 +4022,18 @@ mod tests {
         release: Arc<AtomicBool>,
         processed: usize,
         response: Cursor<Vec<u8>>,
+    }
+
+    struct CountingByteReader {
+        bytes_read: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Read for CountingByteReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            buffer.fill(b'x');
+            self.bytes_read.fetch_add(buffer.len(), Ordering::Release);
+            Ok(buffer.len())
+        }
     }
 
     impl WriteGatedReader {

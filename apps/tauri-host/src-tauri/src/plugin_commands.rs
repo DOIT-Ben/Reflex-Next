@@ -16,6 +16,7 @@ const MAIN_CAPABILITY_PERMISSIONS: &[&str] = &[
     "allow-runtime-available",
     "allow-runtime-optimize",
     "allow-runtime-cancel",
+    "allow-runtime-list-providers",
     "allow-runtime-list-plugins",
     "allow-runtime-plugin-call",
     "allow-runtime-plugin-cancel",

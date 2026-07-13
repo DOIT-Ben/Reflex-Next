@@ -7,6 +7,7 @@ use serde_json::Value;
 
 pub const COMMAND_INVALID_MESSAGE: &str = "运行请求无效。";
 static PRIVATE_REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static PUBLIC_REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandKind {
@@ -15,6 +16,7 @@ pub enum CommandKind {
     Ping,
     Shutdown,
     ConfigureProvider,
+    ListProviders,
     ListPlugins,
     PluginCall,
     ConfigurePlugin,
@@ -32,6 +34,7 @@ impl CommandKind {
             Self::Ping => "ping",
             Self::Shutdown => "shutdown",
             Self::ConfigureProvider => "configure_provider",
+            Self::ListProviders => "list_providers",
             Self::ListPlugins => "list_plugins",
             Self::PluginCall => "plugin_call",
             Self::ConfigurePlugin => "configure_plugin",
@@ -49,6 +52,7 @@ impl CommandKind {
             "ping" => Some(Self::Ping),
             "shutdown" => Some(Self::Shutdown),
             "configure_provider" => Some(Self::ConfigureProvider),
+            "list_providers" => Some(Self::ListProviders),
             "list_plugins" => Some(Self::ListPlugins),
             "plugin_call" => Some(Self::PluginCall),
             "configure_plugin" => Some(Self::ConfigurePlugin),
@@ -58,6 +62,17 @@ impl CommandKind {
             "plugin_admin_call" => Some(Self::PluginAdminCall),
             _ => None,
         }
+    }
+}
+
+pub(crate) fn list_providers_command() -> ValidatedCommand {
+    ValidatedCommand {
+        request_id: format!(
+            "host-provider-catalog-{}",
+            PUBLIC_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ),
+        kind: CommandKind::ListProviders,
+        payload: serde_json::json!({}),
     }
 }
 
@@ -292,6 +307,7 @@ fn validate_payload(kind: CommandKind, payload: &Value) -> bool {
         CommandKind::Cancel
         | CommandKind::Ping
         | CommandKind::Shutdown
+        | CommandKind::ListProviders
         | CommandKind::ListPlugins => payload.is_empty(),
         CommandKind::Optimize => {
             const FIELDS: &[&str] = &[
@@ -514,8 +530,8 @@ mod tests {
 
     use super::{
         configure_history_keys_command, configure_history_policy_command,
-        configure_provider_command, validate_command, CommandKind, ValidatedCommand,
-        COMMAND_INVALID_MESSAGE,
+        configure_provider_command, list_providers_command, validate_command, CommandKind,
+        ValidatedCommand, COMMAND_INVALID_MESSAGE,
     };
 
     #[test]
@@ -654,6 +670,7 @@ mod tests {
             (CommandKind::Ping, "ping"),
             (CommandKind::Shutdown, "shutdown"),
             (CommandKind::ConfigureProvider, "configure_provider"),
+            (CommandKind::ListProviders, "list_providers"),
             (CommandKind::ListPlugins, "list_plugins"),
             (CommandKind::PluginCall, "plugin_call"),
             (CommandKind::ConfigurePlugin, "configure_plugin"),
@@ -668,6 +685,42 @@ mod tests {
 
         for (kind, wire_name) in kinds {
             assert_eq!(kind.as_str(), wire_name);
+        }
+    }
+
+    #[test]
+    fn list_providers_accepts_only_the_empty_runtime_payload() {
+        let host_command = list_providers_command();
+        assert!(host_command
+            .request_id
+            .starts_with("host-provider-catalog-"));
+        assert_eq!(host_command.kind, CommandKind::ListProviders);
+        assert_eq!(host_command.payload, json!({}));
+
+        let accepted = json!({
+            "version": 1,
+            "request_id": "providers-accepted",
+            "type": "list_providers",
+            "payload": {}
+        });
+        let validated = validate_command(accepted, CommandKind::ListProviders).unwrap();
+        assert_eq!(validated.payload, json!({}));
+
+        for payload in [
+            json!({ "provider_id": "minimax" }),
+            json!({ "secret": "fixture-private" }),
+            json!({ "arbitrary": {} }),
+        ] {
+            let rejected = json!({
+                "version": 1,
+                "request_id": "providers-rejected",
+                "type": "list_providers",
+                "payload": payload
+            });
+            assert_eq!(
+                validate_command(rejected, CommandKind::ListProviders),
+                Err(super::COMMAND_INVALID_MESSAGE)
+            );
         }
     }
 
@@ -799,6 +852,7 @@ mod tests {
             CommandKind::Ping,
             CommandKind::Shutdown,
             CommandKind::ConfigureProvider,
+            CommandKind::ListProviders,
             CommandKind::ListPlugins,
             CommandKind::PluginCall,
             CommandKind::ConfigurePlugin,

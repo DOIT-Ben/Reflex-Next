@@ -70,6 +70,7 @@ pub fn run() {
             commands::runtime_available,
             commands::runtime_optimize,
             commands::runtime_cancel,
+            commands::runtime_list_providers,
             commands::runtime_list_plugins,
             commands::runtime_plugin_call,
             commands::runtime_plugin_cancel,
@@ -133,6 +134,7 @@ mod tests {
             "allow-provider-secret-status",
             "allow-save-provider-secret",
             "allow-delete-provider-secret",
+            "allow-runtime-list-providers",
             "allow-runtime-list-plugins",
             "allow-runtime-plugin-call",
             "allow-runtime-plugin-cancel",
@@ -175,6 +177,7 @@ mod tests {
         }
         for forbidden in [
             "allow-show-history-window",
+            "allow-runtime-list-providers",
             "allow-configure-history-keys",
             "allow-configure-history-policy",
             "allow-plugin-admin-call",

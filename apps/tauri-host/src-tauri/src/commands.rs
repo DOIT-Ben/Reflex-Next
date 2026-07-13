@@ -14,7 +14,7 @@ use crate::history_key_store::HistoryKeyStore;
 use crate::runtime_commands::{
     configure_history_keyring_command, configure_history_path_command,
     configure_history_policy_command, configure_plugin_command, configure_provider_command,
-    plugin_admin_command, validate_command, CommandKind, ValidatedCommand,
+    list_providers_command, plugin_admin_command, validate_command, CommandKind, ValidatedCommand,
 };
 use crate::secret_store::{CredentialBackend, SecretStatus, SecretStore};
 use crate::sidecar::{
@@ -312,6 +312,18 @@ pub async fn runtime_cancel(
 ) -> Result<(), String> {
     require_main_window(window.label())?;
     forward_runtime_command_to(&state.runtime, window.label(), command, CommandKind::Cancel)
+}
+
+#[tauri::command]
+pub async fn runtime_list_providers(
+    window: tauri::WebviewWindow,
+    state: State<'_, TauriRuntimeState>,
+) -> Result<(), String> {
+    require_main_window(window.label())?;
+    state
+        .runtime()
+        .send_to(list_providers_command(), window.label())
+        .map_err(str::to_string)
 }
 
 #[tauri::command]
@@ -1404,6 +1416,13 @@ mod tests {
         assert_eq!(super::window_size_preset("default"), Some((760.0, 540.0)));
         assert_eq!(super::window_size_preset("wide"), Some((900.0, 640.0)));
         assert_eq!(super::window_size_preset("1920x1080"), None);
+    }
+
+    #[test]
+    fn main_only_runtime_commands_reject_other_window_labels() {
+        assert!(super::require_main_window("main").is_ok());
+        assert!(super::require_main_window("history").is_err());
+        assert!(super::require_main_window("forged").is_err());
     }
 
     struct EmptyCredentialBackend;
