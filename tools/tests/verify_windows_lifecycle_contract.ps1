@@ -23,6 +23,7 @@ foreach ($required in @(
     "Invoke-SilentInstaller",
     "Invoke-SidecarProbe",
     "Invoke-HostProbe",
+    "Invoke-LegacyConfigProbe",
     "Invoke-SilentUninstaller",
     'ArgumentList @("/S")',
     '("/D=" + $Destination)',
@@ -33,6 +34,8 @@ foreach ($required in @(
     "REFLEX_DIAGNOSTICS_ENABLED",
     "host_config_isolation_not_observed",
     "recovery.Count -lt 1",
+    "legacy_config_triggered_recovery",
+    "legacy-config-start",
     'isolated_data_root = $hostProbe.IsolatedDataRoot',
     "process.Kill()",
     "steps.ToArray()"
