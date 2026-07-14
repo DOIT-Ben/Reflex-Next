@@ -80,7 +80,7 @@
 | P4-001 | 统一版本号和构建元数据 | 完成 | P0-008 | `VERSION`、产品清单、锁文件、界面和云服务元数据一致 |
 | P4-002 | 干净 Windows 10/11 构建验证 | 待验证 | P2、P3 完成 | Windows 11 已通过，Windows 10 待验证；见 `docs/verification/release-alpha8-windows-lifecycle.md` |
 | P4-003 | 安装、覆盖安装、卸载和重装生命周期 | 待验证 | P4-002 | Windows 11 已通过，Windows 10 待验证；见 `docs/verification/release-alpha8-windows-lifecycle.md` |
-| P4-004 | 配置和历史升级兼容 | 进行中 | P4-002 | 配置 11 项、History 158 项和 beta.11 到 alpha.8 安装目录覆盖通过；旧数据首次启动迁移待验证 |
+| P4-004 | 配置和历史升级兼容 | 进行中 | P4-002 | 配置 11 项、History 158 项、v0 Host 启动、beta.11 到 alpha.8 安装目录覆盖和 alpha.8 Runtime 旧库首次写入通过；官方旧版包/真实旧数据全链路待验证 |
 | P4-005 | 签名、更新与回滚方案 | 待办 | 用户采购决策 | 签名验证、回滚演练 |
 | P4-006 | 发布清单、校验和、SBOM 和恢复手册 | 待办 | P4-003、P4-005 | RC 交付包审计 |
 
@@ -114,7 +114,7 @@
 - alpha.8 隔离生命周期：首次安装、Sidecar ping/shutdown、同版本覆盖安装、卸载、重装和最终清理通过；详见 `docs/verification/release-alpha8-windows-lifecycle.md`；
 - 生命周期工具：`tools\verify_windows_lifecycle.ps1` 已固化隔离安装、覆盖、卸载、重装、Sidecar 协议和 Host 启动检查，契约测试与 alpha.8 实跑均通过；
 - 真实 Provider：MiniMax 目录、流式成功和定时取消实机通过，结果只保留分类和时延；详见 `docs/verification/provider-smoke-2026-07-15.md`；
-- 配置与历史升级契约：Rust 配置迁移 11 项、History 旧库夹具与全套 158 项以及 beta.11 到 alpha.8 安装目录覆盖通过；旧数据首次启动迁移仍由 P4-004 继续验证；
+- 配置与历史升级契约：Rust 配置迁移 11 项、History 旧库夹具与全套 158 项、v0 Host 启动、beta.11 到 alpha.8 安装目录覆盖以及 alpha.8 安装副本旧库首次写入迁移通过；官方旧版包/真实旧数据全链路仍由 P4-004 继续验证；
 - 统一验证脚本契约：步骤、锁文件、失败码、Rust/Vitest 并发上限通过；
 - 当前已知测试工程缺口：根目录一次性收集全部 pytest 会因同名测试模块冲突，必须按包隔离或改用 importlib 模式；
 - 当前工作区原有未跟踪内容：`resources/` 与用户提供的前端重做归档，任何任务不得修改或暂存。
