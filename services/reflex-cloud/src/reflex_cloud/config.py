@@ -27,6 +27,14 @@ class CloudSettings(BaseSettings):
     free_input_chars_per_day: int = Field(default=200_000, ge=1_000, le=10_000_000)
     free_output_chars_per_day: int = Field(default=200_000, ge=1_000, le=10_000_000)
     max_screenshot_bytes: int = Field(default=3 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024)
+    provider_api_key: SecretStr = SecretStr("")
+    provider_base_url: str = "https://api.minimaxi.com/v1/chat/completions"
+    provider_model: str = "MiniMax-M2.7-highspeed"
+    provider_timeout_seconds: float = Field(default=90.0, ge=5.0, le=120.0)
+    template_pack_directory: Path = Path("../../template-packs/builtin")
+    max_concurrent_global: int = Field(default=32, ge=1, le=1000)
+    max_concurrent_per_installation: int = Field(default=2, ge=1, le=20)
+    free_ip_requests_per_hour: int = Field(default=60, ge=1, le=10000)
 
     @field_validator("environment")
     @classmethod
@@ -40,7 +48,13 @@ class CloudSettings(BaseSettings):
     def reject_development_secrets_in_production(self) -> "CloudSettings":
         if self.environment != "production":
             return self
-        secrets = (self.admin_token.get_secret_value(), self.token_pepper.get_secret_value())
+        secrets = (
+            self.admin_token.get_secret_value(),
+            self.token_pepper.get_secret_value(),
+            self.provider_api_key.get_secret_value(),
+        )
         if any(secret == _DEVELOPMENT_SECRET or len(secret) < 32 for secret in secrets):
             raise ValueError("production secrets must be independently configured")
+        if not self.provider_base_url.startswith("https://"):
+            raise ValueError("production provider URL must use HTTPS")
         return self

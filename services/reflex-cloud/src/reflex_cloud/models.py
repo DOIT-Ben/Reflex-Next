@@ -59,6 +59,44 @@ class DailyUsage(Base):
     output_chars: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class HourlyIpUsage(Base):
+    __tablename__ = "hourly_ip_usage"
+    __table_args__ = (
+        UniqueConstraint("ip_hash", "window_start", name="hourly_ip_hash_window_uq"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ip_hash: Mapped[str] = mapped_column(String(64), index=True)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    request_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ImprovementSample(Base):
+    __tablename__ = "improvement_samples"
+    __table_args__ = (
+        UniqueConstraint("installation_id", "request_id", name="improvement_installation_request_uq"),
+        Index("improvement_created_idx", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    installation_id: Mapped[str] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE"), index=True
+    )
+    consent_record_id: Mapped[int] = mapped_column(
+        ForeignKey("consent_records.id", ondelete="CASCADE"), index=True
+    )
+    request_id: Mapped[str] = mapped_column(String(128))
+    prompt_text: Mapped[str] = mapped_column(Text)
+    result_text: Mapped[str] = mapped_column(Text)
+    mode: Mapped[str] = mapped_column(String(32))
+    style: Mapped[str] = mapped_column(String(32))
+    scene: Mapped[str] = mapped_column(String(64), default="")
+    provider: Mapped[str] = mapped_column(String(64), default="minimax")
+    model: Mapped[str] = mapped_column(String(128))
+    policy_version: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class FeedbackItem(Base):
     __tablename__ = "feedback_items"
     __table_args__ = (

@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field, model_validator
 FeedbackSentiment = Literal["positive", "negative"]
 FeedbackCategory = Literal["quality", "bug", "performance", "feature", "other"]
 FeedbackStatus = Literal["new", "triaged", "reproduced", "planned", "fixed", "released", "rejected"]
+OptimizeMode = Literal["content", "prompt"]
+OptimizeStyle = Literal["concise", "balanced", "detailed", "creative", "precise"]
+ScenePolicy = Literal["auto", "manual", "ask"]
 
 
 class InstallationCreated(BaseModel):
@@ -111,6 +114,22 @@ class FeedbackPage(BaseModel):
     total: int
 
 
+class QualityBucket(BaseModel):
+    total: int
+    negative: int
+    negative_rate: float
+    average_elapsed_ms: float | None
+
+
+class FeedbackAnalytics(BaseModel):
+    total: int
+    negative: int
+    negative_rate: float
+    average_elapsed_ms: float | None
+    by_category: dict[str, QualityBucket]
+    by_version: dict[str, QualityBucket]
+
+
 class FeedbackUpdate(BaseModel):
     status: FeedbackStatus
     category: FeedbackCategory | None = None
@@ -128,3 +147,30 @@ class QuotaView(BaseModel):
     input_chars_limit: int
     output_chars_used: int
     output_chars_limit: int
+
+
+class CloudOptimizeRequest(BaseModel):
+    request_id: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    text: str = Field(min_length=1, max_length=100_000)
+    mode: OptimizeMode = "content"
+    style: OptimizeStyle = "balanced"
+    scene: str | None = Field(default=None, max_length=64)
+    scene_policy: ScenePolicy = "auto"
+    language: Literal["zh-CN", "en-US"] = "zh-CN"
+
+    @model_validator(mode="after")
+    def require_scene_for_manual_policy(self) -> "CloudOptimizeRequest":
+        self.text = self.text.strip()
+        if not self.text:
+            raise ValueError("text must not be blank")
+        if self.scene_policy == "manual" and not self.scene:
+            raise ValueError("manual scene policy requires scene")
+        return self
+
+
+class OptimizeCancelRequest(BaseModel):
+    request_id: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+
+
+class OptimizeCancelResult(BaseModel):
+    cancelled: bool

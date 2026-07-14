@@ -21,6 +21,7 @@ def test_production_rejects_default_or_short_secrets(tmp_path):
         upload_directory=tmp_path / "uploads",
         admin_token=SecretStr("a" * 32),
         token_pepper=SecretStr("p" * 32),
+        provider_api_key=SecretStr("k" * 32),
     )
     assert settings.environment == "production"
 

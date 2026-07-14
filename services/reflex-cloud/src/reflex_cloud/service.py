@@ -1,14 +1,31 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from threading import Lock
 from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .config import CloudSettings
-from .models import ConsentRecord, DailyUsage, FeedbackItem, Installation, utc_now
-from .schemas import ConsentUpdate, FeedbackCreate, FeedbackUpdate, QuotaView
+from .models import (
+    ConsentRecord,
+    DailyUsage,
+    FeedbackItem,
+    HourlyIpUsage,
+    ImprovementSample,
+    Installation,
+    utc_now,
+)
+from .schemas import (
+    CloudOptimizeRequest,
+    ConsentUpdate,
+    FeedbackAnalytics,
+    FeedbackCreate,
+    FeedbackUpdate,
+    QualityBucket,
+    QuotaView,
+)
 from .security import new_installation_token, redact_text, token_hash
 from .storage import AttachmentStore
 
@@ -25,6 +42,7 @@ class CloudService:
         self.settings = settings
         self.attachments = attachments
         self._pepper = settings.token_pepper.get_secret_value()
+        self._quota_lock = Lock()
 
     def create_installation(self, session: Session) -> tuple[Installation, str]:
         token = new_installation_token()
@@ -108,43 +126,102 @@ class CloudService:
     ) -> DailyUsage:
         if input_chars < 0 or input_chars > self.settings.free_input_chars_per_day:
             raise CloudServiceError("quota_input_too_large", 413)
-        today = date.today()
-        usage = session.scalar(
-            select(DailyUsage).where(
-                DailyUsage.installation_id == installation.id,
-                DailyUsage.usage_date == today,
+        with self._quota_lock:
+            today = date.today()
+            usage = session.scalar(
+                select(DailyUsage)
+                .where(
+                    DailyUsage.installation_id == installation.id,
+                    DailyUsage.usage_date == today,
+                )
+                .with_for_update()
             )
-        )
-        if usage is None:
-            usage = DailyUsage(installation_id=installation.id, usage_date=today)
-            session.add(usage)
-            session.flush()
-        if (
-            usage.request_count >= self.settings.free_requests_per_day
-            or usage.input_chars + input_chars > self.settings.free_input_chars_per_day
-            or usage.output_chars >= self.settings.free_output_chars_per_day
-        ):
-            raise CloudServiceError("quota_exhausted", 429)
-        usage.request_count += 1
-        usage.input_chars += input_chars
-        session.commit()
-        return usage
+            if usage is None:
+                usage = DailyUsage(installation_id=installation.id, usage_date=today)
+                session.add(usage)
+                session.flush()
+            if (
+                usage.request_count >= self.settings.free_requests_per_day
+                or usage.input_chars + input_chars > self.settings.free_input_chars_per_day
+                or usage.output_chars >= self.settings.free_output_chars_per_day
+            ):
+                raise CloudServiceError("quota_exhausted", 429)
+            usage.request_count += 1
+            usage.input_chars += input_chars
+            session.commit()
+            return usage
+
+    def reserve_ip_quota(self, session: Session, client_ip: str | None) -> None:
+        if not client_ip:
+            return
+        window = utc_now().replace(minute=0, second=0, microsecond=0)
+        ip_hash = token_hash(client_ip, self._pepper)
+        with self._quota_lock:
+            usage = session.scalar(
+                select(HourlyIpUsage)
+                .where(
+                    HourlyIpUsage.ip_hash == ip_hash,
+                    HourlyIpUsage.window_start == window,
+                )
+                .with_for_update()
+            )
+            if usage is None:
+                usage = HourlyIpUsage(ip_hash=ip_hash, window_start=window)
+                session.add(usage)
+                session.flush()
+            if usage.request_count >= self.settings.free_ip_requests_per_hour:
+                raise CloudServiceError("ip_rate_limited", 429)
+            usage.request_count += 1
+            session.commit()
 
     def record_output_usage(
-        self, session: Session, installation: Installation, *, output_chars: int
+        self, session: Session, installation_id: str, *, output_chars: int
     ) -> None:
         if output_chars < 0:
             raise CloudServiceError("quota_output_invalid", 400)
-        usage = session.scalar(
-            select(DailyUsage).where(
-                DailyUsage.installation_id == installation.id,
-                DailyUsage.usage_date == date.today(),
+        with self._quota_lock:
+            usage = session.scalar(
+                select(DailyUsage)
+                .where(
+                    DailyUsage.installation_id == installation_id,
+                    DailyUsage.usage_date == date.today(),
+                )
+                .with_for_update()
             )
+            if usage is None:
+                raise CloudServiceError("quota_unavailable", 409)
+            usage.output_chars += output_chars
+            session.commit()
+
+    def store_improvement_sample(
+        self,
+        session: Session,
+        installation_id: str,
+        payload: CloudOptimizeRequest,
+        *,
+        output_text: str,
+        scene: str,
+    ) -> bool:
+        consent = self.latest_consent(session, installation_id)
+        if not consent.improvement_data:
+            return False
+        sample = ImprovementSample(
+            id=str(uuid4()),
+            installation_id=installation_id,
+            consent_record_id=consent.id,
+            request_id=payload.request_id,
+            prompt_text=redact_text(payload.text),
+            result_text=redact_text(output_text),
+            mode=payload.mode,
+            style=payload.style,
+            scene=scene,
+            provider="minimax",
+            model=self.settings.provider_model,
+            policy_version=consent.policy_version,
         )
-        if usage is None:
-            raise CloudServiceError("quota_unavailable", 409)
-        usage.output_chars += output_chars
+        session.add(sample)
         session.commit()
+        return True
 
     def submit_feedback(
         self, session: Session, installation: Installation, payload: FeedbackCreate
@@ -228,6 +305,35 @@ class CloudService:
         )
         return items, total
 
+    def feedback_analytics(self, session: Session) -> FeedbackAnalytics:
+        items = list(session.scalars(select(FeedbackItem)))
+
+        def bucket(records: list[FeedbackItem]) -> QualityBucket:
+            total = len(records)
+            negative = sum(item.sentiment == "negative" for item in records)
+            elapsed = [item.elapsed_ms for item in records if item.elapsed_ms is not None]
+            return QualityBucket(
+                total=total,
+                negative=negative,
+                negative_rate=round(negative / total, 4) if total else 0.0,
+                average_elapsed_ms=(sum(elapsed) / len(elapsed)) if elapsed else None,
+            )
+
+        overall = bucket(items)
+        categories: dict[str, list[FeedbackItem]] = {}
+        versions: dict[str, list[FeedbackItem]] = {}
+        for item in items:
+            categories.setdefault(item.category, []).append(item)
+            versions.setdefault(item.app_version, []).append(item)
+        return FeedbackAnalytics(
+            total=overall.total,
+            negative=overall.negative,
+            negative_rate=overall.negative_rate,
+            average_elapsed_ms=overall.average_elapsed_ms,
+            by_category={key: bucket(value) for key, value in sorted(categories.items())},
+            by_version={key: bucket(value) for key, value in sorted(versions.items())},
+        )
+
     def feedback_detail(self, session: Session, feedback_id: str) -> FeedbackItem:
         item = session.get(FeedbackItem, feedback_id)
         if item is None:
@@ -266,6 +372,18 @@ class CloudService:
         )
         for item in expired:
             self.attachments.delete(item.screenshot_path)
+            session.delete(item)
+        session.commit()
+        return len(expired)
+
+    def purge_expired_improvement_samples(self, session: Session) -> int:
+        cutoff = utc_now() - timedelta(days=self.settings.retention_days)
+        expired = list(
+            session.scalars(
+                select(ImprovementSample).where(ImprovementSample.created_at < cutoff)
+            )
+        )
+        for item in expired:
             session.delete(item)
         session.commit()
         return len(expired)

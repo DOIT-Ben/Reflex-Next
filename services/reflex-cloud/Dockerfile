@@ -4,9 +4,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
-COPY pyproject.toml README.md ./
-COPY src ./src
-RUN pip install --no-cache-dir '.[postgres]'
+COPY packages/reflex-core /opt/reflex-core
+COPY plugins/provider-minimax /opt/reflex-provider-minimax
+COPY template-packs/builtin /app/template-packs/builtin
+COPY services/reflex-cloud/pyproject.toml services/reflex-cloud/README.md ./
+COPY services/reflex-cloud/src ./src
+RUN pip install --no-cache-dir /opt/reflex-core /opt/reflex-provider-minimax '.[postgres]'
 
 RUN useradd --create-home --uid 10001 reflex && mkdir -p /app/data && chown -R reflex:reflex /app
 USER reflex

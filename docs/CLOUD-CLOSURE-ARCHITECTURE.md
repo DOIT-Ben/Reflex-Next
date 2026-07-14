@@ -56,8 +56,11 @@ new -> triaged -> reproduced -> planned -> fixed -> released
 | `GET` | `/v1/privacy/consent` | 查询分项授权 |
 | `PUT` | `/v1/privacy/consent` | 更新分项授权并记录版本 |
 | `DELETE` | `/v1/privacy/data` | 删除该安装身份及其反馈和附件 |
+| `POST` | `/v1/optimize` | 使用云端 Provider 代理并以 SSE 返回 Core 事件 |
+| `POST` | `/v1/optimize/cancel` | 取消当前安装身份拥有的生成请求 |
 | `POST` | `/v1/feedback` | 提交满意/不满意反馈 |
 | `GET` | `/v1/admin/feedback` | 管理员查看脱敏反馈列表 |
+| `GET` | `/v1/admin/analytics/feedback` | 按分类和版本查看质量指标 |
 | `GET` | `/v1/admin/feedback/{id}` | 管理员查看单条授权详情 |
 | `PATCH` | `/v1/admin/feedback/{id}` | 更新分类和处理状态 |
 
@@ -73,8 +76,10 @@ GET  /v1/quota
 ```
 
 当前 alpha 先按请求次数、输入字符和输出字符设置三道日上限，生成请求在发送 Provider
-前预占请求与输入额度，成功后记录输出用量。匿名设备、账户和 IP 同时限流；Provider
-Key 只存在服务器密钥系统。接入真实 Provider 的 token 计量后，再增加 token 成本账本，
+前预占请求与输入额度，成功后记录输出用量。当前 alpha 以安装身份和单进程并发闸门
+控制资源；正式多实例部署前必须补 Redis/IP/账户级限流。云端 Provider Key 只存在
+服务器环境或密钥系统，客户端自备 Key 永不上传。接入真实 Provider 的 token 计量后，
+再增加 token 成本账本，
 不改变客户端查询契约。客户端保留自备 Key 模式作为离线于 Reflex Cloud 的替代路径。
 
 ## 7. 改进和发布闭环

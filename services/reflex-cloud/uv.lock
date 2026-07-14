@@ -492,6 +492,8 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "pydantic-settings" },
+    { name = "reflex-core" },
+    { name = "reflex-provider-minimax" },
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -512,10 +514,38 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2,<4" },
     { name = "pydantic-settings", specifier = ">=2.7,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<9" },
+    { name = "reflex-core", editable = "../../packages/reflex-core" },
+    { name = "reflex-provider-minimax", editable = "../../plugins/provider-minimax" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1" },
 ]
 provides-extras = ["postgres", "dev"]
+
+[[package]]
+name = "reflex-core"
+version = "0.1.0"
+source = { editable = "../../packages/reflex-core" }
+
+[package.metadata]
+requires-dist = [{ name = "pytest", marker = "extra == 'dev'" }]
+provides-extras = ["dev"]
+
+[[package]]
+name = "reflex-provider-minimax"
+version = "0.1.0"
+source = { editable = "../../plugins/provider-minimax" }
+dependencies = [
+    { name = "httpx" },
+    { name = "reflex-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28,<0.29" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "reflex-core", editable = "../../packages/reflex-core" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "sqlalchemy"

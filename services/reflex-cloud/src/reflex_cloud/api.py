@@ -1,23 +1,30 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from .models import ConsentRecord, FeedbackItem, Installation
+from .optimizer import CloudOptimizer, CloudOptimizerError
 from .schemas import (
     ConsentUpdate,
     ConsentView,
+    CloudOptimizeRequest,
     DeleteResult,
     FeedbackCreate,
     FeedbackCreated,
     FeedbackDetail,
+    FeedbackAnalytics,
     FeedbackPage,
     FeedbackSummary,
     FeedbackUpdate,
     InstallationCreated,
+    OptimizeCancelRequest,
+    OptimizeCancelResult,
     QuotaView,
 )
 from .security import secure_equals
@@ -36,8 +43,13 @@ def get_service(request: Request) -> CloudService:
     return request.app.state.cloud_service
 
 
+def get_optimizer(request: Request) -> CloudOptimizer:
+    return request.app.state.optimizer
+
+
 SessionDependency = Annotated[Session, Depends(get_session)]
 ServiceDependency = Annotated[CloudService, Depends(get_service)]
+OptimizerDependency = Annotated[CloudOptimizer, Depends(get_optimizer)]
 
 
 def current_installation(
@@ -99,6 +111,81 @@ def get_quota(
     return service.quota(session, installation)
 
 
+@public_router.post("/optimize")
+def optimize(
+    payload: CloudOptimizeRequest,
+    installation: InstallationDependency,
+    session: SessionDependency,
+    service: ServiceDependency,
+    optimizer: OptimizerDependency,
+    request: Request,
+) -> StreamingResponse:
+    optimizer.claim(payload.request_id, installation.id)
+    try:
+        service.reserve_ip_quota(session, request.client.host if request.client else None)
+        service.reserve_quota(session, installation, input_chars=len(payload.text))
+    except Exception:
+        optimizer.release(payload.request_id)
+        raise
+
+    def event_stream() -> Iterator[str]:
+        output_chars = 0
+        output_chunks: list[str] = []
+        completed = False
+        final_scene = payload.scene or "general"
+        try:
+            for envelope in optimizer.stream(payload):
+                event = envelope.get("event")
+                if isinstance(event, dict) and event.get("type") == "chunk":
+                    data = event.get("data")
+                    if isinstance(data, dict) and isinstance(data.get("text"), str):
+                        output_chars += len(data["text"])
+                        output_chunks.append(data["text"])
+                if isinstance(event, dict) and event.get("type") == "done":
+                    data = event.get("data")
+                    if isinstance(data, dict):
+                        completed = True
+                        if isinstance(data.get("scene"), str):
+                            final_scene = data["scene"]
+                yield f"data: {json.dumps(envelope, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        finally:
+            optimizer.release(payload.request_id)
+            if output_chars:
+                with request.app.state.database.sessions() as usage_session:
+                    service.record_output_usage(
+                        usage_session, installation.id, output_chars=output_chars
+                    )
+                    if completed:
+                        service.store_improvement_sample(
+                            usage_session,
+                            installation.id,
+                            payload,
+                            output_text="".join(output_chunks),
+                            scene=final_scene,
+                        )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@public_router.post("/optimize/cancel", response_model=OptimizeCancelResult)
+def cancel_optimize(
+    payload: OptimizeCancelRequest,
+    installation: InstallationDependency,
+    optimizer: OptimizerDependency,
+) -> OptimizeCancelResult:
+    return OptimizeCancelResult(
+        cancelled=optimizer.cancel(payload.request_id, installation.id)
+    )
+
+
 @public_router.delete("/privacy/data", response_model=DeleteResult)
 def delete_data(
     installation: InstallationDependency,
@@ -134,6 +221,15 @@ def list_feedback(
         session, status=status, category=category, limit=limit, offset=offset
     )
     return FeedbackPage(items=[_feedback_summary(item) for item in items], total=total)
+
+
+@admin_router.get("/analytics/feedback", response_model=FeedbackAnalytics)
+def get_feedback_analytics(
+    _: AdminDependency,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> FeedbackAnalytics:
+    return service.feedback_analytics(session)
 
 
 @admin_router.get("/feedback/{feedback_id}", response_model=FeedbackDetail)
