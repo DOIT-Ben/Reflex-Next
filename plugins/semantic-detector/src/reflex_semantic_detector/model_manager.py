@@ -13,6 +13,7 @@ from typing import Any
 from reflex_core import OperationCancelled
 
 from .plugin import DEFAULT_MODEL_ID
+from .lifecycle import MODEL_LIFECYCLE, ModelLifecycle, ModelLifecycleBusy
 
 MODEL_FILE_SUFFIXES = (
     ".json",
@@ -57,12 +58,14 @@ class SemanticModelManager:
         module_available: Callable[[str], bool] | None = None,
         list_repo_files: Callable[[str], Iterable[str]] | None = None,
         download_file: Callable[..., Any] | None = None,
+        lifecycle: ModelLifecycle = MODEL_LIFECYCLE,
     ) -> None:
         self._model_id = model_id
         self._cache_dir = (cache_dir or default_cache_dir()).resolve()
         self._module_available = module_available or _module_available
         self._list_repo_files = list_repo_files
         self._download_file = download_file
+        self._lifecycle = lifecycle
 
     def invoke(self, operation: str, payload: dict[str, Any], services: Any, cancellation: Any):
         del services
@@ -77,6 +80,81 @@ class SemanticModelManager:
         raise SemanticModelError("model_operation_invalid")
 
     def status(self) -> dict[str, Any]:
+        try:
+            with self._lifecycle.enter(blocking=False):
+                model_root = self._model_root()
+                return {
+                    "model_id": self._model_id,
+                    "model_state": "ready" if _has_complete_snapshot(model_root) else "missing",
+                    "runtime_state": (
+                        "ready"
+                        if self._module_available("sentence_transformers")
+                        else "missing"
+                    ),
+                    "size_bytes": _directory_size(model_root),
+                }
+        except ModelLifecycleBusy:
+            raise SemanticModelError("model_busy") from None
+
+    def download(self, cancellation: Any):
+        def events():
+            if getattr(cancellation, "is_cancelled", False):
+                raise OperationCancelled
+            try:
+                with self._lifecycle.enter(blocking=False):
+                    list_repo_files, download_file = self._download_functions()
+                    try:
+                        files = _selected_files(list_repo_files(self._model_id))
+                    except Exception as error:
+                        raise SemanticModelError("model_download_failed") from error
+                    if not files:
+                        raise SemanticModelError("model_download_failed")
+                    total = len(files)
+                    for index, filename in enumerate(files, start=1):
+                        if getattr(cancellation, "is_cancelled", False):
+                            raise OperationCancelled
+                        try:
+                            download_file(
+                                repo_id=self._model_id,
+                                filename=filename,
+                                cache_dir=str(self._cache_dir),
+                            )
+                        except Exception as error:
+                            raise SemanticModelError("model_download_failed") from error
+                        yield {
+                            "status": "progress",
+                            "data": {
+                                "completed": index,
+                                "total": total,
+                                "percent": round(index * 100 / total),
+                            },
+                        }
+                    model_root = self._model_root()
+                    if not _has_complete_snapshot(model_root):
+                        raise SemanticModelError("model_download_incomplete")
+                    self._lifecycle.invalidate()
+                    yield {"status": "result", "data": self._status_unlocked()}
+            except ModelLifecycleBusy:
+                raise SemanticModelError("model_busy") from None
+
+        return events()
+
+    def delete(self) -> dict[str, Any]:
+        try:
+            with self._lifecycle.enter(blocking=False):
+                model_root = self._model_root()
+                if model_root.exists():
+                    try:
+                        model_root.relative_to(self._cache_dir)
+                        shutil.rmtree(model_root)
+                    except Exception as error:
+                        raise SemanticModelError("model_delete_failed") from error
+                self._lifecycle.invalidate()
+                return self._status_unlocked()
+        except ModelLifecycleBusy:
+            raise SemanticModelError("model_busy") from None
+
+    def _status_unlocked(self) -> dict[str, Any]:
         model_root = self._model_root()
         return {
             "model_id": self._model_id,
@@ -86,54 +164,6 @@ class SemanticModelManager:
             ),
             "size_bytes": _directory_size(model_root),
         }
-
-    def download(self, cancellation: Any):
-        def events():
-            if getattr(cancellation, "is_cancelled", False):
-                raise OperationCancelled
-            list_repo_files, download_file = self._download_functions()
-            try:
-                files = _selected_files(list_repo_files(self._model_id))
-            except Exception as error:
-                raise SemanticModelError("model_download_failed") from error
-            if not files:
-                raise SemanticModelError("model_download_failed")
-            total = len(files)
-            for index, filename in enumerate(files, start=1):
-                if getattr(cancellation, "is_cancelled", False):
-                    raise OperationCancelled
-                try:
-                    download_file(
-                        repo_id=self._model_id,
-                        filename=filename,
-                        cache_dir=str(self._cache_dir),
-                    )
-                except Exception as error:
-                    raise SemanticModelError("model_download_failed") from error
-                yield {
-                    "status": "progress",
-                    "data": {
-                        "completed": index,
-                        "total": total,
-                        "percent": round(index * 100 / total),
-                    },
-                }
-            status = self.status()
-            if status["model_state"] != "ready":
-                raise SemanticModelError("model_download_incomplete")
-            yield {"status": "result", "data": status}
-
-        return events()
-
-    def delete(self) -> dict[str, Any]:
-        model_root = self._model_root()
-        if model_root.exists():
-            try:
-                model_root.relative_to(self._cache_dir)
-                shutil.rmtree(model_root)
-            except Exception as error:
-                raise SemanticModelError("model_delete_failed") from error
-        return self.status()
 
     def _download_functions(self):
         if self._list_repo_files is not None and self._download_file is not None:

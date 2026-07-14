@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import sys
+import threading
 from importlib.metadata import entry_points
 
 import pytest
 
-from reflex_core import OperationCancelled, OptimizeRequest
+from reflex_core import CancellationToken, OperationCancelled, OptimizeRequest
 from reflex_semantic_detector import SemanticModelManager, SemanticSceneDetector
 from reflex_semantic_detector.model_manager import SemanticModelError
+from reflex_semantic_detector.lifecycle import ModelLifecycle
 
 
 class FakeModel:
@@ -193,3 +195,220 @@ def test_model_manager_honors_cancellation_before_network_access(tmp_path) -> No
 
     with pytest.raises(OperationCancelled):
         list(manager.invoke("download", {}, None, Cancelled()))
+
+
+def test_concurrent_detection_loads_the_model_only_once() -> None:
+    lifecycle = ModelLifecycle()
+    entered = threading.Event()
+    release = threading.Event()
+    factory_calls = 0
+    factory_lock = threading.Lock()
+
+    def factory(*_args, **_kwargs):
+        nonlocal factory_calls
+        with factory_lock:
+            factory_calls += 1
+        entered.set()
+        release.wait(timeout=2)
+        return FakeModel()
+
+    detector = SemanticSceneDetector(
+        model_factory=factory,
+        lifecycle=lifecycle,
+        scene_examples={"email": "write a professional business email reply"},
+        min_confidence=0.4,
+    )
+    results = []
+    threads = [
+        threading.Thread(
+            target=lambda: results.append(
+                detector.detect("draft an email to a customer", OptimizeRequest("input"))
+            )
+        )
+        for _ in range(4)
+    ]
+
+    for thread in threads:
+        thread.start()
+    assert entered.wait(timeout=1)
+    release.set()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert factory_calls == 1
+    assert len(results) == 4
+    assert all(result is not None and result.scene == "email" for result in results)
+
+
+def test_download_blocks_status_delete_and_model_load_with_safe_busy_semantics(
+    tmp_path,
+) -> None:
+    lifecycle = ModelLifecycle()
+    entered = threading.Event()
+    release = threading.Event()
+    download_errors = []
+
+    def download_file(*, repo_id, filename, cache_dir):
+        entered.set()
+        release.wait(timeout=2)
+        snapshot = (
+            tmp_path
+            / f"models--{repo_id.replace('/', '--')}"
+            / "snapshots"
+            / "fixture"
+        )
+        path = snapshot / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"fixture")
+
+    manager = SemanticModelManager(
+        cache_dir=tmp_path,
+        lifecycle=lifecycle,
+        module_available=lambda _name: True,
+        list_repo_files=lambda _model_id: ["config.json", "model.safetensors"],
+        download_file=download_file,
+    )
+    detector_factory_called = False
+
+    def detector_factory(*_args, **_kwargs):
+        nonlocal detector_factory_called
+        detector_factory_called = True
+        return FakeModel()
+
+    detector = SemanticSceneDetector(
+        cache_dir=tmp_path,
+        lifecycle=lifecycle,
+        model_factory=detector_factory,
+    )
+
+    def run_download():
+        try:
+            list(manager.download(ActiveCancellation()))
+        except Exception as error:
+            download_errors.append(error)
+
+    thread = threading.Thread(target=run_download)
+    thread.start()
+    assert entered.wait(timeout=1)
+
+    for operation in (manager.status, manager.delete):
+        with pytest.raises(SemanticModelError) as caught:
+            operation()
+        assert caught.value.code == "model_busy"
+    assert detector.detect("fixture", OptimizeRequest("input")) is None
+    assert detector_factory_called is False
+
+    release.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert download_errors == []
+
+
+def test_delete_invalidates_an_already_loaded_detector(tmp_path) -> None:
+    lifecycle = ModelLifecycle()
+    factory_calls = 0
+
+    def factory(*_args, **_kwargs):
+        nonlocal factory_calls
+        factory_calls += 1
+        return FakeModel()
+
+    detector = SemanticSceneDetector(
+        cache_dir=tmp_path,
+        lifecycle=lifecycle,
+        model_factory=factory,
+        scene_examples={"email": "write a professional business email reply"},
+        min_confidence=0.4,
+    )
+    manager = SemanticModelManager(
+        cache_dir=tmp_path,
+        lifecycle=lifecycle,
+        module_available=lambda _name: True,
+    )
+
+    assert detector.detect(
+        "draft an email to a customer", OptimizeRequest("input")
+    ) is not None
+    assert detector.model_loaded is True
+    manager.delete()
+
+    assert detector.model_loaded is False
+    assert detector.detect(
+        "draft an email to a customer", OptimizeRequest("input")
+    ) is not None
+    assert factory_calls == 2
+
+
+def test_model_load_blocks_management_until_single_flight_finishes(tmp_path) -> None:
+    lifecycle = ModelLifecycle()
+    entered = threading.Event()
+    release = threading.Event()
+    result = []
+
+    def factory(*_args, **_kwargs):
+        entered.set()
+        release.wait(timeout=2)
+        return FakeModel()
+
+    detector = SemanticSceneDetector(
+        cache_dir=tmp_path,
+        lifecycle=lifecycle,
+        model_factory=factory,
+        scene_examples={"email": "write a professional business email reply"},
+        min_confidence=0.4,
+    )
+    manager = SemanticModelManager(
+        cache_dir=tmp_path,
+        lifecycle=lifecycle,
+        module_available=lambda _name: True,
+    )
+    thread = threading.Thread(
+        target=lambda: result.append(
+            detector.detect("draft an email to a customer", OptimizeRequest("input"))
+        )
+    )
+    thread.start()
+    assert entered.wait(timeout=1)
+
+    for operation in (manager.status, manager.delete):
+        with pytest.raises(SemanticModelError) as caught:
+            operation()
+        assert caught.value.code == "model_busy"
+
+    release.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert result[0] is not None
+
+
+def test_mid_download_cancellation_releases_the_lifecycle_lock(tmp_path) -> None:
+    lifecycle = ModelLifecycle()
+    cancellation = CancellationToken()
+
+    def download_file(*, repo_id, filename, cache_dir):
+        snapshot = (
+            tmp_path
+            / f"models--{repo_id.replace('/', '--')}"
+            / "snapshots"
+            / "fixture"
+        )
+        path = snapshot / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"fixture")
+        cancellation.cancel()
+
+    manager = SemanticModelManager(
+        cache_dir=tmp_path,
+        lifecycle=lifecycle,
+        module_available=lambda _name: True,
+        list_repo_files=lambda _model_id: ["config.json", "model.safetensors"],
+        download_file=download_file,
+    )
+
+    with pytest.raises(OperationCancelled):
+        list(manager.download(cancellation))
+
+    assert manager.delete()["model_state"] == "missing"
