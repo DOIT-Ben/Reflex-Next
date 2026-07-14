@@ -188,6 +188,23 @@ $steps += New-VerificationStep `
   -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "python", "tools\soak_backend.py", "--iterations", "100", "--batch-size", "4", "--timeout-seconds", "5", "--cancel-every", "2") `
   -Heavy $true
 
+$steps += New-VerificationStep `
+  -Id "tools:plugin-history-soak-contract" `
+  -Category "tools" `
+  -WorkDir "." `
+  -LockFile "plugins\history-sqlite\uv.lock" `
+  -Executable "uv" `
+  -Arguments @("run", "--frozen", "--project", "plugins\history-sqlite", "--extra", "dev", "pytest", "tools\tests\test_soak_plugin_history.py", "tools\tests\test_windows_resource_probe.py", "-q")
+
+$steps += New-VerificationStep `
+  -Id "tools:plugin-history-soak-smoke" `
+  -Category "tools" `
+  -WorkDir "." `
+  -LockFile "plugins\history-sqlite\uv.lock" `
+  -Executable "uv" `
+  -Arguments @("run", "--frozen", "--project", "plugins\history-sqlite", "--extra", "dev", "python", "tools\soak_plugin_history.py", "--iterations", "100", "--warmup-iterations", "20", "--sample-every", "20") `
+  -Heavy $true
+
 foreach ($project in $pythonProjects) {
   $steps += New-VerificationStep `
     -Id ("python:" + $project.Name) `
