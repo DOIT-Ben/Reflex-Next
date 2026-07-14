@@ -5,12 +5,18 @@ const summary = document.querySelector("#summary");
 const tokenInput = document.querySelector("#admin-token");
 const statusFilter = document.querySelector("#status");
 const categoryFilter = document.querySelector("#category");
+const usageRequests = document.querySelector("#usage-requests");
+const usageCompletion = document.querySelector("#usage-completion");
+const usageCost = document.querySelector("#usage-cost");
+const qualityNegative = document.querySelector("#quality-negative");
+const qualityVersion = document.querySelector("#quality-version");
+const operationsStatus = document.querySelector("#operations-status");
 
 document.querySelector("#auth-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   state.token = tokenInput.value;
   tokenInput.value = "";
-  await loadFeedback();
+  await Promise.all([loadFeedback(), loadOperations()]);
 });
 
 document.querySelector("#filters").addEventListener("submit", async (event) => {
@@ -48,6 +54,37 @@ async function loadFeedback() {
   }
 }
 
+async function loadOperations() {
+  if (!state.token) return;
+  try {
+    const [usageResponse, qualityResponse] = await Promise.all([
+      request("/v1/admin/analytics/usage?days=7"),
+      request("/v1/admin/analytics/feedback")
+    ]);
+    const usage = await usageResponse.json();
+    const quality = await qualityResponse.json();
+    usageRequests.textContent = formatNumber(usage.requests);
+    usageCompletion.textContent = usage.requests
+      ? `${Math.round((usage.completed_requests / usage.requests) * 100)}%`
+      : "-";
+    usageCost.textContent = usage.pricing_configured
+      ? `$${(usage.estimated_cost_microusd / 1_000_000).toFixed(4)}`
+      : "未配置单价";
+    qualityNegative.textContent = quality.total
+      ? `${(quality.negative_rate * 100).toFixed(1)}%`
+      : "-";
+    qualityVersion.textContent = versionQualityText(quality.by_version);
+    operationsStatus.textContent = `${usage.from_date} 至 ${usage.to_date} · 价格版本 ${usage.pricing_version}`;
+  } catch (error) {
+    operationsStatus.textContent = error.message;
+    usageRequests.textContent = "-";
+    usageCompletion.textContent = "-";
+    usageCost.textContent = "-";
+    qualityNegative.textContent = "-";
+    qualityVersion.textContent = "加载失败";
+  }
+}
+
 function renderList() {
   list.replaceChildren();
   if (!state.items.length) {
@@ -60,9 +97,9 @@ function renderList() {
     button.className = `feedback-row${item.id === state.selectedId ? " active" : ""}`;
     const heading = document.createElement("strong");
     heading.append(text(item.sentiment === "negative" ? "不满意" : "满意"));
-    heading.append(text(item.status));
+    heading.append(text(statusLabel(item.status), "span"));
     button.append(heading);
-    button.append(text(`${item.category} · ${item.app_version}`, "span"));
+    button.append(text(`${categoryLabel(item.category)} · ${item.app_version}`, "span"));
     button.append(text(`${item.provider || "未记录"} · ${formatTime(item.created_at)}`, "small"));
     button.addEventListener("click", () => selectFeedback(item.id));
     list.append(button);
@@ -91,7 +128,7 @@ function renderDetail(item) {
   for (const value of ["new", "triaged", "reproduced", "planned", "fixed", "released", "rejected"]) {
     const option = document.createElement("option");
     option.value = value;
-    option.textContent = value;
+    option.textContent = statusLabel(value);
     option.selected = value === item.status;
     status.append(option);
   }
@@ -183,4 +220,33 @@ function messageElement(value, className) {
 
 function formatTime(value) {
   return new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function versionQualityText(byVersion) {
+  const versions = Object.entries(byVersion || {}).sort(([left], [right]) =>
+    right.localeCompare(left, "zh-CN", { numeric: true })
+  );
+  if (!versions.length) return "暂无反馈";
+  const [version, bucket] = versions[0];
+  return `${version} · ${(bucket.negative_rate * 100).toFixed(1)}% 负反馈`;
+}
+
+function statusLabel(value) {
+  return ({
+    new: "新反馈",
+    triaged: "已分类",
+    reproduced: "已复现",
+    planned: "已计划",
+    fixed: "已修复",
+    released: "已发布",
+    rejected: "已拒绝"
+  })[value] || value;
+}
+
+function categoryLabel(value) {
+  return ({ quality: "结果质量", bug: "Bug", performance: "性能", feature: "功能建议", other: "其他" })[value] || value;
 }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
@@ -20,6 +20,10 @@ class Database:
 
     def create_schema(self) -> None:
         Base.metadata.create_all(self.engine)
+
+    def ping(self) -> bool:
+        with self.engine.connect() as connection:
+            return connection.execute(text("SELECT 1")).scalar_one() == 1
 
     def session(self) -> Iterator[Session]:
         with self.sessions() as session:

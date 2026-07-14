@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -31,10 +32,21 @@ class CloudSettings(BaseSettings):
     provider_base_url: str = "https://api.minimaxi.com/v1/chat/completions"
     provider_model: str = "MiniMax-M2.7-highspeed"
     provider_timeout_seconds: float = Field(default=90.0, ge=5.0, le=120.0)
+    provider_pricing_version: str = Field(default="unconfigured", min_length=1, max_length=64)
+    provider_input_usd_per_million_tokens: Decimal = Field(
+        default=Decimal("0"), ge=Decimal("0"), le=Decimal("10000")
+    )
+    provider_output_usd_per_million_tokens: Decimal = Field(
+        default=Decimal("0"), ge=Decimal("0"), le=Decimal("10000")
+    )
+    provider_estimated_chars_per_token: Decimal = Field(
+        default=Decimal("2"), gt=Decimal("0"), le=Decimal("100")
+    )
     template_pack_directory: Path = Path("../../template-packs/builtin")
     max_concurrent_global: int = Field(default=32, ge=1, le=1000)
     max_concurrent_per_installation: int = Field(default=2, ge=1, le=20)
     free_ip_requests_per_hour: int = Field(default=60, ge=1, le=10000)
+    retention_cleanup_interval_seconds: int = Field(default=86_400, ge=60, le=604_800)
 
     @field_validator("environment")
     @classmethod
@@ -57,4 +69,10 @@ class CloudSettings(BaseSettings):
             raise ValueError("production secrets must be independently configured")
         if not self.provider_base_url.startswith("https://"):
             raise ValueError("production provider URL must use HTTPS")
+        if (
+            self.provider_pricing_version == "unconfigured"
+            or self.provider_input_usd_per_million_tokens <= 0
+            or self.provider_output_usd_per_million_tokens <= 0
+        ):
+            raise ValueError("production provider pricing must be configured")
         return self

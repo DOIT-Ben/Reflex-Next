@@ -42,6 +42,10 @@ class CloudOptimizer:
         self._active: dict[str, _ActiveRequest] = {}
         self._lock = Lock()
 
+    @property
+    def configured(self) -> bool:
+        return self._use_case is not None
+
     @staticmethod
     def _build_use_case(settings: CloudSettings) -> OptimizeUseCase | None:
         secret = settings.provider_api_key.get_secret_value().strip()

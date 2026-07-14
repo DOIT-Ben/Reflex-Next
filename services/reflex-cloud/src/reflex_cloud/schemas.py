@@ -130,6 +130,25 @@ class FeedbackAnalytics(BaseModel):
     by_version: dict[str, QualityBucket]
 
 
+class UsageBucket(BaseModel):
+    requests: int
+    completed_requests: int
+    input_chars: int
+    output_chars: int
+    estimated_input_tokens: int
+    estimated_output_tokens: int
+    estimated_cost_microusd: int
+
+
+class UsageAnalytics(UsageBucket):
+    from_date: str
+    to_date: str
+    pricing_configured: bool
+    pricing_version: str
+    by_day: dict[str, UsageBucket]
+    by_provider_model: dict[str, UsageBucket]
+
+
 class FeedbackUpdate(BaseModel):
     status: FeedbackStatus
     category: FeedbackCategory | None = None

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,6 +19,11 @@ from .service import CloudService, CloudServiceError
 from .storage import AttachmentError, AttachmentStore
 
 
+logger = logging.getLogger("reflex_cloud")
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+
+
 def create_app(
     settings: CloudSettings | None = None, optimizer: CloudOptimizer | None = None
 ) -> FastAPI:
@@ -27,14 +35,37 @@ def create_app(
     cloud_service = CloudService(current_settings, attachments)
     cloud_optimizer = optimizer or CloudOptimizer(current_settings)
 
-    @asynccontextmanager
-    async def lifespan(_: FastAPI):
-        database.create_schema()
+    def purge_expired_data() -> None:
         with database.sessions() as session:
             cloud_service.purge_expired_feedback(session)
             cloud_service.purge_expired_improvement_samples(session)
-        yield
-        database.close()
+
+    async def retention_loop(stop: asyncio.Event) -> None:
+        while True:
+            try:
+                await asyncio.wait_for(
+                    stop.wait(),
+                    timeout=current_settings.retention_cleanup_interval_seconds,
+                )
+                return
+            except TimeoutError:
+                try:
+                    purge_expired_data()
+                except Exception:
+                    logger.exception("retention_cleanup_failed")
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        database.create_schema()
+        purge_expired_data()
+        retention_stop = asyncio.Event()
+        retention_task = asyncio.create_task(retention_loop(retention_stop))
+        try:
+            yield
+        finally:
+            retention_stop.set()
+            await retention_task
+            database.close()
 
     app = FastAPI(
         title="Reflex Cloud",
@@ -69,8 +100,26 @@ def create_app(
         return response
 
     @app.get("/health")
+    @app.get("/health/live")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "reflex-cloud"}
+
+    @app.get("/health/ready", response_model=None)
+    def ready() -> JSONResponse:
+        try:
+            database_ready = database.ping()
+        except Exception:
+            database_ready = False
+        checks = {
+            "database": "ok" if database_ready else "unavailable",
+            "provider": "configured" if cloud_optimizer.configured else "unconfigured",
+        }
+        status_code = 200 if database_ready and cloud_optimizer.configured else 503
+        status = "ready" if status_code == 200 else "not_ready"
+        return JSONResponse(
+            status_code=status_code,
+            content={"status": status, "checks": checks},
+        )
 
     @app.get("/admin", include_in_schema=False)
     def admin_page() -> FileResponse:

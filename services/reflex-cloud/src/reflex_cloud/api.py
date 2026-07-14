@@ -26,6 +26,7 @@ from .schemas import (
     OptimizeCancelRequest,
     OptimizeCancelResult,
     QuotaView,
+    UsageAnalytics,
 )
 from .security import secure_equals
 from .service import CloudService, CloudServiceError
@@ -150,19 +151,25 @@ def optimize(
                 yield f"data: {json.dumps(envelope, ensure_ascii=False, separators=(',', ':'))}\n\n"
         finally:
             optimizer.release(payload.request_id)
-            if output_chars:
-                with request.app.state.database.sessions() as usage_session:
+            with request.app.state.database.sessions() as usage_session:
+                if output_chars:
                     service.record_output_usage(
                         usage_session, installation.id, output_chars=output_chars
                     )
-                    if completed:
-                        service.store_improvement_sample(
-                            usage_session,
-                            installation.id,
-                            payload,
-                            output_text="".join(output_chunks),
-                            scene=final_scene,
-                        )
+                service.record_provider_usage(
+                    usage_session,
+                    input_chars=len(payload.text),
+                    output_chars=output_chars,
+                    completed=completed,
+                )
+                if output_chars and completed:
+                    service.store_improvement_sample(
+                        usage_session,
+                        installation.id,
+                        payload,
+                        output_text="".join(output_chunks),
+                        scene=final_scene,
+                    )
 
     return StreamingResponse(
         event_stream(),
@@ -230,6 +237,16 @@ def get_feedback_analytics(
     service: ServiceDependency,
 ) -> FeedbackAnalytics:
     return service.feedback_analytics(session)
+
+
+@admin_router.get("/analytics/usage", response_model=UsageAnalytics)
+def get_usage_analytics(
+    _: AdminDependency,
+    session: SessionDependency,
+    service: ServiceDependency,
+    days: int = Query(default=7, ge=1, le=90),
+) -> UsageAnalytics:
+    return service.usage_analytics(session, days=days)
 
 
 @admin_router.get("/feedback/{feedback_id}", response_model=FeedbackDetail)

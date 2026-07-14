@@ -22,6 +22,9 @@ def test_production_rejects_default_or_short_secrets(tmp_path):
         admin_token=SecretStr("a" * 32),
         token_pepper=SecretStr("p" * 32),
         provider_api_key=SecretStr("k" * 32),
+        provider_pricing_version="fixture-pricing-1",
+        provider_input_usd_per_million_tokens=1,
+        provider_output_usd_per_million_tokens=2,
     )
     assert settings.environment == "production"
 

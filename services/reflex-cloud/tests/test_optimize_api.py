@@ -28,6 +28,9 @@ def _client(
         free_requests_per_day=request_limit,
         free_ip_requests_per_hour=ip_limit,
         provider_model="MiniMax-M2.7-highspeed",
+        provider_pricing_version="minimax-2026-07-14",
+        provider_input_usd_per_million_tokens=1.0,
+        provider_output_usd_per_million_tokens=2.0,
     )
     use_case = OptimizeUseCase(
         scene_detector=FakeSceneDetector(),
@@ -83,6 +86,37 @@ def test_optimize_streams_core_events_and_settles_quota(tmp_path) -> None:
         assert quota["requests_used"] == 1
         assert quota["input_chars_used"] == len(text)
         assert quota["output_chars_used"] == len("优化结果")
+    finally:
+        client_context.close()
+
+
+def test_optimize_records_anonymous_cost_analytics_without_request_text(tmp_path) -> None:
+    client_context = _client(tmp_path)
+    client, _ = next(client_context)
+    try:
+        _, headers = _identity(client)
+        response = client.post(
+            "/v1/optimize",
+            headers=headers,
+            json=_payload("request-cost-1", "请优化这段文字"),
+        )
+
+        assert response.status_code == 200
+        analytics = client.get(
+            "/v1/admin/analytics/usage?days=7",
+            headers={"Authorization": f"Bearer {'a' * 32}"},
+        )
+
+        assert analytics.status_code == 200
+        body = analytics.json()
+        assert body["pricing_configured"] is True
+        assert body["requests"] == 1
+        assert body["completed_requests"] == 1
+        assert body["input_chars"] == len("请优化这段文字")
+        assert body["output_chars"] == len("优化结果")
+        assert body["estimated_cost_microusd"] == 8
+        assert "请优化这段文字" not in analytics.text
+        assert "优化结果" not in analytics.text
     finally:
         client_context.close()
 

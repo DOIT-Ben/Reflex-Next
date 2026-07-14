@@ -59,6 +59,33 @@ class DailyUsage(Base):
     output_chars: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class DailyCostAggregate(Base):
+    __tablename__ = "daily_cost_aggregates"
+    __table_args__ = (
+        UniqueConstraint(
+            "usage_date",
+            "provider",
+            "model",
+            "pricing_version",
+            name="daily_cost_provider_model_pricing_uq",
+        ),
+        Index("daily_cost_created_idx", "usage_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    usage_date: Mapped[date] = mapped_column(Date, index=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(128))
+    pricing_version: Mapped[str] = mapped_column(String(64))
+    request_count: Mapped[int] = mapped_column(Integer, default=0)
+    completed_count: Mapped[int] = mapped_column(Integer, default=0)
+    input_chars: Mapped[int] = mapped_column(Integer, default=0)
+    output_chars: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_cost_microusd: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class HourlyIpUsage(Base):
     __tablename__ = "hourly_ip_usage"
     __table_args__ = (

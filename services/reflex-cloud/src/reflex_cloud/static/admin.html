@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Reflex 反馈管理</title>
+    <link rel="icon" href="/admin-static/favicon.ico" />
     <link rel="stylesheet" href="/admin-static/admin.css" />
   </head>
   <body>
@@ -18,6 +19,29 @@
         <button type="submit">连接</button>
       </form>
     </header>
+    <section class="operations" aria-label="近七天运营概览" aria-live="polite">
+      <div>
+        <span>云端请求</span>
+        <strong id="usage-requests">-</strong>
+      </div>
+      <div>
+        <span>完成率</span>
+        <strong id="usage-completion">-</strong>
+      </div>
+      <div>
+        <span>预估成本</span>
+        <strong id="usage-cost">-</strong>
+      </div>
+      <div>
+        <span>负反馈率</span>
+        <strong id="quality-negative">-</strong>
+      </div>
+      <div class="operations-wide">
+        <span>版本效果</span>
+        <strong id="quality-version">等待连接</strong>
+      </div>
+      <small id="operations-status">输入管理令牌后加载近 7 天数据</small>
+    </section>
     <main>
       <aside>
         <form id="filters">

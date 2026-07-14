@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
+from math import ceil
 from threading import Lock
 from uuid import uuid4
 
@@ -10,6 +12,7 @@ from sqlalchemy.orm import Session
 from .config import CloudSettings
 from .models import (
     ConsentRecord,
+    DailyCostAggregate,
     DailyUsage,
     FeedbackItem,
     HourlyIpUsage,
@@ -25,6 +28,8 @@ from .schemas import (
     FeedbackUpdate,
     QualityBucket,
     QuotaView,
+    UsageAnalytics,
+    UsageBucket,
 )
 from .security import new_installation_token, redact_text, token_hash
 from .storage import AttachmentStore
@@ -192,6 +197,120 @@ class CloudService:
                 raise CloudServiceError("quota_unavailable", 409)
             usage.output_chars += output_chars
             session.commit()
+
+    def record_provider_usage(
+        self,
+        session: Session,
+        *,
+        input_chars: int,
+        output_chars: int,
+        completed: bool,
+    ) -> None:
+        if input_chars < 0 or output_chars < 0:
+            raise CloudServiceError("usage_chars_invalid", 400)
+        input_tokens = self._estimate_tokens(input_chars)
+        output_tokens = self._estimate_tokens(output_chars)
+        estimated_cost = self._estimate_cost(input_tokens, output_tokens)
+        today = date.today()
+        with self._quota_lock:
+            aggregate = session.scalar(
+                select(DailyCostAggregate)
+                .where(
+                    DailyCostAggregate.usage_date == today,
+                    DailyCostAggregate.provider == "minimax",
+                    DailyCostAggregate.model == self.settings.provider_model,
+                    DailyCostAggregate.pricing_version
+                    == self.settings.provider_pricing_version,
+                )
+                .with_for_update()
+            )
+            if aggregate is None:
+                aggregate = DailyCostAggregate(
+                    usage_date=today,
+                    provider="minimax",
+                    model=self.settings.provider_model,
+                    pricing_version=self.settings.provider_pricing_version,
+                )
+                session.add(aggregate)
+                session.flush()
+            aggregate.request_count += 1
+            aggregate.completed_count += int(completed)
+            aggregate.input_chars += input_chars
+            aggregate.output_chars += output_chars
+            aggregate.estimated_input_tokens += input_tokens
+            aggregate.estimated_output_tokens += output_tokens
+            aggregate.estimated_cost_microusd += estimated_cost
+            session.commit()
+
+    def usage_analytics(self, session: Session, *, days: int) -> UsageAnalytics:
+        today = date.today()
+        start = today - timedelta(days=days - 1)
+        rows = list(
+            session.scalars(
+                select(DailyCostAggregate)
+                .where(DailyCostAggregate.usage_date >= start)
+                .order_by(DailyCostAggregate.usage_date.asc())
+            )
+        )
+
+        def empty() -> dict[str, int]:
+            return {
+                "requests": 0,
+                "completed_requests": 0,
+                "input_chars": 0,
+                "output_chars": 0,
+                "estimated_input_tokens": 0,
+                "estimated_output_tokens": 0,
+                "estimated_cost_microusd": 0,
+            }
+
+        total = empty()
+        by_day: dict[str, dict[str, int]] = {}
+        by_provider_model: dict[str, dict[str, int]] = {}
+        for row in rows:
+            values = {
+                "requests": row.request_count,
+                "completed_requests": row.completed_count,
+                "input_chars": row.input_chars,
+                "output_chars": row.output_chars,
+                "estimated_input_tokens": row.estimated_input_tokens,
+                "estimated_output_tokens": row.estimated_output_tokens,
+                "estimated_cost_microusd": row.estimated_cost_microusd,
+            }
+            _add_usage(total, values)
+            _add_usage(by_day.setdefault(row.usage_date.isoformat(), empty()), values)
+            _add_usage(
+                by_provider_model.setdefault(f"{row.provider}/{row.model}", empty()),
+                values,
+            )
+
+        return UsageAnalytics(
+            **total,
+            from_date=start.isoformat(),
+            to_date=today.isoformat(),
+            pricing_configured=(
+                self.settings.provider_pricing_version != "unconfigured"
+                and self.settings.provider_input_usd_per_million_tokens > 0
+                and self.settings.provider_output_usd_per_million_tokens > 0
+            ),
+            pricing_version=self.settings.provider_pricing_version,
+            by_day={key: UsageBucket(**value) for key, value in by_day.items()},
+            by_provider_model={
+                key: UsageBucket(**value) for key, value in by_provider_model.items()
+            },
+        )
+
+    def _estimate_tokens(self, chars: int) -> int:
+        if chars <= 0:
+            return 0
+        return ceil(chars / float(self.settings.provider_estimated_chars_per_token))
+
+    def _estimate_cost(self, input_tokens: int, output_tokens: int) -> int:
+        total = (
+            Decimal(input_tokens) * self.settings.provider_input_usd_per_million_tokens
+            + Decimal(output_tokens) * self.settings.provider_output_usd_per_million_tokens
+        )
+        return int(total.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
     def store_improvement_sample(
         self,
@@ -387,3 +506,8 @@ class CloudService:
             session.delete(item)
         session.commit()
         return len(expired)
+
+
+def _add_usage(target: dict[str, int], values: dict[str, int]) -> None:
+    for key, value in values.items():
+        target[key] += value

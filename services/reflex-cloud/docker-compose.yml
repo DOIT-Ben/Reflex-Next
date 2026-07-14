@@ -15,9 +15,14 @@ services:
       retries: 12
 
   api:
+    image: ${REFLEX_CLOUD_IMAGE:-reflex-cloud:latest}
     build:
-      context: ../..
-      dockerfile: services/reflex-cloud/Dockerfile
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        reflex_core: ../../packages/reflex-core
+        provider_minimax: ../../plugins/provider-minimax
+        template_pack: ../../template-packs/builtin
     restart: unless-stopped
     environment:
       REFLEX_CLOUD_ENVIRONMENT: production
@@ -29,14 +34,32 @@ services:
       REFLEX_CLOUD_PROVIDER_API_KEY: ${REFLEX_CLOUD_PROVIDER_API_KEY:?set REFLEX_CLOUD_PROVIDER_API_KEY}
       REFLEX_CLOUD_PROVIDER_BASE_URL: ${REFLEX_CLOUD_PROVIDER_BASE_URL:-https://api.minimaxi.com/v1/chat/completions}
       REFLEX_CLOUD_PROVIDER_MODEL: ${REFLEX_CLOUD_PROVIDER_MODEL:-MiniMax-M2.7-highspeed}
+      REFLEX_CLOUD_PROVIDER_PRICING_VERSION: ${REFLEX_CLOUD_PROVIDER_PRICING_VERSION:?set REFLEX_CLOUD_PROVIDER_PRICING_VERSION}
+      REFLEX_CLOUD_PROVIDER_INPUT_USD_PER_MILLION_TOKENS: ${REFLEX_CLOUD_PROVIDER_INPUT_USD_PER_MILLION_TOKENS:?set REFLEX_CLOUD_PROVIDER_INPUT_USD_PER_MILLION_TOKENS}
+      REFLEX_CLOUD_PROVIDER_OUTPUT_USD_PER_MILLION_TOKENS: ${REFLEX_CLOUD_PROVIDER_OUTPUT_USD_PER_MILLION_TOKENS:?set REFLEX_CLOUD_PROVIDER_OUTPUT_USD_PER_MILLION_TOKENS}
+      REFLEX_CLOUD_PROVIDER_ESTIMATED_CHARS_PER_TOKEN: ${REFLEX_CLOUD_PROVIDER_ESTIMATED_CHARS_PER_TOKEN:-2}
       REFLEX_CLOUD_TEMPLATE_PACK_DIRECTORY: /app/template-packs/builtin
       REFLEX_CLOUD_MAX_CONCURRENT_GLOBAL: ${REFLEX_CLOUD_MAX_CONCURRENT_GLOBAL:-32}
       REFLEX_CLOUD_MAX_CONCURRENT_PER_INSTALLATION: ${REFLEX_CLOUD_MAX_CONCURRENT_PER_INSTALLATION:-2}
       REFLEX_CLOUD_FREE_IP_REQUESTS_PER_HOUR: ${REFLEX_CLOUD_FREE_IP_REQUESTS_PER_HOUR:-60}
+      REFLEX_CLOUD_RETENTION_CLEANUP_INTERVAL_SECONDS: ${REFLEX_CLOUD_RETENTION_CLEANUP_INTERVAL_SECONDS:-86400}
     ports:
-      - "8787:8787"
+      - "${REFLEX_CLOUD_BIND_ADDRESS:-127.0.0.1}:${REFLEX_CLOUD_PORT:-8787}:8787"
     volumes:
       - reflex-cloud-uploads:/app/data/uploads
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       postgres:
         condition: service_healthy
