@@ -150,6 +150,12 @@ This fixture discusses password, credentials, and private keys without containin
     (Join-Path $release "app\runtime.bin"),
     ([byte[]](0, 1, 2, 0) + [System.Text.Encoding]::ASCII.GetBytes("token=" + $binaryToken))
   )
+  [System.IO.File]::WriteAllBytes(
+    (Join-Path $release "app\compiled.bin"),
+    ([System.Text.Encoding]::ASCII.GetBytes("https://user:Ab3!") +
+      [byte[]](0) +
+      [System.Text.Encoding]::ASCII.GetBytes("Cd4Ef5Gh6Jk7@"))
+  )
 
   $releaseResult = Invoke-Scan -RepositoryRoot $repository -ReleasePath @($release) -SkipTrackedFiles
   $releaseOutput = $releaseResult.Output -join "`n"
@@ -157,6 +163,7 @@ This fixture discusses password, credentials, and private keys without containin
   Assert-True ($releaseOutput -match 'settings\.json:1 \| rule=authorization-token') "Release content findings must identify location and rule."
   Assert-True ($releaseOutput -match '\.env\.production \| rule=credential-file') "Credential filenames must be blocked even when their values are placeholders."
   Assert-True ($releaseOutput -match 'runtime\.bin \| rule=github-token') "Binary release files must be scanned for embedded high-confidence tokens."
+  Assert-True ($releaseOutput -notmatch 'compiled\.bin \| rule=credential-url') "Binary control bytes must delimit printable credential candidates."
   Assert-True ($releaseOutput -notmatch [regex]::Escape($authorizationToken)) "Authorization tokens must never be echoed."
   Assert-True ($releaseOutput -notmatch [regex]::Escape($binaryToken)) "Binary tokens must never be echoed."
   Assert-True (($releaseResult.Output | Where-Object { $_ -notmatch '^.+(?::\d+)? \| rule=[a-z0-9-]+$' }).Count -eq 0) "Release findings must remain machine-readable and redacted."

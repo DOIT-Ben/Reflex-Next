@@ -26,6 +26,18 @@ if (-not (Test-Path -LiteralPath $repository -PathType Container)) {
 
 $regexOptions = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor
   [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+$binaryStringRegex = New-Object System.Text.RegularExpressions.Regex(
+  '[\x20-\x7E]+',
+  [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+)
+$binarySeparatorRegex = New-Object System.Text.RegularExpressions.Regex(
+  '[^\x20-\x7E]+',
+  [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+)
+$binaryTrailingStringRegex = New-Object System.Text.RegularExpressions.Regex(
+  '[\x20-\x7E]+$',
+  [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+)
 
 function New-SecretRule {
   param(
@@ -251,14 +263,19 @@ function Scan-BinaryFile {
   try {
     $buffer = New-Object byte[] 65536
     $carry = ""
+    $singleByteEncoding = [System.Text.Encoding]::GetEncoding(28591)
     while (($count = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-      $chunk = $carry + [System.Text.Encoding]::ASCII.GetString($buffer, 0, $count)
-      Invoke-ContentRules -Content $chunk -DisplayPath $DisplayPath -LineNumber 0
-      if ($chunk.Length -gt 512) {
-        $carry = $chunk.Substring($chunk.Length - 512)
-      }
-      else {
-        $carry = $chunk
+      $chunk = $carry + $singleByteEncoding.GetString($buffer, 0, $count)
+      $scanChunk = $script:binarySeparatorRegex.Replace($chunk, "`n")
+      Invoke-ContentRules -Content $scanChunk -DisplayPath $DisplayPath -LineNumber 0
+
+      $carry = ""
+      $trailingRun = $script:binaryTrailingStringRegex.Match($chunk)
+      if ($trailingRun.Success -and ($trailingRun.Index + $trailingRun.Length) -eq $chunk.Length) {
+        $carry = $trailingRun.Value
+        if ($carry.Length -gt 512) {
+          $carry = $carry.Substring($carry.Length - 512)
+        }
       }
     }
   }
