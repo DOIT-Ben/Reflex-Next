@@ -147,6 +147,18 @@ class UsageAnalytics(UsageBucket):
     pricing_version: str
     by_day: dict[str, UsageBucket]
     by_provider_model: dict[str, UsageBucket]
+    daily_budget_date: str
+    daily_request_limit: int | None
+    daily_requests_used: int
+    daily_requests_remaining: int | None
+    daily_request_usage_ratio: float | None
+    daily_cost_budget_microusd: int | None
+    daily_cost_used_microusd: int
+    daily_cost_reserved_microusd: int
+    daily_cost_committed_microusd: int
+    daily_cost_remaining_microusd: int | None
+    daily_cost_usage_ratio: float | None
+    budget_exceeded: bool
 
 
 class FeedbackUpdate(BaseModel):

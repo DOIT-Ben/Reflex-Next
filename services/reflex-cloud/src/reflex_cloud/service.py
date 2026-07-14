@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from math import ceil
 from threading import Lock
 from uuid import uuid4
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import CloudSettings
 from .models import (
+    BudgetReservation,
     ConsentRecord,
+    DailyBudgetLedger,
     DailyCostAggregate,
     DailyUsage,
     FeedbackItem,
@@ -198,6 +201,120 @@ class CloudService:
             usage.output_chars += output_chars
             session.commit()
 
+    def reserve_budget(self, session: Session, *, input_chars: int) -> str | None:
+        if not self._budget_enabled():
+            return None
+        if input_chars < 0:
+            raise CloudServiceError("budget_input_invalid", 400)
+        if self.settings.global_daily_cost_budget_microusd and not self._pricing_configured():
+            raise CloudServiceError("budget_pricing_unconfigured", 503)
+
+        now = utc_now()
+        today = date.today()
+        estimated_cost = self.estimate_provider_cost(
+            input_chars=input_chars,
+            output_chars=self.settings.budget_max_output_chars_per_request,
+        )
+        with self._quota_lock:
+            ledger = self._get_or_create_budget_ledger(session, today)
+            self._expire_budget_reservations(session, ledger, now)
+
+            request_limit = self.settings.global_daily_request_limit
+            if request_limit and ledger.admitted_requests + 1 > request_limit:
+                session.rollback()
+                raise CloudServiceError("global_request_budget_exhausted", 429)
+
+            cost_budget = self.settings.global_daily_cost_budget_microusd
+            committed_cost = ledger.settled_cost_microusd + ledger.reserved_cost_microusd
+            if cost_budget and committed_cost + estimated_cost > cost_budget:
+                session.rollback()
+                raise CloudServiceError("global_cost_budget_exhausted", 429)
+
+            reservation_id = str(uuid4())
+            ledger.admitted_requests += 1
+            ledger.reserved_cost_microusd += estimated_cost
+            session.add(
+                BudgetReservation(
+                    id=reservation_id,
+                    usage_date=today,
+                    estimated_cost_microusd=estimated_cost,
+                    expires_at=now
+                    + timedelta(seconds=self.settings.budget_reservation_ttl_seconds),
+                )
+            )
+            session.commit()
+            return reservation_id
+
+    def release_budget(self, session: Session, reservation_id: str | None) -> bool:
+        if not reservation_id:
+            return False
+        reservation = session.get(BudgetReservation, reservation_id)
+        if reservation is None or reservation.status != "reserved":
+            session.rollback()
+            return False
+        usage_date = reservation.usage_date
+        session.rollback()
+        with self._quota_lock:
+            ledger = self._get_or_create_budget_ledger(session, usage_date)
+            reservation = session.scalar(
+                select(BudgetReservation)
+                .where(BudgetReservation.id == reservation_id)
+                .with_for_update()
+            )
+            if reservation is None or reservation.status != "reserved":
+                session.rollback()
+                return False
+            ledger.admitted_requests = max(0, ledger.admitted_requests - 1)
+            ledger.reserved_cost_microusd = max(
+                0, ledger.reserved_cost_microusd - reservation.estimated_cost_microusd
+            )
+            reservation.status = "released"
+            session.commit()
+            return True
+
+    def settle_budget(
+        self,
+        session: Session,
+        reservation_id: str | None,
+        *,
+        actual_cost_microusd: int,
+    ) -> bool:
+        if not reservation_id:
+            return False
+        if actual_cost_microusd < 0:
+            raise CloudServiceError("budget_cost_invalid", 400)
+        reservation = session.get(BudgetReservation, reservation_id)
+        if reservation is None or reservation.status != "reserved":
+            session.rollback()
+            return False
+        usage_date = reservation.usage_date
+        session.rollback()
+        with self._quota_lock:
+            ledger = self._get_or_create_budget_ledger(session, usage_date)
+            reservation = session.scalar(
+                select(BudgetReservation)
+                .where(BudgetReservation.id == reservation_id)
+                .with_for_update()
+            )
+            if reservation is None or reservation.status != "reserved":
+                session.rollback()
+                return False
+            ledger.reserved_cost_microusd = max(
+                0, ledger.reserved_cost_microusd - reservation.estimated_cost_microusd
+            )
+            ledger.settled_cost_microusd += actual_cost_microusd
+            reservation.settled_cost_microusd = actual_cost_microusd
+            reservation.status = "settled"
+            session.commit()
+            return True
+
+    def estimate_provider_cost(self, *, input_chars: int, output_chars: int) -> int:
+        if input_chars < 0 or output_chars < 0:
+            raise CloudServiceError("usage_chars_invalid", 400)
+        return self._estimate_cost(
+            self._estimate_tokens(input_chars), self._estimate_tokens(output_chars)
+        )
+
     def record_provider_usage(
         self,
         session: Session,
@@ -210,7 +327,9 @@ class CloudService:
             raise CloudServiceError("usage_chars_invalid", 400)
         input_tokens = self._estimate_tokens(input_chars)
         output_tokens = self._estimate_tokens(output_chars)
-        estimated_cost = self._estimate_cost(input_tokens, output_tokens)
+        estimated_cost = self.estimate_provider_cost(
+            input_chars=input_chars, output_chars=output_chars
+        )
         today = date.today()
         with self._quota_lock:
             aggregate = session.scalar(
@@ -241,6 +360,129 @@ class CloudService:
             aggregate.estimated_output_tokens += output_tokens
             aggregate.estimated_cost_microusd += estimated_cost
             session.commit()
+
+    def _budget_enabled(self) -> bool:
+        return bool(
+            self.settings.global_daily_request_limit
+            or self.settings.global_daily_cost_budget_microusd
+        )
+
+    def _pricing_configured(self) -> bool:
+        return bool(
+            self.settings.provider_pricing_version != "unconfigured"
+            and self.settings.provider_input_usd_per_million_tokens > 0
+            and self.settings.provider_output_usd_per_million_tokens > 0
+        )
+
+    def _get_or_create_budget_ledger(
+        self, session: Session, usage_date: date
+    ) -> DailyBudgetLedger:
+        query = (
+            select(DailyBudgetLedger)
+            .where(DailyBudgetLedger.usage_date == usage_date)
+            .with_for_update()
+        )
+        ledger = session.scalar(query)
+        if ledger is not None:
+            return ledger
+
+        aggregate_values = session.execute(
+            select(
+                func.coalesce(func.sum(DailyCostAggregate.request_count), 0),
+                func.coalesce(func.sum(DailyCostAggregate.estimated_cost_microusd), 0),
+            ).where(DailyCostAggregate.usage_date == usage_date)
+        ).one()
+        candidate = DailyBudgetLedger(
+            usage_date=usage_date,
+            admitted_requests=int(aggregate_values[0] or 0),
+            settled_cost_microusd=int(aggregate_values[1] or 0),
+        )
+        try:
+            with session.begin_nested():
+                session.add(candidate)
+                session.flush()
+        except IntegrityError:
+            pass
+        else:
+            return candidate
+
+        ledger = session.scalar(query)
+        if ledger is None:
+            raise CloudServiceError("budget_unavailable", 503)
+        return ledger
+
+    def _expire_budget_reservations(
+        self, session: Session, ledger: DailyBudgetLedger, now: datetime
+    ) -> int:
+        expired = list(
+            session.scalars(
+                select(BudgetReservation)
+                .where(
+                    BudgetReservation.usage_date == ledger.usage_date,
+                    BudgetReservation.status == "reserved",
+                    BudgetReservation.expires_at <= now,
+                )
+                .with_for_update()
+            )
+        )
+        for reservation in expired:
+            ledger.reserved_cost_microusd = max(
+                0, ledger.reserved_cost_microusd - reservation.estimated_cost_microusd
+            )
+            reservation.status = "expired"
+        return len(expired)
+
+    def _budget_snapshot(self, session: Session) -> dict[str, object]:
+        today = date.today()
+        ledger = session.get(DailyBudgetLedger, today)
+        if ledger is None:
+            aggregate_values = session.execute(
+                select(
+                    func.coalesce(func.sum(DailyCostAggregate.request_count), 0),
+                    func.coalesce(func.sum(DailyCostAggregate.estimated_cost_microusd), 0),
+                ).where(DailyCostAggregate.usage_date == today)
+            ).one()
+            requests_used = int(aggregate_values[0] or 0)
+            cost_used = int(aggregate_values[1] or 0)
+            cost_reserved = 0
+        else:
+            requests_used = ledger.admitted_requests
+            cost_used = ledger.settled_cost_microusd
+            cost_reserved = ledger.reserved_cost_microusd
+
+        request_limit = self.settings.global_daily_request_limit or None
+        cost_budget = self.settings.global_daily_cost_budget_microusd or None
+        committed_cost = cost_used + cost_reserved
+        request_remaining = (
+            max(0, request_limit - requests_used) if request_limit is not None else None
+        )
+        cost_remaining = (
+            max(0, cost_budget - committed_cost) if cost_budget is not None else None
+        )
+        request_ratio = (
+            round(requests_used / request_limit, 4) if request_limit is not None else None
+        )
+        cost_ratio = (
+            round(committed_cost / cost_budget, 4) if cost_budget is not None else None
+        )
+        exceeded = bool(
+            (request_limit is not None and requests_used > request_limit)
+            or (cost_budget is not None and committed_cost > cost_budget)
+        )
+        return {
+            "daily_budget_date": today.isoformat(),
+            "daily_request_limit": request_limit,
+            "daily_requests_used": requests_used,
+            "daily_requests_remaining": request_remaining,
+            "daily_request_usage_ratio": request_ratio,
+            "daily_cost_budget_microusd": cost_budget,
+            "daily_cost_used_microusd": cost_used,
+            "daily_cost_reserved_microusd": cost_reserved,
+            "daily_cost_committed_microusd": committed_cost,
+            "daily_cost_remaining_microusd": cost_remaining,
+            "daily_cost_usage_ratio": cost_ratio,
+            "budget_exceeded": exceeded,
+        }
 
     def usage_analytics(self, session: Session, *, days: int) -> UsageAnalytics:
         today = date.today()
@@ -286,13 +528,10 @@ class CloudService:
 
         return UsageAnalytics(
             **total,
+            **self._budget_snapshot(session),
             from_date=start.isoformat(),
             to_date=today.isoformat(),
-            pricing_configured=(
-                self.settings.provider_pricing_version != "unconfigured"
-                and self.settings.provider_input_usd_per_million_tokens > 0
-                and self.settings.provider_output_usd_per_million_tokens > 0
-            ),
+            pricing_configured=self._pricing_configured(),
             pricing_version=self.settings.provider_pricing_version,
             by_day={key: UsageBucket(**value) for key, value in by_day.items()},
             by_provider_model={
@@ -483,6 +722,60 @@ class CloudService:
         session.commit()
         for path in screenshot_paths:
             self.attachments.delete(path)
+
+    def purge_expired_budget_reservations(self, session: Session) -> int:
+        now = utc_now()
+        with self._quota_lock:
+            usage_dates = list(
+                session.scalars(
+                    select(BudgetReservation.usage_date)
+                    .where(
+                        BudgetReservation.status == "reserved",
+                        BudgetReservation.expires_at <= now,
+                    )
+                    .distinct()
+                )
+            )
+            expired_count = 0
+            for usage_date in sorted(usage_dates):
+                ledger = session.scalar(
+                    select(DailyBudgetLedger)
+                    .where(DailyBudgetLedger.usage_date == usage_date)
+                    .with_for_update()
+                )
+                rows = list(
+                    session.scalars(
+                        select(BudgetReservation)
+                        .where(
+                            BudgetReservation.usage_date == usage_date,
+                            BudgetReservation.status == "reserved",
+                            BudgetReservation.expires_at <= now,
+                        )
+                        .with_for_update()
+                    )
+                )
+                for reservation in rows:
+                    if ledger is not None:
+                        ledger.reserved_cost_microusd = max(
+                            0,
+                            ledger.reserved_cost_microusd
+                            - reservation.estimated_cost_microusd,
+                        )
+                    reservation.status = "expired"
+                expired_count += len(rows)
+            terminal_cutoff = now - timedelta(days=2)
+            terminal_rows = list(
+                session.scalars(
+                    select(BudgetReservation).where(
+                        BudgetReservation.status != "reserved",
+                        BudgetReservation.created_at <= terminal_cutoff,
+                    )
+                )
+            )
+            for reservation in terminal_rows:
+                session.delete(reservation)
+            session.commit()
+            return expired_count + len(terminal_rows)
 
     def purge_expired_feedback(self, session: Session) -> int:
         cutoff = utc_now() - timedelta(days=self.settings.retention_days)

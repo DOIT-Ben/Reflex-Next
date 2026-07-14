@@ -82,7 +82,8 @@ $placeholderMarkers = @(
   "insert_key",
   "sk-test-",
   "test-token",
-  "test_token"
+  "test_token",
+  '${'
 )
 
 function Test-PlaceholderValue {

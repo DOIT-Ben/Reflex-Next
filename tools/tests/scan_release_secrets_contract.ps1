@@ -103,8 +103,9 @@ api_key = sk-test-1234567890abcdef
 This fixture discusses password, credentials, and private keys without containing one.
 "@
   Write-Utf8File -Path (Join-Path $repository ".env.example") -Content "MINIMAX_API_KEY=replace-me"
+  Write-Utf8File -Path (Join-Path $repository "compose.yml") -Content 'MINIMAX_API_KEY: ${MINIMAX_API_KEY:?set MINIMAX_API_KEY}'
   Copy-Item -LiteralPath $scanScript -Destination (Join-Path $repository "scan_release_secrets.ps1")
-  Add-TestFiles -RepositoryRoot $repository -Paths @("safe.txt", ".env.example", "scan_release_secrets.ps1")
+  Add-TestFiles -RepositoryRoot $repository -Paths @("safe.txt", ".env.example", "compose.yml", "scan_release_secrets.ps1")
 
   $clean = Invoke-Scan -RepositoryRoot $repository
   Assert-True ($clean.ExitCode -eq 0) "Placeholders and ordinary security words must not fail the scan."

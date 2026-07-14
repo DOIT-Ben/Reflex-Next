@@ -24,6 +24,33 @@ mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
 
 
+_ERROR_MESSAGES = {
+    "request_invalid": "请求内容无效，请检查后重试。",
+    "installation_unauthorized": "安装身份已失效，请重新打开应用。",
+    "quota_exhausted": "今日免费额度已用完，可明天再试或使用自备 Provider。",
+    "quota_input_too_large": "输入内容过长，请缩短后重试。",
+    "ip_rate_limited": "当前网络请求过于频繁，请稍后再试。",
+    "global_request_budget_exhausted": "今日云端请求额度已用完，请明天再试或切换到自备 Provider。",
+    "global_cost_budget_exhausted": "今日云端服务预算已用完，请稍后再试或切换到自备 Provider。",
+    "budget_pricing_unconfigured": "云端计费配置暂不可用，请稍后再试。",
+    "budget_unavailable": "云端预算服务暂时不可用，请稍后再试。",
+    "cloud_provider_unconfigured": "云端 Provider 尚未配置，请改用自备 Provider 或联系管理员。",
+    "cloud_capacity_reached": "云端当前繁忙，请稍后重试。",
+    "installation_concurrency_reached": "当前安装已有请求处理中，请等待完成。",
+    "optimize_request_conflict": "该请求正在处理中，请勿重复提交。",
+    "feedback_rate_limited": "反馈提交过于频繁，请稍后再试。",
+    "admin_unauthorized": "管理身份验证失败。",
+}
+
+
+def _error_response(code: str, status_code: int) -> JSONResponse:
+    error = {
+        "code": code,
+        "message": _ERROR_MESSAGES.get(code, "请求未能处理，请稍后重试。"),
+    }
+    return JSONResponse(status_code=status_code, content={"error": error})
+
+
 def create_app(
     settings: CloudSettings | None = None, optimizer: CloudOptimizer | None = None
 ) -> FastAPI:
@@ -37,6 +64,7 @@ def create_app(
 
     def purge_expired_data() -> None:
         with database.sessions() as session:
+            cloud_service.purge_expired_budget_reservations(session)
             cloud_service.purge_expired_feedback(session)
             cloud_service.purge_expired_improvement_samples(session)
 
@@ -110,11 +138,23 @@ def create_app(
             database_ready = database.ping()
         except Exception:
             database_ready = False
+        budget_configured = bool(
+            current_settings.global_daily_request_limit
+            and current_settings.global_daily_cost_budget_microusd
+        )
         checks = {
             "database": "ok" if database_ready else "unavailable",
             "provider": "configured" if cloud_optimizer.configured else "unconfigured",
+            "budget": "configured" if budget_configured else "disabled",
         }
-        status_code = 200 if database_ready and cloud_optimizer.configured else 503
+        production_budget_ready = (
+            current_settings.environment != "production" or budget_configured
+        )
+        status_code = (
+            200
+            if database_ready and cloud_optimizer.configured and production_budget_ready
+            else 503
+        )
         status = "ready" if status_code == 200 else "not_ready"
         return JSONResponse(
             status_code=status_code,
@@ -127,18 +167,18 @@ def create_app(
 
     @app.exception_handler(CloudServiceError)
     async def cloud_service_error(_: Request, error: CloudServiceError) -> JSONResponse:
-        return JSONResponse(status_code=error.status_code, content={"error": {"code": error.code}})
+        return _error_response(error.code, error.status_code)
 
     @app.exception_handler(CloudOptimizerError)
     async def optimizer_error(_: Request, error: CloudOptimizerError) -> JSONResponse:
-        return JSONResponse(status_code=error.status_code, content={"error": {"code": error.code}})
+        return _error_response(error.code, error.status_code)
 
     @app.exception_handler(AttachmentError)
     async def attachment_error(_: Request, error: AttachmentError) -> JSONResponse:
-        return JSONResponse(status_code=422, content={"error": {"code": str(error)}})
+        return _error_response(str(error), 422)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, __: RequestValidationError) -> JSONResponse:
-        return JSONResponse(status_code=422, content={"error": {"code": "request_invalid"}})
+        return _error_response("request_invalid", 422)
 
     return app

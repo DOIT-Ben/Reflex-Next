@@ -1,6 +1,6 @@
 # Reflex Next 后端生产化任务账本
 
-更新时间：2026-07-14
+更新时间：2026-07-15
 长期路线图：`docs/BACKEND-PRODUCTION-ROADMAP.md`
 
 ## 状态说明
@@ -231,6 +231,21 @@
 - 历史库恢复在主库截断、备份损坏、替换中断和轮换 checkpoint 异常下保护最后有效数据；
 - Markdown 与批处理新增危险协议、活动 HTML、CSV 公式、畸形引号、路径字段、取消和资源上限夹具；
 - 本阶段剩余主阻塞：脱敏真实 Provider 冒烟工具与新凭据实机门禁；前端动态目录消费由前端负责人承接；产品版本统一仍由 P4-001 跟踪。
+
+## 2026-07-15 云端预算与运维加固记录
+
+- 新增每日全局请求上限和预估成本预算账本；Provider 调用前按保守输出上限预占，
+  成功、失败、额度拒绝和连接中断路径均有结算或回退，账本不保存安装 ID、正文或原始 IP；
+- `/v1/admin/analytics/usage` 新增今日预算日期、请求/成本已用、预占、剩余、使用率和超限状态；
+- 新增 Caddy `public` Compose profile、16 MB 请求体上限、SSE 不缓冲和严格代理头信任范围；
+- 新增 PostgreSQL custom-format 备份与隔离恢复脚本，恢复脚本拒绝直接写入 `reflex_cloud`；
+- 新增只读预算巡检脚本，使用退出码区分正常、预警和临界状态，不输出管理令牌；
+- 云服务门禁 `tools\verify_cloud.ps1` 通过：运维契约、Compose 解析和 `31 passed`；
+- 为 Core、MiniMax Provider 和模板命名上下文增加 `.dockerignore`，生产上下文降至约 317 KB；
+- Dockerfile 改为多阶段 `uv 0.11.13` + `uv sync --frozen`，生产依赖与 `uv.lock` 一致；
+- `reflex-cloud:0.1.0-alpha.6` 锁定镜像构建成功，约 95 MB，镜像用户为 `reflex`；
+- 使用 alpha.6 隔离 Compose 完成健康、预算、默认隐私、中文错误、新表和容器权限验证；
+- 完成 custom-format 备份、SHA-256 校验和隔离恢复，恢复库含 9 张表、安装记录一致；QA 容器、卷、构建器和临时文件均已清理。
 
 ## 集成约定
 

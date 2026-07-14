@@ -46,6 +46,10 @@ class CloudSettings(BaseSettings):
     max_concurrent_global: int = Field(default=32, ge=1, le=1000)
     max_concurrent_per_installation: int = Field(default=2, ge=1, le=20)
     free_ip_requests_per_hour: int = Field(default=60, ge=1, le=10000)
+    global_daily_request_limit: int = Field(default=0, ge=0, le=1_000_000)
+    global_daily_cost_budget_microusd: int = Field(default=0, ge=0, le=2_000_000_000)
+    budget_max_output_chars_per_request: int = Field(default=200_000, ge=1, le=2_100_000)
+    budget_reservation_ttl_seconds: int = Field(default=600, ge=60, le=3_600)
     retention_cleanup_interval_seconds: int = Field(default=86_400, ge=60, le=604_800)
 
     @field_validator("environment")
@@ -75,4 +79,9 @@ class CloudSettings(BaseSettings):
             or self.provider_output_usd_per_million_tokens <= 0
         ):
             raise ValueError("production provider pricing must be configured")
+        if (
+            self.global_daily_request_limit <= 0
+            or self.global_daily_cost_budget_microusd <= 0
+        ):
+            raise ValueError("production global budgets must be configured")
         return self

@@ -14,6 +14,7 @@ Beta 包含：
 - 反馈、授权截图、分类、状态流转和版本质量分析；
 - 改进计划的显式授权、脱敏保存、删除和保留期清理；
 - 管理后台的近 7 日请求、完成率、预估成本和负反馈率。
+- 服务端每日全局请求上限和预估成本预算护栏。
 
 客户端自备 Provider 模式仍然可以离线于 Reflex Cloud 使用。客户端 API Key
 永远不发送到云端。
@@ -31,11 +32,28 @@ REFLEX_CLOUD_PROVIDER_API_KEY
 REFLEX_CLOUD_PROVIDER_PRICING_VERSION
 REFLEX_CLOUD_PROVIDER_INPUT_USD_PER_MILLION_TOKENS
 REFLEX_CLOUD_PROVIDER_OUTPUT_USD_PER_MILLION_TOKENS
+REFLEX_CLOUD_GLOBAL_DAILY_REQUEST_LIMIT
+REFLEX_CLOUD_GLOBAL_DAILY_COST_BUDGET_MICROUSD
 ```
 
 价格字段是成本估算所需的服务端配置，必须与 Provider 账单的价格版本一致。
 系统按字符估算 Token，管理后台必须把成本称为“预估成本”，不能当作 Provider
 最终账单。价格变更时递增 `PRICING_VERSION`。
+
+预算成本单位为微美元（`1 USD = 1,000,000`）。请求进入 Provider 前按
+`BUDGET_MAX_OUTPUT_CHARS_PER_REQUEST` 的保守输出上限预占，完成或失败后按实际
+输入/输出字符成本结算。管理接口的 `daily_cost_committed_microusd` 包含已结算和
+仍在进行中的预占，`daily_cost_remaining_microusd` 是允许继续接收请求的剩余额度。
+
+需要公网入口时使用 Caddy profile，并先把域名解析到服务器：
+
+```powershell
+$env:REFLEX_CLOUD_DOMAIN = "cloud.example.com"
+docker compose --profile public up -d
+```
+
+默认 API 仍只绑定宿主机回环地址，Caddy 才是公网入口。Caddy 自动申请证书，
+生产环境仍需确认 DNS、80/443 入站规则和密钥管理符合部署方制度。
 
 启动：
 
@@ -53,6 +71,9 @@ API 容器默认只绑定宿主机 `127.0.0.1:8787`。公网入口必须由反�
 - 对安装、优化、反馈和管理接口分别限流；
 - 不把 Postgres 或 API 容器端口直接暴露到公网。
 
+Compose 默认只信任回环地址和 Docker 私有 `172.16.0.0/12` 网段传入的代理头，
+不得把 `FORWARDED_ALLOW_IPS` 改成 `*`。
+
 ## 3. 数据清单
 
 | 数据 | 默认状态 | 用途 | 删除/保留 |
@@ -64,7 +85,7 @@ API 容器默认只绑定宿主机 `127.0.0.1:8787`。公网入口必须由反�
 | 反馈正文/联系方式 | 用户提交 | 问题复现和联系 | 90 天清理，用户可删除 |
 | 截图 | 单次明确勾选 | 复现界面问题 | 90 天清理，用户可删除 |
 | 改进样本 | 改进计划开启 | 质量分析和模板迭代 | 90 天清理，用户可删除 |
-| 日成本聚合 | 无用户关联 | 成本监控 | 只保留匿名日聚合 |
+| 日成本聚合和预算账本 | 无用户关联 | 成本监控和预算护栏 | 只保留匿名日聚合 |
 
 提示词、结果和截图三类内容默认关闭。服务端再次校验附件一致性并脱敏，不能
 因为客户端篡改布尔字段而绕过单次提交授权。删除安装身份时，反馈、附件、授权、
@@ -73,13 +94,25 @@ API 容器默认只绑定宿主机 `127.0.0.1:8787`。公网入口必须由反�
 ## 4. Beta 验收清单
 
 1. 使用测试密钥启动一套独立 Compose 项目，确认 Postgres 和 API 均为 healthy。
-2. 调用 `/health/ready`，确认数据库和 Provider 都是 `ok/configured`。
+2. 调用 `/health/ready`，确认数据库、Provider 和预算都是 `ok/configured`。
 3. 新安装查询授权，确认三项可选授权均为 `false`。
 4. 用 5-20 名朋友进行真实生成，观察 `/v1/admin/analytics/usage?days=7`。
 5. 每个版本至少收集一批满意和不满意反馈，再查看 `/v1/admin/analytics/feedback`。
 6. 在管理后台完成一条反馈的分类、复现、计划和发布状态流转。
 7. 用测试安装执行删除，确认旧令牌失效、新安装重新默认为关闭授权。
 8. 做一次 Postgres 备份和恢复演练，记录恢复耗时和数据完整性结果。
+
+备份与隔离恢复脚本：
+
+```powershell
+.\tools\reflex-cloud-backup.ps1 -OutputDirectory "D:\Desktop\reflex-cloud-backups"
+.\tools\reflex-cloud-restore.ps1 `
+  -BackupFile "D:\Desktop\reflex-cloud-backups\reflex-cloud-postgres-<timestamp>.dump" `
+  -TargetDatabase "reflex_cloud_restore" `
+  -ConfirmRestore
+```
+
+恢复脚本拒绝直接写入生产数据库 `reflex_cloud`，必须先恢复到隔离数据库并完成校验。
 
 ## 5. 运营阈值
 
@@ -89,8 +122,11 @@ API 容器默认只绑定宿主机 `127.0.0.1:8787`。公网入口必须由反�
 - 负反馈率连续两个版本上升：冻结模板发布，先按场景和版本复现；
 - Provider 错误率或首包延迟异常：回退客户端默认 Provider 或暂停云端入口。
 
-当前成本接口是监控和人工决策依据；正式多实例发布前应接入告警系统和共享限流
-存储，不能只依赖单进程内存闸门。
+当前成本接口是监控和人工决策依据；预算账本使用 Postgres 行锁保护单日并发预占，
+但正式多实例发布前仍应接入告警系统和 Redis 共享限流/取消状态。
+
+可用 `tools\reflex-cloud-budget-check.ps1` 定期轮询管理分析接口：退出码 `0` 为正常、
+`1` 为预警、`2` 为临界；远程地址必须使用 HTTPS，令牌只从环境变量读取。
 
 ## 6. 回滚
 
@@ -108,6 +144,7 @@ docker compose ps
 
 ## 7. 发布结论
 
-alpha.5 已具备单实例 Beta 的功能和容器验收证据；正式公网推广仍需完成真实域名
-HTTPS、密钥管理、备份恢复演练、共享限流、告警和隐私政策发布。这些是发布门槛，
-不能用本地测试通过替代。
+alpha.6 已具备单实例 Beta 的预算护栏、公网代理配置、备份恢复工具和容器验收证据；
+云服务镜像使用固定 uv 版本和 `uv.lock` 构建，不在发布时重新选择依赖版本。
+正式公网推广仍需完成真实域名部署、生产密钥管理、Redis 共享限流/取消状态、外部
+告警接入、隐私政策发布和真实用户试用。这些是发布门槛，不能用本地测试通过替代。

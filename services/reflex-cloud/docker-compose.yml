@@ -42,7 +42,12 @@ services:
       REFLEX_CLOUD_MAX_CONCURRENT_GLOBAL: ${REFLEX_CLOUD_MAX_CONCURRENT_GLOBAL:-32}
       REFLEX_CLOUD_MAX_CONCURRENT_PER_INSTALLATION: ${REFLEX_CLOUD_MAX_CONCURRENT_PER_INSTALLATION:-2}
       REFLEX_CLOUD_FREE_IP_REQUESTS_PER_HOUR: ${REFLEX_CLOUD_FREE_IP_REQUESTS_PER_HOUR:-60}
+      REFLEX_CLOUD_GLOBAL_DAILY_REQUEST_LIMIT: ${REFLEX_CLOUD_GLOBAL_DAILY_REQUEST_LIMIT:?set REFLEX_CLOUD_GLOBAL_DAILY_REQUEST_LIMIT}
+      REFLEX_CLOUD_GLOBAL_DAILY_COST_BUDGET_MICROUSD: ${REFLEX_CLOUD_GLOBAL_DAILY_COST_BUDGET_MICROUSD:?set REFLEX_CLOUD_GLOBAL_DAILY_COST_BUDGET_MICROUSD}
+      REFLEX_CLOUD_BUDGET_MAX_OUTPUT_CHARS_PER_REQUEST: ${REFLEX_CLOUD_BUDGET_MAX_OUTPUT_CHARS_PER_REQUEST:-200000}
+      REFLEX_CLOUD_BUDGET_RESERVATION_TTL_SECONDS: ${REFLEX_CLOUD_BUDGET_RESERVATION_TTL_SECONDS:-600}
       REFLEX_CLOUD_RETENTION_CLEANUP_INTERVAL_SECONDS: ${REFLEX_CLOUD_RETENTION_CLEANUP_INTERVAL_SECONDS:-86400}
+      FORWARDED_ALLOW_IPS: ${REFLEX_CLOUD_FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}
     ports:
       - "${REFLEX_CLOUD_BIND_ADDRESS:-127.0.0.1}:${REFLEX_CLOUD_PORT:-8787}:8787"
     volumes:
@@ -64,6 +69,39 @@ services:
       postgres:
         condition: service_healthy
 
+  caddy:
+    image: caddy:2.10-alpine
+    profiles: ["public"]
+    restart: unless-stopped
+    environment:
+      REFLEX_CLOUD_DOMAIN: ${REFLEX_CLOUD_DOMAIN:-cloud.example.com}
+    ports:
+      - "${REFLEX_CLOUD_HTTP_PORT:-80}:80"
+      - "${REFLEX_CLOUD_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - reflex-cloud-caddy-data:/data
+      - reflex-cloud-caddy-config:/config
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   reflex-cloud-postgres:
   reflex-cloud-uploads:
+  reflex-cloud-caddy-data:
+  reflex-cloud-caddy-config:

@@ -23,7 +23,11 @@ def test_ready_health_requires_database_and_provider(tmp_path) -> None:
         assert response.status_code == 200
         assert response.json() == {
             "status": "ready",
-            "checks": {"database": "ok", "provider": "configured"},
+            "checks": {
+                "database": "ok",
+                "provider": "configured",
+                "budget": "disabled",
+            },
         }
     finally:
         client_context.close()

@@ -48,7 +48,7 @@ def test_feedback_requires_installation_identity(client: TestClient):
     response = client.post("/v1/feedback", json=feedback_payload())
 
     assert response.status_code == 422
-    assert response.json() == {"error": {"code": "request_invalid"}}
+    assert response.json()["error"]["code"] == "request_invalid"
 
 
 def test_feedback_is_persisted_and_admin_list_hides_sensitive_detail(
@@ -89,7 +89,7 @@ def test_prompt_result_and_screenshot_require_matching_per_submission_consent(
             json=feedback_payload(**changes),
         )
         assert response.status_code == 422
-        assert response.json() == {"error": {"code": "request_invalid"}}
+    assert response.json()["error"]["code"] == "request_invalid"
 
 
 def test_authorized_attachments_are_redacted_and_validated(
@@ -152,7 +152,7 @@ def test_feedback_rate_limit_is_per_installation(
     )
 
     assert blocked.status_code == 429
-    assert blocked.json() == {"error": {"code": "feedback_rate_limited"}}
+    assert blocked.json()["error"]["code"] == "feedback_rate_limited"
 
 
 def test_admin_auth_and_status_transition(

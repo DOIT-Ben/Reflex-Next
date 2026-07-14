@@ -2,7 +2,18 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -84,6 +95,29 @@ class DailyCostAggregate(Base):
     estimated_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     estimated_output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     estimated_cost_microusd: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class DailyBudgetLedger(Base):
+    __tablename__ = "daily_budget_ledgers"
+
+    usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    admitted_requests: Mapped[int] = mapped_column(Integer, default=0)
+    settled_cost_microusd: Mapped[int] = mapped_column(BigInteger, default=0)
+    reserved_cost_microusd: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class BudgetReservation(Base):
+    __tablename__ = "budget_reservations"
+    __table_args__ = (Index("budget_reservation_status_expiry_idx", "status", "expires_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    usage_date: Mapped[date] = mapped_column(Date, index=True)
+    estimated_cost_microusd: Mapped[int] = mapped_column(BigInteger, default=0)
+    settled_cost_microusd: Mapped[int] = mapped_column(BigInteger, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="reserved", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class HourlyIpUsage(Base):

@@ -26,6 +26,11 @@ on:
       - "tools/tests/test_benchmark_history_sqlite.py"
       - "tools/soak_backend.py"
       - "tools/tests/test_soak_backend.py"
+      - "tools/verify_cloud.ps1"
+      - "tools/reflex-cloud-backup.ps1"
+      - "tools/reflex-cloud-restore.ps1"
+      - "tools/reflex-cloud-budget-check.ps1"
+      - "tools/tests/reflex_cloud_ops_contract.ps1"
       - "services/reflex-cloud/**"
   push:
     branches:
@@ -55,6 +60,11 @@ on:
       - "tools/tests/test_benchmark_history_sqlite.py"
       - "tools/soak_backend.py"
       - "tools/tests/test_soak_backend.py"
+      - "tools/verify_cloud.ps1"
+      - "tools/reflex-cloud-backup.ps1"
+      - "tools/reflex-cloud-restore.ps1"
+      - "tools/reflex-cloud-budget-check.ps1"
+      - "tools/tests/reflex_cloud_ops_contract.ps1"
       - "services/reflex-cloud/**"
   workflow_dispatch:
 
@@ -135,10 +145,9 @@ jobs:
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\verify_backend.ps1
 
-      - name: Test Reflex Cloud feedback service
+      - name: Verify Reflex Cloud service and operations contracts
         shell: powershell
-        working-directory: services/reflex-cloud
-        run: uv run --frozen --extra dev pytest -q
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\verify_cloud.ps1 -SkipDocker
 
       - name: Generate retained SBOM and scan build artifacts
         shell: powershell

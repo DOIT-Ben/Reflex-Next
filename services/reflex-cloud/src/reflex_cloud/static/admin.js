@@ -10,6 +10,7 @@ const usageCompletion = document.querySelector("#usage-completion");
 const usageCost = document.querySelector("#usage-cost");
 const qualityNegative = document.querySelector("#quality-negative");
 const qualityVersion = document.querySelector("#quality-version");
+const usageBudget = document.querySelector("#usage-budget");
 const operationsStatus = document.querySelector("#operations-status");
 
 document.querySelector("#auth-form").addEventListener("submit", async (event) => {
@@ -74,6 +75,7 @@ async function loadOperations() {
       ? `${(quality.negative_rate * 100).toFixed(1)}%`
       : "-";
     qualityVersion.textContent = versionQualityText(quality.by_version);
+    usageBudget.textContent = formatBudget(usage);
     operationsStatus.textContent = `${usage.from_date} 至 ${usage.to_date} · 价格版本 ${usage.pricing_version}`;
   } catch (error) {
     operationsStatus.textContent = error.message;
@@ -82,6 +84,7 @@ async function loadOperations() {
     usageCost.textContent = "-";
     qualityNegative.textContent = "-";
     qualityVersion.textContent = "加载失败";
+    usageBudget.textContent = "加载失败";
   }
 }
 
@@ -224,6 +227,16 @@ function formatTime(value) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function formatBudget(usage) {
+  const requestText = usage.daily_request_limit == null
+    ? "请求不限"
+    : `${formatNumber(usage.daily_requests_used)} / ${formatNumber(usage.daily_request_limit)} 请求`;
+  if (usage.daily_cost_budget_microusd == null) return `${requestText} · 成本不限`;
+  const committed = `$${(usage.daily_cost_committed_microusd / 1_000_000).toFixed(4)}`;
+  const budget = `$${(usage.daily_cost_budget_microusd / 1_000_000).toFixed(4)}`;
+  return `${requestText} · ${committed} / ${budget}${usage.budget_exceeded ? " · 已超限" : ""}`;
 }
 
 function versionQualityText(byVersion) {

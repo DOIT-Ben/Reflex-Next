@@ -12,12 +12,19 @@ from reflex_core.testing import FakeProvider, FakeSceneDetector, FakeTemplateRes
 
 from reflex_cloud.app import create_app
 from reflex_cloud.config import CloudSettings
-from reflex_cloud.models import HourlyIpUsage, ImprovementSample
+from reflex_cloud.models import BudgetReservation, HourlyIpUsage, ImprovementSample, utc_now
 from reflex_cloud.optimizer import CloudOptimizer, CloudOptimizerError
+from reflex_cloud.service import CloudServiceError
 
 
 def _client(
-    tmp_path, *, request_limit: int = 2, ip_limit: int = 60
+    tmp_path,
+    *,
+    request_limit: int = 2,
+    ip_limit: int = 60,
+    global_request_limit: int = 0,
+    daily_cost_budget_microusd: int = 0,
+    budget_max_output_chars: int = 200_000,
 ) -> Iterator[tuple[TestClient, CloudOptimizer]]:
     settings = CloudSettings(
         environment="test",
@@ -31,6 +38,9 @@ def _client(
         provider_pricing_version="minimax-2026-07-14",
         provider_input_usd_per_million_tokens=1.0,
         provider_output_usd_per_million_tokens=2.0,
+        global_daily_request_limit=global_request_limit,
+        global_daily_cost_budget_microusd=daily_cost_budget_microusd,
+        budget_max_output_chars_per_request=budget_max_output_chars,
     )
     use_case = OptimizeUseCase(
         scene_detector=FakeSceneDetector(),
@@ -129,7 +139,166 @@ def test_quota_exhaustion_stops_before_a_second_stream(tmp_path) -> None:
         assert client.post("/v1/optimize", headers=headers, json=_payload("request-101")).status_code == 200
         blocked = client.post("/v1/optimize", headers=headers, json=_payload("request-102"))
         assert blocked.status_code == 429
-        assert blocked.json() == {"error": {"code": "quota_exhausted"}}
+        assert blocked.json()["error"]["code"] == "quota_exhausted"
+    finally:
+        client_context.close()
+
+
+def test_global_request_budget_stops_before_consuming_installation_quota(tmp_path) -> None:
+    client_context = _client(tmp_path, request_limit=5, global_request_limit=1)
+    client, _ = next(client_context)
+    try:
+        _, headers = _identity(client)
+        assert client.post(
+            "/v1/optimize", headers=headers, json=_payload("request-global-1")
+        ).status_code == 200
+
+        blocked = client.post(
+            "/v1/optimize", headers=headers, json=_payload("request-global-2")
+        )
+
+        assert blocked.status_code == 429
+        assert blocked.json()["error"]["code"] == "global_request_budget_exhausted"
+        assert "今日云端请求额度" in blocked.json()["error"]["message"]
+        assert client.get("/v1/quota", headers=headers).json()["requests_used"] == 1
+    finally:
+        client_context.close()
+
+
+def test_budget_reservation_rolls_back_when_ip_limit_rejects(tmp_path) -> None:
+    client_context = _client(
+        tmp_path,
+        request_limit=5,
+        ip_limit=1,
+        global_request_limit=2,
+        daily_cost_budget_microusd=100,
+        budget_max_output_chars=8,
+    )
+    client, _ = next(client_context)
+    try:
+        _, first_headers = _identity(client)
+        _, second_headers = _identity(client)
+        admin = {"Authorization": f"Bearer {'a' * 32}"}
+        assert client.post(
+            "/v1/optimize", headers=first_headers, json=_payload("request-ip-1", "abcdefgh")
+        ).status_code == 200
+
+        blocked = client.post(
+            "/v1/optimize", headers=second_headers, json=_payload("request-ip-2", "abcdefgh")
+        )
+
+        assert blocked.status_code == 429
+        assert blocked.json()["error"]["code"] == "ip_rate_limited"
+        analytics = client.get("/v1/admin/analytics/usage?days=1", headers=admin).json()
+        assert analytics["daily_requests_used"] == 1
+        assert analytics["daily_cost_reserved_microusd"] == 0
+    finally:
+        client_context.close()
+
+
+def test_cost_budget_reserves_worst_case_and_settles_actual_cost(tmp_path) -> None:
+    client_context = _client(
+        tmp_path,
+        request_limit=5,
+        daily_cost_budget_microusd=20,
+        budget_max_output_chars=8,
+    )
+    client, _ = next(client_context)
+    try:
+        _, headers = _identity(client)
+        admin = {"Authorization": f"Bearer {'a' * 32}"}
+
+        first = client.post(
+            "/v1/optimize", headers=headers, json=_payload("request-budget-1", "abcdefgh")
+        )
+        analytics = client.get("/v1/admin/analytics/usage?days=7", headers=admin).json()
+
+        assert first.status_code == 200
+        assert analytics["daily_cost_budget_microusd"] == 20
+        assert analytics["daily_cost_used_microusd"] == 8
+        assert analytics["daily_cost_reserved_microusd"] == 0
+        assert analytics["daily_cost_committed_microusd"] == 8
+        assert analytics["daily_cost_remaining_microusd"] == 12
+        assert analytics["daily_cost_usage_ratio"] == 0.4
+        assert analytics["budget_exceeded"] is False
+
+        assert client.post(
+            "/v1/optimize", headers=headers, json=_payload("request-budget-2", "abcdefgh")
+        ).status_code == 200
+        blocked = client.post(
+            "/v1/optimize", headers=headers, json=_payload("request-budget-3", "abcdefgh")
+        )
+
+        assert blocked.status_code == 429
+        assert blocked.json()["error"]["code"] == "global_cost_budget_exhausted"
+        assert "今日云端服务预算" in blocked.json()["error"]["message"]
+        final = client.get("/v1/admin/analytics/usage?days=7", headers=admin).json()
+        assert final["daily_requests_used"] == 2
+        assert final["daily_cost_used_microusd"] == 16
+        assert final["daily_cost_remaining_microusd"] == 4
+    finally:
+        client_context.close()
+
+
+def test_active_cost_reservation_blocks_a_second_provider_admission(tmp_path) -> None:
+    client_context = _client(
+        tmp_path,
+        daily_cost_budget_microusd=12,
+        budget_max_output_chars=8,
+    )
+    client, _ = next(client_context)
+    service = client.app.state.cloud_service
+    try:
+        with client.app.state.database.sessions() as session:
+            reservation_id = service.reserve_budget(session, input_chars=8)
+            assert reservation_id is not None
+
+        analytics = client.get(
+            "/v1/admin/analytics/usage?days=1",
+            headers={"Authorization": f"Bearer {'a' * 32}"},
+        ).json()
+        assert analytics["daily_cost_reserved_microusd"] == 12
+        assert analytics["daily_cost_remaining_microusd"] == 0
+
+        with client.app.state.database.sessions() as session:
+            with pytest.raises(CloudServiceError) as caught:
+                service.reserve_budget(session, input_chars=8)
+            assert caught.value.code == "global_cost_budget_exhausted"
+
+        with client.app.state.database.sessions() as session:
+            assert service.release_budget(session, reservation_id) is True
+    finally:
+        client_context.close()
+
+
+def test_expired_budget_reservation_releases_cost_but_keeps_admission_count(tmp_path) -> None:
+    client_context = _client(
+        tmp_path,
+        global_request_limit=2,
+        daily_cost_budget_microusd=20,
+        budget_max_output_chars=8,
+    )
+    client, _ = next(client_context)
+    service = client.app.state.cloud_service
+    try:
+        with client.app.state.database.sessions() as session:
+            reservation_id = service.reserve_budget(session, input_chars=8)
+        with client.app.state.database.sessions() as session:
+            reservation = session.get(BudgetReservation, reservation_id)
+            assert reservation is not None
+            reservation.expires_at = utc_now()
+            session.commit()
+        with client.app.state.database.sessions() as session:
+            assert service.purge_expired_budget_reservations(session) == 1
+
+        analytics = client.get(
+            "/v1/admin/analytics/usage?days=1",
+            headers={"Authorization": f"Bearer {'a' * 32}"},
+        ).json()
+        assert analytics["daily_requests_used"] == 1
+        assert analytics["daily_requests_remaining"] == 1
+        assert analytics["daily_cost_reserved_microusd"] == 0
+        assert analytics["daily_cost_remaining_microusd"] == 20
     finally:
         client_context.close()
 
@@ -149,7 +318,7 @@ def test_ip_rate_limit_applies_across_new_installation_tokens_without_storing_ra
             "/v1/optimize", headers=second_headers, json=_payload("request-152")
         )
         assert blocked.status_code == 429
-        assert blocked.json() == {"error": {"code": "ip_rate_limited"}}
+        assert blocked.json()["error"]["code"] == "ip_rate_limited"
         with client.app.state.database.sessions() as session:
             usage = session.query(HourlyIpUsage).one()
             assert usage.ip_hash != "testclient"
@@ -200,7 +369,8 @@ def test_unconfigured_provider_fails_without_consuming_quota(client: TestClient)
     response = client.post("/v1/optimize", headers=headers, json=_payload("request-301"))
 
     assert response.status_code == 503
-    assert response.json() == {"error": {"code": "cloud_provider_unconfigured"}}
+    assert response.json()["error"]["code"] == "cloud_provider_unconfigured"
+    assert "云端 Provider" in response.json()["error"]["message"]
     assert client.get("/v1/quota", headers=headers).json()["requests_used"] == 0
 
 

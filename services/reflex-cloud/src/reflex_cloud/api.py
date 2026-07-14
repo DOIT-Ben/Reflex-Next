@@ -122,10 +122,17 @@ def optimize(
     request: Request,
 ) -> StreamingResponse:
     optimizer.claim(payload.request_id, installation.id)
+    budget_reservation_id: str | None = None
     try:
+        budget_reservation_id = service.reserve_budget(
+            session, input_chars=len(payload.text)
+        )
         service.reserve_ip_quota(session, request.client.host if request.client else None)
         service.reserve_quota(session, installation, input_chars=len(payload.text))
     except Exception:
+        if budget_reservation_id is not None:
+            with request.app.state.database.sessions() as budget_session:
+                service.release_budget(budget_session, budget_reservation_id)
         optimizer.release(payload.request_id)
         raise
 
@@ -151,25 +158,37 @@ def optimize(
                 yield f"data: {json.dumps(envelope, ensure_ascii=False, separators=(',', ':'))}\n\n"
         finally:
             optimizer.release(payload.request_id)
-            with request.app.state.database.sessions() as usage_session:
-                if output_chars:
-                    service.record_output_usage(
-                        usage_session, installation.id, output_chars=output_chars
-                    )
-                service.record_provider_usage(
-                    usage_session,
-                    input_chars=len(payload.text),
-                    output_chars=output_chars,
-                    completed=completed,
-                )
-                if output_chars and completed:
-                    service.store_improvement_sample(
+            actual_cost = service.estimate_provider_cost(
+                input_chars=len(payload.text), output_chars=output_chars
+            )
+            try:
+                with request.app.state.database.sessions() as usage_session:
+                    if output_chars:
+                        service.record_output_usage(
+                            usage_session, installation.id, output_chars=output_chars
+                        )
+                    service.record_provider_usage(
                         usage_session,
-                        installation.id,
-                        payload,
-                        output_text="".join(output_chunks),
-                        scene=final_scene,
+                        input_chars=len(payload.text),
+                        output_chars=output_chars,
+                        completed=completed,
                     )
+                    if output_chars and completed:
+                        service.store_improvement_sample(
+                            usage_session,
+                            installation.id,
+                            payload,
+                            output_text="".join(output_chunks),
+                            scene=final_scene,
+                        )
+            finally:
+                if budget_reservation_id is not None:
+                    with request.app.state.database.sessions() as budget_session:
+                        service.settle_budget(
+                            budget_session,
+                            budget_reservation_id,
+                            actual_cost_microusd=actual_cost,
+                        )
 
     return StreamingResponse(
         event_stream(),
