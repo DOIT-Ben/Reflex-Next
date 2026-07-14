@@ -16,7 +16,10 @@ pub const RUNTIME_UNAVAILABLE_MESSAGE: &str = "运行服务暂不可用，请稍
 pub const DUPLICATE_REQUEST_MESSAGE: &str = "运行请求重复。";
 pub const REQUEST_NOT_FOUND_MESSAGE: &str = "目标请求不存在。";
 pub const REQUEST_SESSION_FULL_MESSAGE: &str = "运行会话已满，请重启应用。";
+pub const HOST_BUSY_MESSAGE: &str = "当前运行任务较多，请稍后重试。";
 const MAX_SEEN_REQUEST_IDS: usize = 100_000;
+const MAX_ACTIVE_REQUESTS: usize = 64;
+const MAX_PRIVATE_BUFFERED_EVENTS: usize = 64;
 const MAX_RUNTIME_EVENT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PROVIDER_CATALOG_BYTES: usize = 2 * 1024 * 1024;
 const MAX_PROVIDERS: usize = 64;
@@ -320,11 +323,8 @@ impl HostRequestRegistry {
         {
             return Err(DUPLICATE_REQUEST_MESSAGE);
         }
-        while history.ids.len() + unique.len() > self.max_seen_request_ids {
-            let Some(expired) = history.order.pop_front() else {
-                return Err(RUNTIME_UNAVAILABLE_MESSAGE);
-            };
-            history.ids.remove(&expired);
+        if history.ids.len() + unique.len() > self.max_seen_request_ids {
+            return Err(REQUEST_SESSION_FULL_MESSAGE);
         }
         for request_id in unique {
             history.ids.insert(request_id.clone());
@@ -349,6 +349,16 @@ impl HostRequestRegistry {
                 Err(error) => return Err(error),
             }
         }
+    }
+
+    fn reset_after_runtime_stopped(&self) -> Result<(), &'static str> {
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+        history.ids.clear();
+        history.order.clear();
+        Ok(())
     }
 }
 
@@ -417,7 +427,18 @@ enum RequestRoute {
     #[cfg(test)]
     Public,
     PublicTo(String),
-    Private(mpsc::Sender<Value>),
+    Private(PrivateRoute),
+}
+
+#[derive(Clone)]
+struct PrivateRoute {
+    sender: mpsc::SyncSender<PrivateDelivery>,
+    queued_events: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+enum PrivateDelivery {
+    Event(Value),
+    Terminal(Value),
 }
 
 impl RequestRoute {
@@ -436,6 +457,7 @@ impl RequestRoute {
 }
 
 struct ActiveRequest {
+    request_id: String,
     contract: ResponseContract,
     route: RequestRoute,
     lifecycle: Mutex<RequestLifecycle>,
@@ -448,8 +470,9 @@ enum RequestLifecycle {
 }
 
 impl ActiveRequest {
-    fn new(contract: ResponseContract, route: RequestRoute) -> Self {
+    fn new(request_id: String, contract: ResponseContract, route: RequestRoute) -> Self {
         Self {
+            request_id,
             contract,
             route,
             lifecycle: Mutex::new(RequestLifecycle::Active),
@@ -472,8 +495,31 @@ impl ActiveRequest {
             RequestRoute::PublicTo(target) => {
                 emitter.emit_to(target, self.contract.event_name(), payload)
             }
-            RequestRoute::Private(sender) => {
-                let _ = sender.send(payload);
+            RequestRoute::Private(route) => {
+                if terminal {
+                    let _ = route.sender.try_send(PrivateDelivery::Terminal(payload));
+                } else if route.queued_events.load(Ordering::Acquire) >= MAX_PRIVATE_BUFFERED_EVENTS
+                {
+                    *lifecycle = RequestLifecycle::Terminal;
+                    let _ = route
+                        .sender
+                        .try_send(PrivateDelivery::Terminal(safe_failure_payload(
+                            &self.request_id,
+                            &self.contract,
+                        )));
+                    return false;
+                } else {
+                    route.queued_events.fetch_add(1, Ordering::AcqRel);
+                    if route
+                        .sender
+                        .try_send(PrivateDelivery::Event(payload))
+                        .is_err()
+                    {
+                        route.queued_events.fetch_sub(1, Ordering::AcqRel);
+                        *lifecycle = RequestLifecycle::Terminal;
+                        return false;
+                    }
+                }
             }
         }
         true
@@ -499,7 +545,8 @@ pub(crate) struct PrivateRuntimeGeneration(ActiveRequests);
 #[allow(dead_code)]
 pub struct PrivateEventStream {
     request_id: String,
-    receiver: mpsc::Receiver<Value>,
+    receiver: mpsc::Receiver<PrivateDelivery>,
+    queued_events: Arc<std::sync::atomic::AtomicUsize>,
     active_requests: ActiveRequests,
     running: Arc<Mutex<Option<RunningProcess>>>,
     emitter: Arc<dyn EventEmitter>,
@@ -513,7 +560,7 @@ impl PrivateEventStream {
 
     pub fn recv_timeout(&mut self, timeout: Duration) -> Result<Value, &'static str> {
         match self.receiver.recv_timeout(timeout) {
-            Ok(payload) => Ok(payload),
+            Ok(delivery) => Ok(self.unpack_delivery(delivery)),
             Err(_) => {
                 self.cleanup();
                 Err(RUNTIME_UNAVAILABLE_MESSAGE)
@@ -523,7 +570,7 @@ impl PrivateEventStream {
 
     pub fn poll_timeout(&mut self, timeout: Duration) -> Result<Option<Value>, &'static str> {
         match self.receiver.recv_timeout(timeout) {
-            Ok(payload) => Ok(Some(payload)),
+            Ok(delivery) => Ok(Some(self.unpack_delivery(delivery))),
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 self.cleanup();
@@ -534,6 +581,16 @@ impl PrivateEventStream {
 
     pub fn cancel(&mut self) {
         self.cleanup();
+    }
+
+    fn unpack_delivery(&self, delivery: PrivateDelivery) -> Value {
+        match delivery {
+            PrivateDelivery::Event(payload) => {
+                self.queued_events.fetch_sub(1, Ordering::AcqRel);
+                payload
+            }
+            PrivateDelivery::Terminal(payload) => payload,
+        }
     }
 
     fn cleanup(&mut self) {
@@ -568,6 +625,36 @@ struct RunningProcess {
     active_requests: ActiveRequests,
     stopping: Arc<AtomicBool>,
     unhealthy: Arc<AtomicBool>,
+    stdout_reader: Option<BackgroundReader>,
+    stderr_reader: Option<BackgroundReader>,
+}
+
+struct BackgroundReader {
+    completed: mpsc::Receiver<()>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl BackgroundReader {
+    fn wait(self, timeout: Duration) -> bool {
+        if self.completed.recv_timeout(timeout).is_err() {
+            return false;
+        }
+        self.thread.join().is_ok()
+    }
+}
+
+impl RunningProcess {
+    fn wait_for_readers(&mut self, timeout: Duration) -> bool {
+        let stdout_stopped = self
+            .stdout_reader
+            .take()
+            .map_or(true, |reader| reader.wait(timeout));
+        let stderr_stopped = self
+            .stderr_reader
+            .take()
+            .map_or(true, |reader| reader.wait(timeout));
+        stdout_stopped && stderr_stopped
+    }
 }
 
 pub struct RuntimeSidecar<F>
@@ -735,15 +822,23 @@ where
         expected_generation: Option<&ActiveRequests>,
     ) -> Result<(PrivateEventStream, ActiveRequests), &'static str> {
         let request_id = command.request_id.clone();
-        let (sender, receiver) = mpsc::channel();
+        let queued_events = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (sender, receiver) = mpsc::sync_channel(MAX_PRIVATE_BUFFERED_EVENTS + 1);
         let active_requests = self.send_routed_with_generation(
-            vec![(command, RequestRoute::Private(sender))],
+            vec![(
+                command,
+                RequestRoute::Private(PrivateRoute {
+                    sender,
+                    queued_events: queued_events.clone(),
+                }),
+            )],
             expected_generation,
         )?;
         Ok((
             PrivateEventStream {
                 request_id,
                 receiver,
+                queued_events,
                 active_requests: active_requests.clone(),
                 running: self.running.clone(),
                 emitter: self.emitter.clone(),
@@ -762,9 +857,16 @@ where
         {
             return Err(RUNTIME_UNAVAILABLE_MESSAGE);
         }
-        let (sender, _receiver) = mpsc::channel();
+        let queued_events = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (sender, _receiver) = mpsc::sync_channel(MAX_PRIVATE_BUFFERED_EVENTS + 1);
         self.send_routed_with_generation(
-            vec![(command, RequestRoute::Private(sender))],
+            vec![(
+                command,
+                RequestRoute::Private(PrivateRoute {
+                    sender,
+                    queued_events,
+                }),
+            )],
             expected_generation,
         )
         .map(|_| ())
@@ -838,11 +940,6 @@ where
                 return Err(DUPLICATE_REQUEST_MESSAGE);
             }
         }
-        self.request_registry
-            .claim_many(commands.iter().filter_map(|(command, _)| {
-                (command.kind != crate::runtime_commands::CommandKind::Cancel)
-                    .then_some(command.request_id.as_str())
-            }))?;
         let needs_restart = running
             .as_mut()
             .map(|child| {
@@ -857,13 +954,16 @@ where
             if let Some(mut previous) = running.take() {
                 previous.stopping.store(true, Ordering::Release);
                 fail_all_requests(&self.emitter, &previous.active_requests);
+                previous.process.close_stdin();
                 let _ = previous.process.terminate();
+                let _ = previous.process.wait_for(Duration::from_millis(300));
+                let _ = previous.wait_for_readers(Duration::from_millis(300));
             }
             *running = Some(self.start_process()?);
         }
 
-        let child = running.as_mut().ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?;
-        {
+        let active_request_count = {
+            let child = running.as_ref().ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?;
             let active_requests = child
                 .active_requests
                 .lock()
@@ -878,9 +978,45 @@ where
                     }
                 }
             }
+            let registrations = commands
+                .iter()
+                .filter(|(command, _)| ResponseContract::for_command(command).is_some())
+                .count();
+            if active_requests.len() + registrations > MAX_ACTIVE_REQUESTS {
+                return Err(HOST_BUSY_MESSAGE);
+            }
+            active_requests.len()
+        };
+
+        let claim_result =
+            self.request_registry
+                .claim_many(commands.iter().filter_map(|(command, _)| {
+                    (command.kind != crate::runtime_commands::CommandKind::Cancel)
+                        .then_some(command.request_id.as_str())
+                }));
+        match claim_result {
+            Ok(()) => {}
+            Err(REQUEST_SESSION_FULL_MESSAGE) if allow_restart && active_request_count == 0 => {
+                if let Some(mut previous) = running.take() {
+                    previous.stopping.store(true, Ordering::Release);
+                    previous.process.close_stdin();
+                    let _ = previous.process.terminate();
+                    let _ = previous.process.wait_for(Duration::from_millis(300));
+                    let _ = previous.wait_for_readers(Duration::from_millis(300));
+                }
+                self.request_registry.reset_after_runtime_stopped()?;
+                *running = Some(self.start_process()?);
+                self.request_registry
+                    .claim_many(commands.iter().filter_map(|(command, _)| {
+                        (command.kind != crate::runtime_commands::CommandKind::Cancel)
+                            .then_some(command.request_id.as_str())
+                    }))?;
+            }
+            Err(error) => return Err(error),
         }
 
         {
+            let child = running.as_mut().ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?;
             let mut active_requests = child
                 .active_requests
                 .lock()
@@ -889,12 +1025,17 @@ where
                 if let Some(contract) = ResponseContract::for_command(command) {
                     active_requests.insert(
                         command.request_id.clone(),
-                        Arc::new(ActiveRequest::new(contract, route.clone())),
+                        Arc::new(ActiveRequest::new(
+                            command.request_id.clone(),
+                            contract,
+                            route.clone(),
+                        )),
                     );
                 }
             }
         }
 
+        let child = running.as_mut().ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?;
         for ((_, _), bytes) in commands.iter().zip(serialized) {
             let write_result = child
                 .process
@@ -936,14 +1077,19 @@ where
             .and_then(|command| serialize_command(command).ok());
         let mut shutdown_receiver = None;
         if let Some(shutdown) = shutdown.as_ref().filter(|_| shutdown_bytes.is_some()) {
-            let (sender, receiver) = mpsc::channel();
+            let queued_events = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let (sender, receiver) = mpsc::sync_channel(MAX_PRIVATE_BUFFERED_EVENTS + 1);
             shutdown_receiver = Some(receiver);
             if let Ok(mut active_requests) = child.active_requests.lock() {
                 active_requests.insert(
                     shutdown.request_id.clone(),
                     Arc::new(ActiveRequest::new(
+                        shutdown.request_id.clone(),
                         ResponseContract::Core,
-                        RequestRoute::Private(sender),
+                        RequestRoute::Private(PrivateRoute {
+                            sender,
+                            queued_events,
+                        }),
                     )),
                 );
             }
@@ -968,6 +1114,7 @@ where
             let _ = child.process.terminate();
             let _ = child.process.wait_for(Duration::from_millis(300));
         }
+        let _ = child.wait_for_readers(Duration::from_millis(300));
         fail_all_requests(&self.emitter, &child.active_requests);
         drop(shutdown_receiver);
     }
@@ -979,7 +1126,7 @@ where
         let unhealthy = Arc::new(AtomicBool::new(false));
         let terminator = process.terminator();
 
-        if let Some(stdout) = process.take_stdout() {
+        let stdout_reader = process.take_stdout().map(|stdout| {
             spawn_stdout_reader(
                 stdout,
                 self.emitter.clone(),
@@ -987,17 +1134,17 @@ where
                 stopping.clone(),
                 unhealthy.clone(),
                 terminator,
-            );
-        }
-        if let Some(stderr) = process.take_stderr() {
-            spawn_stderr_drainer(stderr);
-        }
+            )
+        });
+        let stderr_reader = process.take_stderr().map(spawn_stderr_drainer);
 
         Ok(RunningProcess {
             process,
             active_requests,
             stopping,
             unhealthy,
+            stdout_reader,
+            stderr_reader,
         })
     }
 }
@@ -1248,8 +1395,9 @@ fn spawn_stdout_reader(
     stopping: Arc<AtomicBool>,
     unhealthy: Arc<AtomicBool>,
     terminator: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>>,
-) {
-    std::thread::spawn(move || {
+) -> BackgroundReader {
+    let (completion_sender, completed) = mpsc::sync_channel(1);
+    let thread = std::thread::spawn(move || {
         let mut stdout = BufReader::new(stdout);
         loop {
             let line = match read_bounded_line(&mut stdout, MAX_RUNTIME_EVENT_BYTES) {
@@ -1299,7 +1447,9 @@ fn spawn_stdout_reader(
                 let _ = terminate();
             }
         }
+        let _ = completion_sender.send(());
     });
+    BackgroundReader { completed, thread }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1365,11 +1515,14 @@ fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result
     }
 }
 
-fn spawn_stderr_drainer(stderr: Box<dyn Read + Send>) {
-    std::thread::spawn(move || {
+fn spawn_stderr_drainer(stderr: Box<dyn Read + Send>) -> BackgroundReader {
+    let (completion_sender, completed) = mpsc::sync_channel(1);
+    let thread = std::thread::spawn(move || {
         let mut stderr = stderr;
         let _ = drain_stderr(&mut stderr);
+        let _ = completion_sender.send(());
     });
+    BackgroundReader { completed, thread }
 }
 
 fn drain_stderr<R: Read>(stderr: &mut R) -> io::Result<u64> {
@@ -1466,7 +1619,9 @@ fn route_parsed_event(
     if terminal {
         remove_active_request(active_requests, &parsed.request_id, &request);
     }
-    request.dispatch(emitter, parsed.payload, terminal);
+    if !request.dispatch(emitter, parsed.payload, terminal) && !terminal {
+        remove_active_request(active_requests, &parsed.request_id, &request);
+    }
     false
 }
 
@@ -2091,8 +2246,9 @@ fn is_safe_request_id(value: &str) -> bool {
 mod tests {
     use std::collections::{HashMap, VecDeque};
     use std::io::{self, BufReader, Cursor, Read};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Barrier, Mutex};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{mpsc, Arc, Barrier, Mutex};
+    use std::time::Duration;
 
     use serde_json::{json, Value};
 
@@ -2105,9 +2261,10 @@ mod tests {
     use super::{
         build_bundled_launch_spec, build_launch_spec, build_process_command, parse_event_envelope,
         parse_sidecar_event, resolve_runtime_paths_from, route_parsed_event, serialize_command,
-        spawn_stdout_reader, ChildProcess, EventEmitter, HostRequestRegistry, OsProcessFactory,
-        ParsedSidecarEvent, ProcessFactory, PythonLauncher, RuntimeController, RuntimeSidecar,
-        CAPABILITY_LIST_EVENT_NAME, CORE_EVENT_NAME, PLUGIN_EVENT_NAME,
+        spawn_stderr_drainer, spawn_stdout_reader, ActiveRequest, ChildProcess, EventEmitter,
+        HostRequestRegistry, OsProcessFactory, ParsedSidecarEvent, PrivateDelivery, PrivateRoute,
+        ProcessFactory, PythonLauncher, RequestRoute, ResponseContract, RuntimeController,
+        RuntimeSidecar, CAPABILITY_LIST_EVENT_NAME, CORE_EVENT_NAME, PLUGIN_EVENT_NAME,
         PROVIDER_CATALOG_EVENT_NAME, RUNTIME_UNAVAILABLE_MESSAGE,
     };
 
@@ -2237,17 +2394,21 @@ mod tests {
     }
 
     #[test]
-    fn seen_registry_rotates_the_oldest_id_without_losing_recent_replay_protection() {
+    fn seen_registry_requires_a_stopped_runtime_before_resetting_a_full_session() {
         let registry = HostRequestRegistry::with_limit(2);
         registry.claim("seen-a").unwrap();
         registry.claim("seen-b").unwrap();
-        registry.claim("seen-c").unwrap();
-
         assert_eq!(
             registry.claim("seen-c"),
+            Err(super::REQUEST_SESSION_FULL_MESSAGE)
+        );
+
+        assert_eq!(
+            registry.claim("seen-a"),
             Err(super::DUPLICATE_REQUEST_MESSAGE)
         );
-        assert_eq!(registry.claim("seen-a"), Ok(()));
+        registry.reset_after_runtime_stopped().unwrap();
+        assert_eq!(registry.claim("seen-c"), Ok(()));
     }
 
     #[test]
@@ -2271,11 +2432,18 @@ mod tests {
         }
 
         let results = results.lock().unwrap();
-        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 2);
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| **result == Err(super::REQUEST_SESSION_FULL_MESSAGE))
+                .count(),
+            1
+        );
     }
 
     #[test]
-    fn active_request_id_cannot_be_reused_after_replay_history_rotation() {
+    fn full_request_session_does_not_rotate_while_a_request_is_active() {
         let writes = Arc::new(Mutex::new(Vec::new()));
         let registry = Arc::new(HostRequestRegistry::with_limit(1));
         let sidecar = RuntimeSidecar::new_with_registry(
@@ -2285,12 +2453,151 @@ mod tests {
         );
 
         sidecar.send(optimize_command("active-a")).unwrap();
-        sidecar.send(optimize_command("active-b")).unwrap();
+        assert_eq!(
+            sidecar.send(optimize_command("active-b")),
+            Err(super::REQUEST_SESSION_FULL_MESSAGE)
+        );
 
         assert_eq!(
             sidecar.send(optimize_command("active-a")),
             Err(super::DUPLICATE_REQUEST_MESSAGE)
         );
+    }
+
+    #[test]
+    fn full_request_session_restarts_and_resets_only_after_routes_are_drained() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let registry = Arc::new(HostRequestRegistry::with_limit(1));
+        let sidecar = RuntimeSidecar::new_with_registry(
+            FakeProcessFactory::new(vec![
+                FakeProcess::running(writes.clone()),
+                FakeProcess::running(writes.clone()),
+            ]),
+            Arc::new(FakeEmitter),
+            registry.clone(),
+        );
+        let list = |request_id: &str| ValidatedCommand {
+            request_id: request_id.to_string(),
+            kind: CommandKind::ListPlugins,
+            payload: json!({}),
+        };
+
+        sidecar.send(list("session-a")).unwrap();
+        let first_generation = sidecar
+            .running
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .active_requests
+            .clone();
+        route_parsed_event(
+            &sidecar.emitter,
+            &first_generation,
+            ParsedSidecarEvent {
+                event_name: CAPABILITY_LIST_EVENT_NAME,
+                request_id: "session-a".to_string(),
+                terminal: true,
+                payload: json!({
+                    "version": 1,
+                    "request_id": "session-a",
+                    "type": "capability_list",
+                    "plugins": []
+                }),
+            },
+        );
+
+        sidecar.send(list("session-b")).unwrap();
+        let second_generation = sidecar
+            .running
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .active_requests
+            .clone();
+
+        assert!(!Arc::ptr_eq(&first_generation, &second_generation));
+        let history = registry.history.lock().unwrap();
+        assert_eq!(history.ids.len(), 1);
+        assert!(history.ids.contains("session-b"));
+        assert!(!history.ids.contains("session-a"));
+    }
+
+    #[test]
+    fn host_rejects_the_sixty_fifth_active_route_before_writing_it() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![FakeProcess::running(writes.clone())]),
+            Arc::new(FakeEmitter),
+        );
+
+        for index in 0..super::MAX_ACTIVE_REQUESTS {
+            sidecar
+                .send(ValidatedCommand {
+                    request_id: format!("active-route-{index}"),
+                    kind: CommandKind::ListPlugins,
+                    payload: json!({}),
+                })
+                .unwrap();
+        }
+        assert_eq!(
+            sidecar.send(ValidatedCommand {
+                request_id: "active-route-overflow".to_string(),
+                kind: CommandKind::ListPlugins,
+                payload: json!({}),
+            }),
+            Err(super::HOST_BUSY_MESSAGE)
+        );
+        assert_eq!(writes.lock().unwrap().len(), super::MAX_ACTIVE_REQUESTS);
+    }
+
+    #[test]
+    fn private_route_overflow_delivers_one_reserved_safe_terminal() {
+        let queued_events = Arc::new(AtomicUsize::new(0));
+        let (sender, receiver) = mpsc::sync_channel(super::MAX_PRIVATE_BUFFERED_EVENTS + 1);
+        let request = ActiveRequest::new(
+            "private-overflow".to_string(),
+            ResponseContract::Plugin {
+                plugin_id: "translator".to_string(),
+                operation: "translate".to_string(),
+            },
+            RequestRoute::Private(PrivateRoute {
+                sender,
+                queued_events,
+            }),
+        );
+        let emitter: Arc<dyn EventEmitter> = Arc::new(FakeEmitter);
+
+        for index in 0..super::MAX_PRIVATE_BUFFERED_EVENTS {
+            assert!(request.dispatch(&emitter, json!({"status": "chunk", "index": index}), false,));
+        }
+        assert!(!request.dispatch(&emitter, json!({"status": "chunk"}), false));
+        assert!(!request.dispatch(&emitter, json!({"status": "chunk"}), false));
+
+        for _ in 0..super::MAX_PRIVATE_BUFFERED_EVENTS {
+            assert!(matches!(
+                receiver.recv().unwrap(),
+                PrivateDelivery::Event(_)
+            ));
+        }
+        let PrivateDelivery::Terminal(terminal) = receiver.recv().unwrap() else {
+            panic!("reserved terminal delivery was not emitted");
+        };
+        assert_eq!(terminal["request_id"], "private-overflow");
+        assert_eq!(terminal["status"], "error");
+        assert_eq!(terminal["code"], "runtime_unavailable");
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    fn background_reader_reports_a_joined_exit() {
+        let reader = spawn_stderr_drainer(Box::new(std::io::Cursor::new(b"fixture")));
+
+        assert!(reader.wait(Duration::from_secs(1)));
     }
 
     #[test]
@@ -3495,8 +3802,16 @@ mod tests {
     #[test]
     fn stdout_without_a_trusted_request_id_fails_all_and_next_send_restarts_the_child() {
         let writes = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
         let factory = FakeProcessFactory::new(vec![
-            FakeProcess::with_stdout(writes.clone(), b"Traceback secret=value\n".to_vec()),
+            FakeProcess::with_stdout_reader(
+                writes.clone(),
+                Box::new(WriteGatedReader::new(
+                    writes.clone(),
+                    release,
+                    vec![(1, b"Traceback secret=value\n".to_vec())],
+                )),
+            ),
             FakeProcess::running(writes.clone()),
         ]);
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -3554,6 +3869,7 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::new()));
         let emitter: Arc<dyn EventEmitter> = Arc::new(RecordingEmitter(events.clone()));
         let route = Arc::new(super::ActiveRequest::new(
+            "linearized".to_string(),
             super::ResponseContract::Core,
             super::RequestRoute::Public,
         ));
@@ -3632,6 +3948,7 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::new()));
         let emitter: Arc<dyn EventEmitter> = Arc::new(TargetRecordingEmitter(events.clone()));
         let route = super::ActiveRequest::new(
+            "owned".to_string(),
             super::ResponseContract::Core,
             super::RequestRoute::PublicTo("history".to_string()),
         );
@@ -3651,6 +3968,7 @@ mod tests {
         let active_requests = Arc::new(Mutex::new(HashMap::from([(
             "req-active".to_string(),
             Arc::new(super::ActiveRequest::new(
+                "req-active".to_string(),
                 super::ResponseContract::Core,
                 super::RequestRoute::Public,
             )),
@@ -4483,7 +4801,9 @@ mod tests {
 
     #[test]
     fn runtime_diagnostics_environment_requires_exact_enablement_and_safe_directory() {
-        let safe = std::env::temp_dir().join("reflex-diagnostics-environment").join("diagnostics");
+        let safe = std::env::temp_dir()
+            .join("reflex-diagnostics-environment")
+            .join("diagnostics");
         assert_eq!(
             super::trusted_runtime_diagnostics_directory(
                 Some(std::ffi::OsString::from("1")),
