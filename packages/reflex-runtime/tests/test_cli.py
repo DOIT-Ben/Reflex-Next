@@ -171,6 +171,58 @@ class StreamingFixtureCapability(FixtureCapability):
         yield {"status": "result", "data": {"text": "AB"}}
 
 
+class EndlessFixtureCapability(FixtureCapability):
+    def invoke(self, operation, payload, services, cancellation):
+        index = 0
+        while True:
+            cancellation.raise_if_cancelled()
+            yield {"status": "chunk", "data": {"index": index}}
+            index += 1
+
+
+class DeadlineFixtureCapability(FixtureCapability):
+    def invoke(self, operation, payload, services, cancellation):
+        cancellation.wait(timeout=2)
+        cancellation.raise_if_cancelled()
+
+
+class PluginConcurrencyCapability(FixtureCapability):
+    def __init__(self):
+        self.release = threading.Event()
+        self.four_active = threading.Event()
+        self.five_active = threading.Event()
+        self._lock = threading.Lock()
+        self.active = 0
+        self.max_active = 0
+
+    def invoke(self, operation, payload, services, cancellation):
+        with self._lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            if self.active >= 4:
+                self.four_active.set()
+            if self.active >= 5:
+                self.five_active.set()
+        try:
+            self.release.wait(timeout=3)
+            cancellation.raise_if_cancelled()
+            return {"released": True}
+        finally:
+            with self._lock:
+                self.active -= 1
+
+
+class StubbornFixtureCapability(FixtureCapability):
+    def __init__(self):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def invoke(self, operation, payload, services, cancellation):
+        self.entered.set()
+        self.release.wait(timeout=3)
+        return {"ignored_cancellation": True}
+
+
 class GatewayFixtureCapability:
     descriptor = PluginDescriptor(
         plugin_id="translator",
@@ -1221,7 +1273,7 @@ def test_runtime_busy_rejects_before_creating_an_unbounded_thread():
     )
     private_input = "runtime-busy-private-input-must-not-leak"
 
-    for index in range(32):
+    for index in range(36):
         runtime.handle(
             parse_command(optimize_command(f"held-{index}", f"held input {index}"))
         )
@@ -1235,7 +1287,7 @@ def test_runtime_busy_rejects_before_creating_an_unbounded_thread():
     )
     visible = output.getvalue() + diagnostics.getvalue()
 
-    assert len(created_threads) == 32
+    assert len(created_threads) == 4
     assert all(thread.started for thread in created_threads)
     assert overloaded["type"] == "error"
     assert overloaded["data"] == {
@@ -1682,6 +1734,159 @@ def test_runtime_wraps_streamed_plugin_statuses_in_its_own_envelopes():
         "result",
     ]
     assert all(event["request_id"] == "plugin-stream" for event in events)
+
+
+@pytest.mark.parametrize(
+    ("capability", "runtime_options", "expected_code"),
+    [
+        (EndlessFixtureCapability(), {"max_plugin_events": 2}, "plugin_event_limit"),
+        (
+            FixtureCapability(),
+            {"max_plugin_output_bytes": 8},
+            "plugin_output_too_large",
+        ),
+        (
+            DeadlineFixtureCapability(),
+            {"plugin_timeout_seconds": 0.02},
+            "plugin_timeout",
+        ),
+    ],
+)
+def test_runtime_enforces_plugin_call_resource_budgets(
+    capability, runtime_options, expected_code
+):
+    from io import StringIO
+
+    output = StringIO()
+    runtime = _runtime_with_capability(
+        capability,
+        output,
+        stderr=StringIO(),
+        services={"fixture_service": True},
+        **runtime_options,
+    )
+    runtime.handle(
+        parse_command(
+            {
+                "version": 1,
+                "request_id": f"budget-{expected_code}",
+                "type": "plugin_call",
+                "payload": {
+                    "plugin_id": "translator",
+                    "operation": "translate",
+                    "input": {"text": "private"},
+                },
+            }
+        )
+    )
+
+    deadline = time.monotonic() + 2
+    while runtime.has_active_tasks() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    runtime.close(timeout=1)
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+
+    assert events[0]["status"] == "started"
+    assert events[-1]["status"] == "error"
+    assert events[-1]["code"] == expected_code
+    assert sum(event["status"] in {"result", "cancelled", "error"} for event in events) == 1
+
+
+def test_runtime_runs_at_most_four_plugin_calls_on_the_shared_bounded_scheduler():
+    from io import StringIO
+
+    output = StringIO()
+    capability = PluginConcurrencyCapability()
+    runtime = _runtime_with_capability(
+        capability,
+        output,
+        stderr=StringIO(),
+        services={"fixture_service": True},
+    )
+
+    try:
+        for index in range(8):
+            runtime.handle(
+                parse_command(
+                    {
+                        "version": 1,
+                        "request_id": f"plugin-bounded-{index}",
+                        "type": "plugin_call",
+                        "payload": {
+                            "plugin_id": "translator",
+                            "operation": "translate",
+                            "input": {"text": "fixture"},
+                        },
+                    }
+                )
+            )
+
+        assert capability.four_active.wait(timeout=2)
+        assert not capability.five_active.wait(timeout=0.2)
+        assert capability.max_active == 4
+    finally:
+        capability.release.set()
+        runtime.close(timeout=3)
+
+
+def test_stubborn_plugin_times_out_without_blocking_runtime_or_spawning_more_workers():
+    from io import StringIO
+
+    output = StringIO()
+    capability = StubbornFixtureCapability()
+    runtime = _runtime_with_capability(
+        capability,
+        output,
+        stderr=StringIO(),
+        services={"fixture_service": True},
+        plugin_timeout_seconds=0.02,
+        max_plugin_concurrency=1,
+    )
+
+    try:
+        for request_id in ("stubborn-first", "stubborn-second"):
+            runtime.handle(
+                parse_command(
+                    {
+                        "version": 1,
+                        "request_id": request_id,
+                        "type": "plugin_call",
+                        "payload": {
+                            "plugin_id": "translator",
+                            "operation": "translate",
+                            "input": {"text": "private"},
+                        },
+                    }
+                )
+            )
+            deadline = time.monotonic() + 2
+            while runtime.has_active_tasks() and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        first = [event for event in events if event["request_id"] == "stubborn-first"]
+        second = [event for event in events if event["request_id"] == "stubborn-second"]
+
+        assert capability.entered.is_set()
+        assert [event["status"] for event in first] == ["started", "error"]
+        assert first[-1]["code"] == "plugin_timeout"
+        assert [event["status"] for event in second] == ["started", "error"]
+        assert second[-1]["code"] == "plugin_busy"
+        assert runtime._plugin_executor.active_count == 1
+    finally:
+        capability.release.set()
+        deadline = time.monotonic() + 2
+        while runtime._plugin_executor.active_count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        runtime.close(timeout=2)
+
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [
+        event["status"]
+        for event in events
+        if event["request_id"] == "stubborn-first"
+    ] == ["started", "error"]
+    assert runtime._plugin_executor.active_count == 0
 
 
 def test_list_plugins_emits_capability_list_instead_of_core_event():

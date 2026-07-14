@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import sys
 import threading
 import time
@@ -34,6 +35,17 @@ from .capability_registry import CapabilityDenied, CapabilityRegistry, HistoryPo
 from .diagnostics import DiagnosticWriter
 from .mock_provider import MockProvider
 from .plugin_manager import PluginManager
+from .plugin_limits import (
+    DEFAULT_MAX_PLUGIN_EVENTS,
+    DEFAULT_MAX_PLUGIN_OUTPUT_BYTES,
+    DEFAULT_MAX_PLUGIN_CONCURRENCY,
+    DEFAULT_PLUGIN_EVENT_BUFFER,
+    DEFAULT_PLUGIN_TIMEOUT_SECONDS,
+    BoundedPluginExecutor,
+    PluginCallBudget,
+    PluginExecutionFailure,
+    PluginLimitExceeded,
+)
 from .plugin_contracts import (
     CapabilityListEnvelope,
     PluginDescriptor,
@@ -45,7 +57,12 @@ from .protocol import CommandEnvelope, ProtocolError
 from .provider_errors import ProviderRuntimeError, provider_unconfigured, runtime_busy
 from .provider_gateway import ProviderGateway
 from .provider_registry import ProviderRegistry
-from .task_registry import DuplicateRequestId, TaskCapacityExceeded, TaskRegistry
+from .task_registry import (
+    BoundedTaskScheduler,
+    DuplicateRequestId,
+    TaskCapacityExceeded,
+    TaskRegistry,
+)
 
 
 @dataclass(frozen=True, repr=False)
@@ -115,15 +132,31 @@ class RuntimeContext:
         thread_factory: Any = threading.Thread,
         max_active_optimize: int = 4,
         max_registered_tasks: int = 32,
+        plugin_timeout_seconds: float = DEFAULT_PLUGIN_TIMEOUT_SECONDS,
+        max_plugin_events: int = DEFAULT_MAX_PLUGIN_EVENTS,
+        max_plugin_output_bytes: int = DEFAULT_MAX_PLUGIN_OUTPUT_BYTES,
+        max_plugin_concurrency: int = DEFAULT_MAX_PLUGIN_CONCURRENCY,
+        max_buffered_plugin_events: int = DEFAULT_PLUGIN_EVENT_BUFFER,
         diagnostics: DiagnosticWriter | None = None,
     ) -> None:
         self._stdout = stdout or sys.stdout
         self._stderr = stderr or sys.stderr
         self._lock = threading.Lock()
-        self._threads: dict[str, threading.Thread] = {}
         self._tasks = TaskRegistry(max_tasks=max_registered_tasks)
-        self._optimize_slots = threading.BoundedSemaphore(max_active_optimize)
         self._thread_factory = thread_factory
+        self._task_scheduler = BoundedTaskScheduler(
+            self._tasks,
+            max_workers=max_active_optimize,
+            max_queue=max_registered_tasks,
+            thread_factory=thread_factory,
+        )
+        self._plugin_timeout_seconds = plugin_timeout_seconds
+        self._max_plugin_events = max_plugin_events
+        self._max_plugin_output_bytes = max_plugin_output_bytes
+        self._plugin_executor = BoundedPluginExecutor(
+            max_workers=max_plugin_concurrency,
+            max_buffered_events=max_buffered_plugin_events,
+        )
         self._diagnostics = diagnostics or DiagnosticWriter(Path("."), enabled=False)
         self._diagnostic_lock = threading.Lock()
         self._diagnostic_requests: dict[str, _DiagnosticRequestState] = {}
@@ -317,7 +350,15 @@ class RuntimeContext:
 
     def start_optimize(self, command: CommandEnvelope) -> None:
         try:
-            token = self._tasks.register(command.request_id)
+            self._task_scheduler.submit(
+                command.request_id,
+                lambda token: self._run_optimize(command, token),
+                on_cancel=lambda: self.emit_status(
+                    command.request_id,
+                    StatusPhase.CANCELLED,
+                    "Generation cancelled.",
+                ),
+            )
         except DuplicateRequestId:
             self._diagnose_duplicate(command)
             return
@@ -325,15 +366,7 @@ class RuntimeContext:
             self.emit_provider_error(command.request_id, runtime_busy())
             return
 
-        try:
-            thread = self._thread_factory(
-                target=self._run_optimize,
-                args=(command, token),
-                daemon=True,
-            )
-            self._start_thread(command.request_id, token, thread)
         except Exception:
-            self._tasks.cleanup(command.request_id, token)
             self.emit_error(
                 command.request_id,
                 "runtime_error",
@@ -346,65 +379,43 @@ class RuntimeContext:
 
     def start_plugin_call(self, command: CommandEnvelope, *, admin: bool) -> None:
         try:
-            token = self._tasks.register(command.request_id)
+            self._task_scheduler.submit(
+                command.request_id,
+                lambda token: self._run_plugin_call(command, token, admin),
+                on_cancel=lambda: self._emit_plugin_status(command, "cancelled", {}),
+            )
         except DuplicateRequestId:
             self._diagnose_duplicate(command)
             return
         except TaskCapacityExceeded:
             self.emit_plugin_error(command, "runtime_busy")
             return
-        try:
-            thread = self._thread_factory(
-                target=self._run_plugin_call,
-                args=(command, token, admin),
-                daemon=True,
-            )
-            self._start_thread(command.request_id, token, thread)
         except Exception:
-            self._tasks.cleanup(command.request_id, token)
             self.emit_plugin_error(command, "thread_start_failed")
             self.diagnostic(
                 f"thread_start_failed request_id={command.request_id} category=thread_start_failed"
             )
 
-    def _start_thread(
-        self, request_id: str, token: CancellationToken, thread: threading.Thread
-    ) -> None:
-        with self._lock:
-            self._threads[request_id] = thread
-        try:
-            thread.start()
-        except Exception:
-            with self._lock:
-                if self._threads.get(request_id) is thread:
-                    self._threads.pop(request_id, None)
-            self._tasks.cleanup(request_id, token)
-            raise
-
     def cancel(self, request_id: str) -> None:
-        self._tasks.cancel(request_id)
+        if not self._task_scheduler.cancel(request_id):
+            self._tasks.cancel(request_id)
 
     def cancel_all(self) -> None:
+        self._task_scheduler.cancel_all()
         self._tasks.cancel_all()
 
     def close(self, timeout: float = 1.0) -> None:
         self.cancel_all()
         deadline = time.monotonic() + max(0.0, timeout)
-        with self._lock:
-            threads = tuple(self._threads.values())
-        for thread in threads:
-            if thread is threading.current_thread():
-                continue
-            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        self._task_scheduler.close(timeout=max(0.0, deadline - time.monotonic()))
+        self._plugin_executor.close(timeout=max(0.0, deadline - time.monotonic()))
         self._record_diagnostic(
             "runtime_stopped", component="runtime", status="stopped"
         )
         self._diagnostics.close()
 
     def has_active_tasks(self) -> bool:
-        with self._lock:
-            request_ids = tuple(self._threads)
-        return any(self._tasks.is_active(request_id) for request_id in request_ids)
+        return self._tasks.has_tasks()
 
     def emit_error(
         self,
@@ -489,19 +500,7 @@ class RuntimeContext:
         )
 
     def _run_optimize(self, command: CommandEnvelope, token: CancellationToken) -> None:
-        slot_acquired = False
         try:
-            while not token.is_cancelled:
-                if self._optimize_slots.acquire(timeout=0.05):
-                    slot_acquired = True
-                    break
-            if not slot_acquired:
-                self.emit_status(
-                    command.request_id,
-                    StatusPhase.CANCELLED,
-                    "Generation cancelled.",
-                )
-                return
             request = self._request_from_payload(command.payload)
             started_at = time.monotonic()
             self._start_diagnostic_request(
@@ -543,8 +542,6 @@ class RuntimeContext:
                 f"runtime_error request_id={command.request_id} category=untrusted_provider_exception"
             )
         finally:
-            if slot_acquired:
-                self._optimize_slots.release()
             incomplete_state = self._take_diagnostic_request(command.request_id)
             if incomplete_state is not None:
                 self._record_request_terminal(
@@ -554,11 +551,6 @@ class RuntimeContext:
                     status="incomplete",
                     code="missing_terminal",
                 )
-            self._tasks.cleanup(command.request_id, token)
-            with self._lock:
-                thread = self._threads.get(command.request_id)
-                if thread is threading.current_thread():
-                    self._threads.pop(command.request_id, None)
 
     def _start_diagnostic_request(
         self,
@@ -799,6 +791,12 @@ class RuntimeContext:
     ) -> None:
         plugin_id = command.payload["plugin_id"]
         operation = command.payload["operation"]
+        budget = PluginCallBudget(
+            token,
+            timeout_seconds=self._plugin_timeout_seconds,
+            max_events=self._max_plugin_events,
+            max_output_bytes=self._max_plugin_output_bytes,
+        )
         try:
             self.emit_runtime(
                 PluginEventEnvelope(
@@ -814,20 +812,65 @@ class RuntimeContext:
             services = self._services
             if self._has_capability_permission(plugin_id, "network-via-provider"):
                 payload, services = self._provider_backed_capability_call(payload)
-            result = invoke(
-                plugin_id,
-                operation,
-                payload,
-                services,
+            execution = self._plugin_executor.submit(
                 token,
+                lambda send: self._execute_plugin_call(
+                    invoke,
+                    plugin_id,
+                    operation,
+                    payload,
+                    services,
+                    token,
+                    budget,
+                    send,
+                ),
             )
-            self._emit_plugin_result(command, token, result)
-        except OperationCancelled:
-            self._emit_plugin_status(command, "cancelled", {})
-        except CapabilityDenied as error:
+            while True:
+                budget.check()
+                if token.is_cancelled:
+                    self._emit_plugin_status(command, "cancelled", {})
+                    return
+                try:
+                    message = execution.receive(
+                        timeout=min(0.05, max(0.001, budget.remaining_seconds()))
+                    )
+                except queue.Empty:
+                    if execution.completed:
+                        raise CapabilityDenied("plugin_failed")
+                    continue
+                if isinstance(message, PluginExecutionFailure):
+                    raise message.error
+                status, data, code = message
+                if status == "error":
+                    self.emit_runtime(
+                        PluginEventEnvelope(
+                            command.request_id,
+                            plugin_id,
+                            operation,
+                            "error",
+                            code=code,
+                        )
+                    )
+                    return
+                self._emit_plugin_status(command, status, data)
+                if status == "result":
+                    return
+        except PluginLimitExceeded as error:
             self.emit_plugin_error(command, error.code)
+        except OperationCancelled:
+            if budget.expired:
+                self.emit_plugin_error(command, "plugin_timeout")
+            else:
+                self._emit_plugin_status(command, "cancelled", {})
+        except CapabilityDenied as error:
+            if budget.expired:
+                self.emit_plugin_error(command, "plugin_timeout")
+            else:
+                self.emit_plugin_error(command, error.code)
         except Exception as exc:
-            if token.is_cancelled:
+            if budget.expired:
+                self.emit_plugin_error(command, "plugin_timeout")
+            elif token.is_cancelled:
                 self._emit_plugin_status(command, "cancelled", {})
             else:
                 code = _safe_plugin_error_code(exc)
@@ -837,10 +880,7 @@ class RuntimeContext:
                         f"plugin_failed request_id={command.request_id} category=untrusted_plugin_exception"
                     )
         finally:
-            self._tasks.cleanup(command.request_id, token)
-            with self._lock:
-                if self._threads.get(command.request_id) is threading.current_thread():
-                    self._threads.pop(command.request_id, None)
+            budget.close()
 
     def _has_capability_permission(self, plugin_id: str, permission: str) -> bool:
         return any(
@@ -861,25 +901,32 @@ class RuntimeContext:
         )
         return plugin_payload, MappingProxyType({"provider_gateway": gateway})
 
-    def _emit_plugin_result(
+    def _execute_plugin_call(
         self,
-        command: CommandEnvelope,
+        invoke: Any,
+        plugin_id: str,
+        operation: str,
+        payload: dict[str, Any],
+        services: Any,
         token: CancellationToken,
-        result: Any,
+        budget: PluginCallBudget,
+        send: Any,
     ) -> None:
+        result = invoke(plugin_id, operation, payload, services, token)
+        budget.check()
         if token.is_cancelled:
-            self._emit_plugin_status(command, "cancelled", {})
             return
         if isinstance(result, dict):
-            self._emit_plugin_status(command, "result", result)
+            budget.account_event(result)
+            send(("result", result, None))
             return
         if not isinstance(result, Iterable) or isinstance(result, (str, bytes)):
             raise CapabilityDenied("plugin_invalid_result")
 
         terminal = False
         for item in result:
+            budget.check()
             if token.is_cancelled:
-                self._emit_plugin_status(command, "cancelled", {})
                 return
             if not isinstance(item, dict):
                 raise CapabilityDenied("plugin_invalid_result")
@@ -887,15 +934,11 @@ class RuntimeContext:
             if status == "error":
                 if set(item) != {"status", "code"}:
                     raise CapabilityDenied("plugin_invalid_result")
-                self.emit_runtime(
-                    PluginEventEnvelope(
-                        command.request_id,
-                        command.payload["plugin_id"],
-                        command.payload["operation"],
-                        "error",
-                        code=item.get("code"),
-                    )
-                )
+                budget.account_event({})
+                code = item.get("code")
+                if not is_safe_id(code):
+                    raise CapabilityDenied("plugin_invalid_result")
+                send(("error", {}, code))
                 return
             if set(item) != {"status", "data"} or status not in {
                 "chunk",
@@ -906,12 +949,15 @@ class RuntimeContext:
             data = item.get("data")
             if not isinstance(data, dict):
                 raise CapabilityDenied("plugin_invalid_result")
-            self._emit_plugin_status(command, status, data)
+            budget.account_event(data)
+            if not send((status, data, None)):
+                return
             terminal = status == "result"
             if terminal:
                 return
         if not terminal:
-            self._emit_plugin_status(command, "result", {})
+            budget.account_event({})
+            send(("result", {}, None))
 
     def _emit_plugin_status(
         self, command: CommandEnvelope, status: str, data: dict[str, Any]
