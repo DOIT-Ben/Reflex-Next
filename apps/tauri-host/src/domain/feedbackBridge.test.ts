@@ -65,4 +65,35 @@ describe("feedback bridge", () => {
     await expect(malformedCapture.captureWindow()).rejects.toThrow("反馈截图暂不可用");
     await expect(malformedSubmit.submit(payload)).rejects.toThrow("反馈服务返回了无效结果");
   });
+
+  it("reads and updates cloud privacy and quota without exposing the installation token", async () => {
+    const consent = {
+      usage_metrics: false,
+      improvement_data: true,
+      feedback_attachments: false,
+      policy_version: "2026-07-14",
+      updated_at: null
+    };
+    const quota = {
+      usage_date: "2026-07-14",
+      requests_used: 1,
+      requests_limit: 20,
+      input_chars_used: 10,
+      input_chars_limit: 200000,
+      output_chars_used: 8,
+      output_chars_limit: 200000
+    };
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "cloud_get_quota") return quota;
+      if (command === "cloud_delete_data") return true;
+      return consent;
+    });
+    const bridge = createFeedbackBridge(hostWithInvoke(invoke));
+
+    await expect(bridge.getConsent()).resolves.toEqual(consent);
+    await expect(bridge.updateConsent(consent)).resolves.toEqual(consent);
+    await expect(bridge.getQuota()).resolves.toEqual(quota);
+    await expect(bridge.deleteCloudData()).resolves.toBe(true);
+    expect(JSON.stringify(invoke.mock.calls)).not.toContain("installation");
+  });
 });

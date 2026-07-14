@@ -31,6 +31,8 @@
   import { createDiagnosticBundleBridge, type DiagnosticBundleBridge } from "./domain/diagnosticBundleBridge";
   import {
     createFeedbackBridge,
+    type CloudConsent,
+    type CloudQuota,
     type FeedbackBridge,
     type FeedbackFormValue,
     type FeedbackScreenshot,
@@ -264,6 +266,17 @@
   let feedbackCaptureNotice: string | null = null;
   let feedbackSubmitBusy = false;
   let feedbackSubmitNotice: string | null = null;
+  let cloudConsent: CloudConsent = {
+    usage_metrics: false,
+    improvement_data: false,
+    feedback_attachments: false,
+    policy_version: "2026-07-14",
+    updated_at: null
+  };
+  let cloudImprovementDraft = false;
+  let cloudQuota: CloudQuota | null = null;
+  let cloudPrivacyBusy = false;
+  let cloudPrivacyNotice: string | null = null;
   let appVersion = "development";
   let viewScale = 1;
   let windowSizePreset: WindowSizePreset = "default";
@@ -299,6 +312,7 @@
       capabilityBridge = new CapabilityBridge(host);
       diagnosticBundleBridge = createDiagnosticBundleBridge(host);
       feedbackBridge = createFeedbackBridge(host);
+      void hydrateCloudPrivacy();
       settingsApi = createSettingsApi(host);
       clipboardReader = createClipboardReader(host);
       clipboardWriter = createClipboardWriter(host);
@@ -576,6 +590,88 @@
     settingsNotice = null;
     secretNotice = null;
     void hydrateSettings();
+    void hydrateCloudPrivacy();
+  }
+
+  async function hydrateCloudPrivacy() {
+    const bridge = feedbackBridge;
+    if (!bridge || cloudPrivacyBusy) return;
+    cloudPrivacyBusy = true;
+    cloudPrivacyNotice = null;
+    try {
+      const [consent, quota] = await Promise.all([bridge.getConsent(), bridge.getQuota()]);
+      cloudConsent = consent;
+      cloudImprovementDraft = consent.improvement_data;
+      cloudQuota = quota;
+    } catch {
+      cloudPrivacyNotice = "云端隐私设置暂不可用。";
+    } finally {
+      cloudPrivacyBusy = false;
+    }
+  }
+
+  async function saveCloudPrivacyDraft(): Promise<boolean> {
+    if (cloudImprovementDraft === cloudConsent.improvement_data) return true;
+    const bridge = feedbackBridge;
+    if (!bridge) {
+      cloudPrivacyNotice = "当前环境无法保存云端隐私设置。";
+      return false;
+    }
+    cloudPrivacyBusy = true;
+    cloudPrivacyNotice = null;
+    try {
+      cloudConsent = await bridge.updateConsent({
+        ...cloudConsent,
+        improvement_data: cloudImprovementDraft,
+        policy_version: "2026-07-14"
+      });
+      cloudImprovementDraft = cloudConsent.improvement_data;
+      cloudPrivacyNotice = cloudConsent.improvement_data
+        ? "改进计划已开启。"
+        : "改进计划已关闭。";
+      return true;
+    } catch {
+      cloudImprovementDraft = cloudConsent.improvement_data;
+      cloudPrivacyNotice = "云端隐私设置保存失败，请重试。";
+      return false;
+    } finally {
+      cloudPrivacyBusy = false;
+    }
+  }
+
+  function confirmDeleteCloudData() {
+    confirmation = {
+      title: "删除全部云端数据？",
+      description: "将删除当前安装身份、反馈附件和改进计划数据。此操作无法撤销。",
+      confirmLabel: "删除云端数据",
+      danger: true,
+      run: performDeleteCloudData
+    };
+  }
+
+  async function performDeleteCloudData() {
+    const bridge = feedbackBridge;
+    if (!bridge || cloudPrivacyBusy) return;
+    cloudPrivacyBusy = true;
+    cloudPrivacyNotice = null;
+    try {
+      await bridge.deleteCloudData();
+      cloudConsent = {
+        usage_metrics: false,
+        improvement_data: false,
+        feedback_attachments: false,
+        policy_version: "2026-07-14",
+        updated_at: null
+      };
+      cloudImprovementDraft = false;
+      cloudQuota = null;
+      cloudPrivacyNotice = "云端数据已删除。";
+      showToast("云端数据已删除。", "success");
+    } catch {
+      cloudPrivacyNotice = "云端数据删除失败，请重试。";
+    } finally {
+      cloudPrivacyBusy = false;
+    }
   }
 
   async function saveSettings() {
@@ -602,7 +698,8 @@
         semanticModelRun?.abort();
         semanticModel = createSemanticModelState();
       }
-      showToast("✓ 设置已保存");
+      const cloudSaved = await saveCloudPrivacyDraft();
+      showToast(cloudSaved ? "✓ 设置已保存" : "本地设置已保存，云端授权未更新。", cloudSaved ? "success" : "error");
     } catch (error) {
       settingsNotice = safeDesktopSettingsError(error);
     } finally {
@@ -685,6 +782,12 @@
   }
 
   async function refreshProviderSecretStatus(providerId: string) {
+    if (providerId === "reflex-cloud") {
+      secretStatus = { providerId, configured: true, maskedTail: null };
+      providerStatusError = false;
+      secretNotice = null;
+      return;
+    }
     const api = settingsApi;
     if (!api) return;
     try {
@@ -2021,6 +2124,10 @@
         semanticStatusText={semanticModelStatusText()}
         diagnosticBusy={diagnosticExportBusy}
         diagnosticNotice={diagnosticExportNotice}
+        cloudImprovementEnabled={cloudImprovementDraft}
+        {cloudQuota}
+        {cloudPrivacyBusy}
+        {cloudPrivacyNotice}
         translate={tr}
         onClose={cancelSettingsView}
         onSave={saveSettings}
@@ -2037,6 +2144,9 @@
         onSemanticDownload={downloadSemanticModel}
         onDiagnosticExport={exportDiagnosticBundle}
         onDiagnosticCancel={cancelDiagnosticBundleExport}
+        onCloudImprovementChange={(enabled) => (cloudImprovementDraft = enabled)}
+        onCloudRefresh={hydrateCloudPrivacy}
+        onCloudDeleteData={confirmDeleteCloudData}
       />
     {/if}
   </section>

@@ -7,6 +7,7 @@ import {
   parseNdjsonEnvelopes,
   parseNdjsonEvents,
   selectEventsForRequest,
+  RoutedCoreBridge,
   TauriRuntimeBridge,
   type CoreEventEnvelope,
   type TauriEvent
@@ -179,6 +180,45 @@ describe("core bridge", () => {
       { type: "metric", data: { save_status: "saved", history_id: "history-1" } }
     ]);
     expect(unlistenCalled).toBe(true);
+  });
+
+  it("routes Reflex Cloud requests through authenticated cloud commands only", async () => {
+    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    const invoked: Array<{ command: string; args: unknown }> = [];
+    const host = {
+      invoke: async (command: string, args: unknown) => {
+        invoked.push({ command, args });
+        if (command !== "cloud_optimize") return;
+        queueMicrotask(() => {
+          for (const event of [
+            { type: "request", data: { provider: "minimax", model: "MiniMax-M2.7-highspeed" } },
+            { type: "chunk", data: { text: "云端" } },
+            { type: "done", data: { text: "云端结果", scene: "general", provider: "minimax", model: "MiniMax-M2.7-highspeed" } },
+            { type: "metric", data: { elapsed_seconds: 0.2 } }
+          ] as const) {
+            listener?.({ payload: { version: 1, request_id: "req-cloud", event } });
+          }
+        });
+      },
+      listen: async (_eventName: string, handler: (event: TauriEvent<CoreEventEnvelope>) => void) => {
+        listener = handler;
+        return () => undefined;
+      }
+    };
+    const bridge = new RoutedCoreBridge(host, { requestIdFactory: () => "req-cloud" });
+    const request = { ...createDraftRequest("云端优化"), provider: "reflex-cloud" };
+
+    const events = [];
+    for await (const event of bridge.optimize(request)) events.push(event);
+
+    expect(invoked).toHaveLength(1);
+    expect(invoked[0]).toMatchObject({
+      command: "cloud_optimize",
+      args: { payload: { request_id: "req-cloud", text: "云端优化" } }
+    });
+    expect(events.map((event) => event.type)).toEqual(["request", "chunk", "done", "metric"]);
+    expect(events[0].data).toMatchObject({ provider: "reflex-cloud", model: "MiniMax-M2.7-highspeed" });
+    expect(events[2].data).toMatchObject({ provider: "reflex-cloud", model: "MiniMax-M2.7-highspeed" });
   });
 
   it("sends cancel through Tauri invoke when an active run is aborted", async () => {

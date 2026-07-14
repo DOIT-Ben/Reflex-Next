@@ -121,6 +121,104 @@ export class TauriRuntimeBridge implements CoreBridge {
   }
 }
 
+export class CloudCoreBridge implements CoreBridge {
+  private readonly requestIdFactory: () => string;
+
+  constructor(
+    private readonly host: TauriHostApi,
+    options: { requestIdFactory?: () => string } = {}
+  ) {
+    this.requestIdFactory = options.requestIdFactory ?? createRequestId;
+  }
+
+  async *optimize(
+    request: OptimizeRequestDraft,
+    options: OptimizeRunOptions = {}
+  ): AsyncGenerator<CoreEvent> {
+    const requestId = this.requestIdFactory();
+    const queue = createAsyncEventQueue();
+    let unlisten = () => undefined;
+    const abort = () => {
+      void this.host
+        .invoke("cloud_cancel", { payload: { request_id: requestId } })
+        .finally(() => queue.close());
+    };
+
+    try {
+      unlisten = await this.host.listen<CoreEventEnvelope>(
+        "reflex://cloud-event",
+        ({ payload }) => {
+          if (payload.request_id !== requestId) return;
+          queue.push(presentCloudEvent(payload.event));
+          if (
+            payload.event.type === "metric" ||
+            payload.event.type === "error" ||
+            (payload.event.type === "status" &&
+              (payload.event.data.phase === "cancelled" || payload.event.data.phase === "error"))
+          ) {
+            queue.close();
+          }
+        }
+      );
+      if (options.signal?.aborted) {
+        abort();
+        return;
+      }
+      options.signal?.addEventListener("abort", abort, { once: true });
+      await this.host.invoke("cloud_optimize", {
+        payload: {
+          request_id: requestId,
+          text: request.text,
+          mode: request.mode,
+          style: request.style,
+          scene: request.scene,
+          scene_policy: request.scene_policy,
+          language: request.metadata.language
+        }
+      });
+
+      while (true) {
+        const item = await queue.next();
+        if (item.done) return;
+        yield item.value;
+      }
+    } catch (error) {
+      yield {
+        type: "error",
+        data: {
+          code: "cloud_unavailable",
+          message: cloudErrorMessage(error),
+          recoverable: true,
+          action: "retry"
+        }
+      };
+    } finally {
+      options.signal?.removeEventListener("abort", abort);
+      unlisten();
+    }
+  }
+}
+
+export class RoutedCoreBridge extends TauriRuntimeBridge {
+  private readonly cloud: CloudCoreBridge;
+
+  constructor(host: TauriHostApi, options: { requestIdFactory?: () => string } = {}) {
+    super(host, options);
+    this.cloud = new CloudCoreBridge(host, options);
+  }
+
+  async *optimize(
+    request: OptimizeRequestDraft,
+    options: OptimizeRunOptions = {}
+  ): AsyncGenerator<CoreEvent> {
+    if (request.provider === "reflex-cloud") {
+      yield* this.cloud.optimize(request, options);
+      return;
+    }
+    yield* super.optimize(request, options);
+  }
+}
+
 export async function createDefaultCoreBridge(host?: TauriHostApi | null): Promise<CoreBridge> {
   if (!host) {
     return new DemoCoreBridge();
@@ -130,7 +228,7 @@ export async function createDefaultCoreBridge(host?: TauriHostApi | null): Promi
     await host.invoke("runtime_available");
   } catch {}
 
-  return new TauriRuntimeBridge(host);
+  return new RoutedCoreBridge(host);
 }
 
 export function parseNdjsonEvents(payload: string): CoreEvent[] {
@@ -221,6 +319,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function cloudErrorMessage(error: unknown): string {
+  const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+  if (message.includes("额度") || message.includes("频繁")) return message;
+  return "云端服务暂不可用，请稍后重试。";
+}
+
+function presentCloudEvent(event: CoreEvent): CoreEvent {
+  if (event.type !== "request" && event.type !== "done") return event;
+  return {
+    ...event,
+    data: { ...event.data, provider: "reflex-cloud" }
+  };
 }
 
 function createAsyncEventQueue() {

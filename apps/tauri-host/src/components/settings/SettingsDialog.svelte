@@ -2,6 +2,7 @@
   import Settings2 from "@lucide/svelte/icons/settings-2";
   import X from "@lucide/svelte/icons/x";
   import type { DesktopStatus } from "../../domain/desktopBridge";
+  import type { CloudQuota } from "../../domain/feedbackBridge";
   import {
     SETTINGS_PLUGIN_IDS,
     type HostSettingsDraft,
@@ -32,6 +33,10 @@
     semanticStatusText: string;
     diagnosticBusy: boolean;
     diagnosticNotice: string | null;
+    cloudImprovementEnabled: boolean;
+    cloudQuota: CloudQuota | null;
+    cloudPrivacyBusy: boolean;
+    cloudPrivacyNotice: string | null;
     translate: (source: string, values?: Record<string, string | number>) => string;
     onClose: () => void;
     onSave: () => void;
@@ -48,6 +53,9 @@
     onSemanticDownload: () => void;
     onDiagnosticExport: () => void;
     onDiagnosticCancel: () => void;
+    onCloudImprovementChange: (enabled: boolean) => void;
+    onCloudRefresh: () => void;
+    onCloudDeleteData: () => void;
   }
 
   let {
@@ -69,6 +77,10 @@
     semanticStatusText,
     diagnosticBusy,
     diagnosticNotice,
+    cloudImprovementEnabled,
+    cloudQuota,
+    cloudPrivacyBusy,
+    cloudPrivacyNotice,
     translate,
     onClose,
     onSave,
@@ -84,7 +96,10 @@
     onSemanticDelete,
     onSemanticDownload,
     onDiagnosticExport,
-    onDiagnosticCancel
+    onDiagnosticCancel,
+    onCloudImprovementChange,
+    onCloudRefresh,
+    onCloudDeleteData
   }: Props = $props();
 
   const scenePolicies: Array<{ id: HostSettingsDraft["scene_policy"]; label: string }> = [
@@ -126,6 +141,12 @@
     return semanticEnabled
       ? "已启用。仅在优化时检查已安装的本地模型；模型不可用时自动回退通用场景。"
       : "未启用。启用后只检查本地已安装模型，不会自动下载。";
+  }
+
+  function cloudQuotaText() {
+    if (!cloudQuota) return "额度状态暂不可用";
+    const remaining = Math.max(0, cloudQuota.requests_limit - cloudQuota.requests_used);
+    return `今日剩余 ${remaining} / ${cloudQuota.requests_limit} 次`;
   }
 </script>
 
@@ -174,6 +195,15 @@
             </label>
           </div>
 
+          {#if draft.default_provider === "reflex-cloud"}
+            <div class="credential-status configured">
+              <span class="status-dot" aria-hidden="true"></span>
+              <div>
+                <strong>{translate("无需本地 API Key")}</strong>
+                <span>{translate("使用 Reflex Cloud 免费额度")}</span>
+              </div>
+            </div>
+          {:else}
           <div class="api-key-row">
             <label>
               <span>API Key</span>
@@ -209,6 +239,7 @@
               </span>
             </div>
           </div>
+          {/if}
         {:else if section === "defaults"}
           <h3>{translate("默认行为")}</h3>
           <div class="settings-grid">
@@ -275,6 +306,15 @@
           <h3>{translate("安全与隐私")}</h3>
           <div class="settings-choice-list">
             <label class="settings-toggle">
+              <span><strong>{translate("加入产品改进计划")}</strong><small>{translate("仅在开启后保留脱敏的云端输入和结果，默认关闭")}</small></span>
+              <input
+                type="checkbox"
+                checked={cloudImprovementEnabled}
+                disabled={busy || cloudPrivacyBusy}
+                onchange={(event) => onCloudImprovementChange(event.currentTarget.checked)}
+              />
+            </label>
+            <label class="settings-toggle">
               <span><strong>{translate("保存历史记录")}</strong><small>{translate("记录优化结果，便于稍后查看")}</small></span>
               <input type="checkbox" checked={draft.history_enabled} disabled={busy} onchange={(event) => patchDraft({ history_enabled: event.currentTarget.checked })} />
             </label>
@@ -282,6 +322,15 @@
               <span><strong>{translate("隐私模式")}</strong><small>{translate("减少本地内容保留")}</small></span>
               <input type="checkbox" checked={draft.privacy_mode} disabled={busy} onchange={(event) => patchDraft({ privacy_mode: event.currentTarget.checked })} />
             </label>
+          </div>
+          <div class="settings-block">
+            <span class="field-label">{translate("云端免费额度")}</span>
+            <p class="warning-note">{translate(cloudQuotaText())}</p>
+            <div class="diagnostic-export-actions">
+              <button class="outline" type="button" disabled={cloudPrivacyBusy} onclick={onCloudRefresh}>{translate("刷新额度")}</button>
+              <button class="outline danger" type="button" disabled={cloudPrivacyBusy} onclick={onCloudDeleteData}>{translate("删除云端数据")}</button>
+            </div>
+            <p class="settings-feedback" role="status" aria-live="polite">{cloudPrivacyNotice ? translate(cloudPrivacyNotice) : ""}</p>
           </div>
           <div class="settings-block">
             <span class="field-label">{translate("历史内容处理")}</span>

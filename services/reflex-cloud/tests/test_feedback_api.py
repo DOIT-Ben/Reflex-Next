@@ -200,3 +200,15 @@ def test_deleting_cloud_data_removes_identity_feedback_and_attachment(
         client.get(f"/v1/admin/feedback/{feedback_id}", headers=admin_headers).status_code
         == 404
     )
+
+    replacement = client.post("/v1/installations")
+    replacement_headers = {
+        "X-Reflex-Installation-Token": replacement.json()["token"]
+    }
+    replacement_consent = client.get(
+        "/v1/privacy/consent", headers=replacement_headers
+    )
+
+    assert replacement.status_code == 201
+    assert replacement_consent.status_code == 200
+    assert replacement_consent.json()["improvement_data"] is False

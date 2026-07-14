@@ -29,6 +29,12 @@ const MAIN_CAPABILITY_PERMISSIONS: &[&str] = &[
     "allow-diagnostic-bundle-cancel",
     "allow-capture-feedback-screenshot",
     "allow-submit-feedback",
+    "allow-cloud-optimize",
+    "allow-cloud-cancel",
+    "allow-cloud-get-consent",
+    "allow-cloud-update-consent",
+    "allow-cloud-get-quota",
+    "allow-cloud-delete-data",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
 ];

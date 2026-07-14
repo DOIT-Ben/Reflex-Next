@@ -3,6 +3,7 @@ export type ProviderOption = { id: string; label: string; models: Array<{ id: st
 export type ProviderAvailability = "checking" | "ready" | "missing" | "unavailable";
 
 export const providerCatalog: ProviderOption[] = [
+  { id: "reflex-cloud", label: "Reflex Cloud", models: [{ id: "MiniMax-M2.7-highspeed", label: "云端 M2.7 高速版" }] },
   { id: "minimax", label: "MiniMax", models: [{ id: "MiniMax-M2.7-highspeed", label: "M2.7 高速版" }] },
   { id: "deepseek", label: "DeepSeek", models: [{ id: "deepseek-chat", label: "DeepSeek Chat" }, { id: "deepseek-reasoner", label: "DeepSeek Reasoner" }] },
   { id: "qwen", label: "通义千问", models: [{ id: "qwen-turbo", label: "Qwen Turbo" }, { id: "qwen-plus", label: "Qwen Plus" }, { id: "qwen-max", label: "Qwen Max" }] },
@@ -24,10 +25,12 @@ export function resolveProviderAvailability(
   settingsReady: boolean,
   statusError: boolean
 ): ProviderAvailability {
-  if (statusError) return "unavailable";
-  if (!settingsReady || !providerId || !secretStatus) return "checking";
+  if (!settingsReady || !providerId) return "checking";
 
   const activeId = providerId.trim().toLowerCase();
+  if (activeId === "reflex-cloud") return "ready";
+  if (statusError) return "unavailable";
+  if (!secretStatus) return "checking";
   const statusId = secretStatus.providerId.trim().toLowerCase();
   if (!activeId || activeId !== statusId) return "checking";
   return secretStatus.configured ? "ready" : "missing";

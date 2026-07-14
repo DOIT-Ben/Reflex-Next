@@ -97,7 +97,13 @@ pub fn run() {
             commands::history_operation_cancel,
             commands::history_reuse_intent,
             feedback::capture_feedback_screenshot,
-            feedback::submit_feedback
+            feedback::submit_feedback,
+            feedback::cloud_optimize,
+            feedback::cloud_cancel,
+            feedback::cloud_get_consent,
+            feedback::cloud_update_consent,
+            feedback::cloud_get_quota,
+            feedback::cloud_delete_data
         ])
         .build(tauri::generate_context!())
         .expect("error while building Reflex host");
@@ -179,6 +185,12 @@ mod tests {
             "allow-diagnostic-bundle-cancel",
             "allow-capture-feedback-screenshot",
             "allow-submit-feedback",
+            "allow-cloud-optimize",
+            "allow-cloud-cancel",
+            "allow-cloud-get-consent",
+            "allow-cloud-update-consent",
+            "allow-cloud-get-quota",
+            "allow-cloud-delete-data",
         ] {
             assert!(permissions.contains(&permission), "missing {permission}");
         }
