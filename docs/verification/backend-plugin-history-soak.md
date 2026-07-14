@@ -86,3 +86,5 @@ uv run --frozen --project plugins\history-sqlite --extra dev python tools\soak_p
 - `P3-002` 的 72 小时 Runtime 请求/取消持续运行；
 - `P3-007` 的语义模型加载、下载、删除 single-flight 与互斥；
 - `P3-008` 的 1 万条历史保存、分页、搜索、导出和保留策略基准。
+
+远端独立复现：GitHub Actions Backend CI Run `29305552320`，结论 `success`，完成扩展后的统一门禁、前端构建、构建物扫描和 SBOM 上传。
