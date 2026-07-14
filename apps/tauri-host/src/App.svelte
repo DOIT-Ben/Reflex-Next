@@ -4,9 +4,11 @@
   import type { SettingsSection } from "./components/settings/types";
   import ClipboardConfirmDialog from "./components/overlays/ClipboardConfirmDialog.svelte";
   import CommandPalette from "./components/overlays/CommandPalette.svelte";
+  import ConfirmDialog from "./components/overlays/ConfirmDialog.svelte";
   import type { CommandItem } from "./components/overlays/CommandPalette.svelte";
   import PluginDialog from "./components/overlays/PluginDialog.svelte";
   import ResultCompareDialog from "./components/overlays/ResultCompareDialog.svelte";
+  import Toast from "./components/overlays/Toast.svelte";
   import MarkdownPreviewDialog from "./components/tools/MarkdownPreviewDialog.svelte";
   import TranslationDialog from "./components/tools/TranslationDialog.svelte";
   import TemplateManagerDialog from "./components/tools/TemplateManagerDialog.svelte";
@@ -25,6 +27,7 @@
     WorkbenchPhase
   } from "./components/workbench/types";
   import { CapabilityBridge } from "./domain/capabilityBridge";
+  import { createDiagnosticBundleBridge, type DiagnosticBundleBridge } from "./domain/diagnosticBundleBridge";
   import { createDefaultCoreBridge, DemoCoreBridge } from "./domain/coreBridge";
   import {
     applyAdjustDraft,
@@ -185,6 +188,7 @@
   const scenes = listSceneOptions();
   let coreBridge: CoreBridge = new DemoCoreBridge();
   let capabilityBridge: CapabilityBridge | null = null;
+  let diagnosticBundleBridge: DiagnosticBundleBridge | null = null;
   let hostApi: TauriHostApi | null = null;
   let settingsApi: SettingsApi | null = null;
   let desktopBridge: DesktopBridge | null = null;
@@ -229,6 +233,8 @@
   let activeProviderId = "minimax";
   let providerStatusText = "";
   let settingsNotice: string | null = null;
+  let diagnosticExportBusy = false;
+  let diagnosticExportNotice: string | null = null;
   let secretNotice: string | null = null;
   let clipboardReading = false;
   let startupClipboardRead = false;
@@ -240,11 +246,19 @@
   };
   let toastVisible = false;
   let toastText = "✓ 已复制到剪贴板";
+  let toastTone: "success" | "error" = "success";
+  let toastTimeout: number | null = null;
   let resultRatingBusy = false;
   let viewScale = 1;
   let windowSizePreset: WindowSizePreset = "default";
   let commandPaletteOpen = false;
   let commandItems: CommandItem[] = [];
+  let confirmation: {
+    title: string;
+    description: string;
+    confirmLabel: string;
+    run: () => void | Promise<void>;
+  } | null = null;
   let activeNavId = "workbench";
   let workbenchPhase: WorkbenchPhase = "empty";
   let workbenchStatusMessage = "准备就绪";
@@ -266,6 +280,7 @@
 
       hostApi = host;
       capabilityBridge = new CapabilityBridge(host);
+      diagnosticBundleBridge = createDiagnosticBundleBridge(host);
       settingsApi = createSettingsApi(host);
       clipboardReader = createClipboardReader(host);
       clipboardWriter = createClipboardWriter(host);
@@ -572,6 +587,34 @@
     }
   }
 
+  async function exportDiagnosticBundle() {
+    if (diagnosticExportBusy) return;
+    if (!diagnosticBundleBridge) {
+      diagnosticExportNotice = "当前环境无法导出诊断包。";
+      return;
+    }
+    diagnosticExportBusy = true;
+    diagnosticExportNotice = "正在导出诊断包...";
+    try {
+      const result = await diagnosticBundleBridge.exportBundle();
+      diagnosticExportNotice = result === "completed" ? "诊断包已导出。" : "诊断包导出已取消。";
+    } catch (error) {
+      diagnosticExportNotice = error instanceof Error ? error.message : "诊断包导出失败，请重试。";
+    } finally {
+      diagnosticExportBusy = false;
+    }
+  }
+
+  async function cancelDiagnosticBundleExport() {
+    if (!diagnosticExportBusy || !diagnosticBundleBridge) return;
+    try {
+      await diagnosticBundleBridge.cancel();
+      diagnosticExportNotice = "正在取消诊断包导出...";
+    } catch (error) {
+      diagnosticExportNotice = error instanceof Error ? error.message : "诊断包导出失败，请重试。";
+    }
+  }
+
   function cancelSettingsView() {
     state = cancelSettings(state);
     settingsDraft = persistedConfig
@@ -664,7 +707,15 @@
 
   async function deleteSecret() {
     if (secretBusy || !secretStatus.configured) return;
-    if (!window.confirm("删除已保存的 API Key？")) return;
+    confirmation = {
+      title: tr("删除已保存的 API Key？"),
+      description: tr("删除后当前 Provider 将无法调用，之后仍可重新保存。"),
+      confirmLabel: tr("删除密钥"),
+      run: performDeleteSecret
+    };
+  }
+
+  async function performDeleteSecret() {
     const api = settingsApi;
     if (!api) {
       secretNotice = "当前环境无法删除密钥。";
@@ -695,11 +746,14 @@
     await refreshProviderSecretStatus(provider);
   }
 
-  function showToast(message: string) {
+  function showToast(message: string, tone?: "success" | "error") {
+    if (toastTimeout !== null) window.clearTimeout(toastTimeout);
     toastText = tr(message);
+    toastTone = tone ?? (/失败|不可用|未保存|错误/.test(message) ? "error" : "success");
     toastVisible = true;
-    window.setTimeout(() => {
+    toastTimeout = window.setTimeout(() => {
       toastVisible = false;
+      toastTimeout = null;
     }, 1400);
   }
 
@@ -996,7 +1050,16 @@
 
   async function deleteTemplate() {
     if (!selectedTemplateId || templateBusy || !persistedConfig || !settingsApi) return;
-    if (!window.confirm("删除当前模板？")) return;
+    confirmation = {
+      title: tr("删除当前模板？"),
+      description: tr("删除后无法恢复，但不会影响已经生成的内容。"),
+      confirmLabel: tr("删除模板"),
+      run: performDeleteTemplate
+    };
+  }
+
+  async function performDeleteTemplate() {
+    if (!selectedTemplateId || templateBusy || !persistedConfig || !settingsApi) return;
     templateBusy = true;
     try {
       const next = removeCustomTemplate(customTemplates, selectedTemplateId);
@@ -1351,8 +1414,18 @@
   }
 
   async function deleteSemanticModel() {
-    if (!window.confirm(tr("删除本地语义模型？之后仍可重新下载。"))) return;
-    await runSemanticModelOperation("delete");
+    confirmation = {
+      title: tr("删除本地语义模型？"),
+      description: tr("删除后场景识别会自动回退，之后仍可重新下载。"),
+      confirmLabel: tr("删除模型"),
+      run: () => runSemanticModelOperation("delete")
+    };
+  }
+
+  async function confirmCurrentAction() {
+    const current = confirmation;
+    confirmation = null;
+    await current?.run();
   }
 
   function cancelSemanticModelDownload() {
@@ -1686,6 +1759,20 @@
       versionLabel="v0.6 beta"
     />
 
+    <Toast visible={toastVisible} message={toastText} tone={toastTone} />
+
+    {#if confirmation}
+      <ConfirmDialog
+        title={confirmation.title}
+        description={confirmation.description}
+        confirmLabel={confirmation.confirmLabel}
+        cancelLabel={tr("取消")}
+        danger
+        onCancel={() => (confirmation = null)}
+        onConfirm={confirmCurrentAction}
+      />
+    {/if}
+
     {#if state.phase === "adjusting"}
       <AdjustPanel
         {draft}
@@ -1811,6 +1898,8 @@
         semanticEnabled={semanticDetectorEnabled}
         semanticActive={semanticDetectorActive}
         semanticStatusText={semanticModelStatusText()}
+        diagnosticBusy={diagnosticExportBusy}
+        diagnosticNotice={diagnosticExportNotice}
         translate={tr}
         onClose={cancelSettingsView}
         onSave={saveSettings}
@@ -1825,6 +1914,8 @@
         onSemanticCancel={cancelSemanticModelDownload}
         onSemanticDelete={deleteSemanticModel}
         onSemanticDownload={downloadSemanticModel}
+        onDiagnosticExport={exportDiagnosticBundle}
+        onDiagnosticCancel={cancelDiagnosticBundleExport}
       />
     {/if}
   </section>

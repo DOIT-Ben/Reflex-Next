@@ -169,9 +169,11 @@ describe("production frontend architecture", () => {
       "TemplateManagerDialog",
       "BatchDialog",
       "CommandPalette",
+      "ConfirmDialog",
       "ClipboardConfirmDialog",
       "ResultCompareDialog",
       "PluginDialog",
+      "Toast",
       "InputPane",
       "ConfigSummary",
       "ResultPane",
@@ -197,9 +199,11 @@ describe("production frontend architecture", () => {
     const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
     expect(styles).toContain(".workbench-grid");
     expect(styles).toContain(".adjust-dialog");
+    expect(styles).toMatch(/\.confirm-layer\s*\{[\s\S]*z-index:\s*80/);
     expect(styles).toMatch(/@media\s*\(max-width:\s*620px\)/);
     expect(appSource).not.toContain("false &&");
     expect(appSource).not.toContain("closeMoreActions");
+    expect(appSource).not.toContain("window.confirm");
     expect(appSource).not.toMatch(/class=["'](?:command|template|batch)-dialog["']/);
   });
 

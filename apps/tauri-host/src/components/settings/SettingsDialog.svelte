@@ -30,6 +30,8 @@
     semanticEnabled: boolean;
     semanticActive: boolean;
     semanticStatusText: string;
+    diagnosticBusy: boolean;
+    diagnosticNotice: string | null;
     translate: (source: string, values?: Record<string, string | number>) => string;
     onClose: () => void;
     onSave: () => void;
@@ -44,6 +46,8 @@
     onSemanticCancel: () => void;
     onSemanticDelete: () => void;
     onSemanticDownload: () => void;
+    onDiagnosticExport: () => void;
+    onDiagnosticCancel: () => void;
   }
 
   let {
@@ -63,6 +67,8 @@
     semanticEnabled,
     semanticActive,
     semanticStatusText,
+    diagnosticBusy,
+    diagnosticNotice,
     translate,
     onClose,
     onSave,
@@ -76,7 +82,9 @@
     onSemanticRefresh,
     onSemanticCancel,
     onSemanticDelete,
-    onSemanticDownload
+    onSemanticDownload,
+    onDiagnosticExport,
+    onDiagnosticCancel
   }: Props = $props();
 
   const scenePolicies: Array<{ id: HostSettingsDraft["scene_policy"]; label: string }> = [
@@ -283,6 +291,20 @@
               {/each}
             </div>
           </div>
+          <section class="diagnostic-export-card" aria-label={translate("本地诊断包")}>
+            <div>
+              <strong>{translate("本地诊断包")}</strong>
+              <p>{translate("仅导出脱敏的本地运行信息，不包含输入正文或密钥。")}</p>
+            </div>
+            <div class="diagnostic-export-actions">
+              {#if diagnosticBusy}
+                <button class="outline" type="button" onclick={onDiagnosticCancel}>{translate("取消导出")}</button>
+              {:else}
+                <button class="outline" type="button" onclick={onDiagnosticExport}>{translate("导出诊断包")}</button>
+              {/if}
+            </div>
+            <p class="settings-feedback" role="status" aria-live="polite">{diagnosticNotice ? translate(diagnosticNotice) : ""}</p>
+          </section>
         {:else}
           <h3>{translate("插件")}</h3>
           <div class="settings-choice-list">
