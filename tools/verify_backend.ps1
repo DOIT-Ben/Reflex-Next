@@ -172,6 +172,32 @@ $steps += New-VerificationStep `
   -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_benchmark_backend.py", "-q")
 
 $steps += New-VerificationStep `
+  -Id "tools:history-benchmark-contract" `
+  -Category "tools" `
+  -WorkDir "." `
+  -LockFile "packages\reflex-runtime\uv.lock" `
+  -Executable "uv" `
+  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_benchmark_history_sqlite.py", "-q")
+
+$steps += New-VerificationStep `
+  -Id "tools:history-benchmark-small-smoke" `
+  -Category "tools" `
+  -WorkDir "." `
+  -LockFile "plugins\history-sqlite\uv.lock" `
+  -Executable "uv" `
+  -Arguments @("run", "--frozen", "--project", "plugins\history-sqlite", "--extra", "dev", "python", "tools\benchmark_history_sqlite.py", "--record-count", "10", "--profile", "small", "--storage-sample-every", "10") `
+  -Heavy $true
+
+$steps += New-VerificationStep `
+  -Id "tools:history-benchmark-heavy-smoke" `
+  -Category "tools" `
+  -WorkDir "." `
+  -LockFile "plugins\history-sqlite\uv.lock" `
+  -Executable "uv" `
+  -Arguments @("run", "--frozen", "--project", "plugins\history-sqlite", "--extra", "dev", "python", "tools\benchmark_history_sqlite.py", "--record-count", "2", "--profile", "heavy", "--storage-sample-every", "2") `
+  -Heavy $true
+
+$steps += New-VerificationStep `
   -Id "tools:soak-contract" `
   -Category "tools" `
   -WorkDir "." `

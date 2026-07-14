@@ -79,6 +79,9 @@ Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] supply-chain:sb
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] supply-chain:sbom .*heavy=True .*generate_release_sbom\.ps1 -Verify' }).Count -eq 1) "Live SBOM generation must be a resource-bounded heavy verification step."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:provider-smoke-contract .*lock=packages\\reflex-runtime\\uv\.lock .*test_provider_smoke\.py -q' }).Count -eq 1) "Provider smoke contract tests must use the frozen Runtime environment."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:benchmark-contract .*lock=packages\\reflex-runtime\\uv\.lock .*test_benchmark_backend\.py -q' }).Count -eq 1) "Backend benchmark contract tests must use the frozen Runtime environment."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:history-benchmark-contract .*lock=packages\\reflex-runtime\\uv\.lock .*test_benchmark_history_sqlite\.py -q' }).Count -eq 1) "History benchmark contract tests must use the frozen Runtime environment."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:history-benchmark-small-smoke .*heavy=True .*benchmark_history_sqlite\.py --record-count 10 --profile small .*--storage-sample-every 10' }).Count -eq 1) "A bounded small history benchmark must be part of full verification."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:history-benchmark-heavy-smoke .*heavy=True .*benchmark_history_sqlite\.py --record-count 2 --profile heavy .*--storage-sample-every 2' }).Count -eq 1) "A bounded heavy history benchmark must be part of full verification."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:soak-contract .*lock=packages\\reflex-runtime\\uv\.lock .*test_soak_backend\.py -q' }).Count -eq 1) "Soak-tool contract tests must use the frozen Runtime environment."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:soak-smoke .*heavy=True .*soak_backend\.py --iterations 100 .*--batch-size 4' }).Count -eq 1) "A bounded 100-iteration Runtime soak must be part of full verification."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] tools:plugin-history-soak-contract .*lock=plugins\\history-sqlite\\uv\.lock .*test_soak_plugin_history\.py .*test_windows_resource_probe\.py -q' }).Count -eq 1) "Plugin/history soak contracts must use the frozen history environment."
@@ -92,6 +95,8 @@ Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] rust:tests .*
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] security:dependency-audit .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip live dependency auditing."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] tools:soak-smoke .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip the live Runtime soak."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] tools:plugin-history-soak-smoke .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip the live plugin/history soak."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] tools:history-benchmark-small-smoke .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip the small history benchmark."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] tools:history-benchmark-heavy-smoke .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip the heavy history benchmark."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] frontend:tests .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip frontend tests."
 
 $frontendSkip = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipFrontend")

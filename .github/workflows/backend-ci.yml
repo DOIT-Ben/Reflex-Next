@@ -22,6 +22,8 @@ on:
       - "tools/tests/fixtures/provider_smoke_*.py"
       - "tools/benchmark_backend.py"
       - "tools/tests/test_benchmark_backend.py"
+      - "tools/benchmark_history_sqlite.py"
+      - "tools/tests/test_benchmark_history_sqlite.py"
       - "tools/soak_backend.py"
       - "tools/tests/test_soak_backend.py"
   push:
@@ -48,6 +50,8 @@ on:
       - "tools/tests/fixtures/provider_smoke_*.py"
       - "tools/benchmark_backend.py"
       - "tools/tests/test_benchmark_backend.py"
+      - "tools/benchmark_history_sqlite.py"
+      - "tools/tests/test_benchmark_history_sqlite.py"
       - "tools/soak_backend.py"
       - "tools/tests/test_soak_backend.py"
   workflow_dispatch:
