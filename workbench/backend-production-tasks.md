@@ -100,6 +100,7 @@
 - Rust/Tauri Host：184 项通过，3 项 Windows Credential Manager 实机测试默认忽略且已单独实跑通过；
 - 生产工具：Provider 冒烟 8 项加 2 个子用例、性能基准 9 项、History 基准 38 项、插件/历史资源工具 40 项通过；
 - Runtime 浸泡：工具契约 14 项、CI 100 次短门禁通过；本机 10,000 次中 5,000 完成、5,000 取消、65,002 个协议事件、迟到事件 0、安全退出；
+- 72 小时 Runtime 门禁已启动：PID `23848`，受控速率每分钟 3 次，报告为 `workbench\runtime-soak-72h-alpha8-20260715-045742.json`；当前仍在运行，未计入完成证据；
 - 插件/历史浸泡：三轮各 1,000 次均通过，Private Bytes 最大增量 454,656 B，三轮句柄/线程增量均为 0，SQLite 最终活动连接 0、峰值 1；统一门禁保留 100 次短烟测；
 - TypeScript Domain Bridge 与前端架构契约：24 个文件、151 项测试通过，最大 2 workers；
 - 前端生产构建：Vite 构建通过，193 个模块，主包约 230.58 kB、gzip 约 73.31 kB；
