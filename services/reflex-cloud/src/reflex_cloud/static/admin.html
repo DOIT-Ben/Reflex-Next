@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reflex 反馈管理</title>
+    <link rel="stylesheet" href="/admin-static/admin.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <strong>Reflex 反馈管理</strong>
+        <span id="summary">尚未连接</span>
+      </div>
+      <form id="auth-form">
+        <label for="admin-token">管理令牌</label>
+        <input id="admin-token" type="password" autocomplete="current-password" required />
+        <button type="submit">连接</button>
+      </form>
+    </header>
+    <main>
+      <aside>
+        <form id="filters">
+          <label for="status">状态</label>
+          <select id="status">
+            <option value="">全部</option>
+            <option value="new">新反馈</option>
+            <option value="triaged">已分类</option>
+            <option value="reproduced">已复现</option>
+            <option value="planned">已计划</option>
+            <option value="fixed">已修复</option>
+            <option value="released">已发布</option>
+            <option value="rejected">已拒绝</option>
+          </select>
+          <label for="category">类型</label>
+          <select id="category">
+            <option value="">全部</option>
+            <option value="quality">结果质量</option>
+            <option value="bug">Bug</option>
+            <option value="performance">性能</option>
+            <option value="feature">功能建议</option>
+            <option value="other">其他</option>
+          </select>
+          <button type="submit">筛选</button>
+        </form>
+        <div id="feedback-list" aria-live="polite"></div>
+      </aside>
+      <section id="detail" aria-live="polite">
+        <div class="empty">选择一条反馈查看详情</div>
+      </section>
+    </main>
+    <script type="module" src="/admin-static/admin.js"></script>
+  </body>
+</html>

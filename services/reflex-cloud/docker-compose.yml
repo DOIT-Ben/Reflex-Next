@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: reflex_cloud
+      POSTGRES_USER: reflex_cloud
+      POSTGRES_PASSWORD: ${REFLEX_POSTGRES_PASSWORD:?set REFLEX_POSTGRES_PASSWORD}
+    volumes:
+      - reflex-cloud-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reflex_cloud -d reflex_cloud"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      REFLEX_CLOUD_ENVIRONMENT: production
+      REFLEX_CLOUD_DATABASE_URL: postgresql+psycopg://reflex_cloud:${REFLEX_POSTGRES_PASSWORD}@postgres:5432/reflex_cloud
+      REFLEX_CLOUD_UPLOAD_DIRECTORY: /app/data/uploads
+      REFLEX_CLOUD_ADMIN_TOKEN: ${REFLEX_CLOUD_ADMIN_TOKEN:?set REFLEX_CLOUD_ADMIN_TOKEN}
+      REFLEX_CLOUD_TOKEN_PEPPER: ${REFLEX_CLOUD_TOKEN_PEPPER:?set REFLEX_CLOUD_TOKEN_PEPPER}
+      REFLEX_CLOUD_RETENTION_DAYS: 90
+    ports:
+      - "8787:8787"
+    volumes:
+      - reflex-cloud-uploads:/app/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  reflex-cloud-postgres:
+  reflex-cloud-uploads:

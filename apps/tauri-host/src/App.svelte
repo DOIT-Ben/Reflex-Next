@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
+  import FeedbackDialog from "./components/feedback/FeedbackDialog.svelte";
   import SettingsDialog from "./components/settings/SettingsDialog.svelte";
   import type { SettingsSection } from "./components/settings/types";
   import ClipboardConfirmDialog from "./components/overlays/ClipboardConfirmDialog.svelte";
@@ -28,6 +29,13 @@
   } from "./components/workbench/types";
   import { CapabilityBridge } from "./domain/capabilityBridge";
   import { createDiagnosticBundleBridge, type DiagnosticBundleBridge } from "./domain/diagnosticBundleBridge";
+  import {
+    createFeedbackBridge,
+    type FeedbackBridge,
+    type FeedbackFormValue,
+    type FeedbackScreenshot,
+    type FeedbackSentiment
+  } from "./domain/feedbackBridge";
   import { createDefaultCoreBridge, DemoCoreBridge } from "./domain/coreBridge";
   import {
     applyAdjustDraft,
@@ -189,6 +197,7 @@
   let coreBridge: CoreBridge = new DemoCoreBridge();
   let capabilityBridge: CapabilityBridge | null = null;
   let diagnosticBundleBridge: DiagnosticBundleBridge | null = null;
+  let feedbackBridge: FeedbackBridge | null = null;
   let hostApi: TauriHostApi | null = null;
   let settingsApi: SettingsApi | null = null;
   let desktopBridge: DesktopBridge | null = null;
@@ -249,6 +258,13 @@
   let toastTone: "success" | "error" = "success";
   let toastTimeout: number | null = null;
   let resultRatingBusy = false;
+  let feedbackOpen = false;
+  let feedbackSentiment: FeedbackSentiment = "negative";
+  let feedbackScreenshot: FeedbackScreenshot | null = null;
+  let feedbackCaptureNotice: string | null = null;
+  let feedbackSubmitBusy = false;
+  let feedbackSubmitNotice: string | null = null;
+  let appVersion = "development";
   let viewScale = 1;
   let windowSizePreset: WindowSizePreset = "default";
   let commandPaletteOpen = false;
@@ -257,6 +273,7 @@
     title: string;
     description: string;
     confirmLabel: string;
+    danger?: boolean;
     run: () => void | Promise<void>;
   } | null = null;
   let activeNavId = "workbench";
@@ -281,11 +298,17 @@
       hostApi = host;
       capabilityBridge = new CapabilityBridge(host);
       diagnosticBundleBridge = createDiagnosticBundleBridge(host);
+      feedbackBridge = createFeedbackBridge(host);
       settingsApi = createSettingsApi(host);
       clipboardReader = createClipboardReader(host);
       clipboardWriter = createClipboardWriter(host);
       const desktop = createDesktopBridge(host);
       desktopBridge = desktop;
+
+      void import("@tauri-apps/api/app")
+        .then(({ getVersion }) => getVersion())
+        .then((version) => (appVersion = version))
+        .catch(() => undefined);
 
       void desktop
         .listen(handleHostAction)
@@ -1328,6 +1351,90 @@
     await writeClipboardValue(state.diagnosticId, "✓ 诊断 ID 已复制");
   }
 
+  function beginFeedback(sentiment: FeedbackSentiment) {
+    if (!state.currentResult?.output) return;
+    confirmation = {
+      title: sentiment === "negative" ? "反馈这次不满意的结果？" : "反馈这次满意的结果？",
+      description: "继续后只截取 Reflex 当前窗口，并在发送前显示预览。输入、结果和截图都可以单独移除。",
+      confirmLabel: "继续反馈",
+      danger: false,
+      run: () => openFeedback(sentiment)
+    };
+  }
+
+  async function openFeedback(sentiment: FeedbackSentiment) {
+    feedbackSentiment = sentiment;
+    feedbackScreenshot = null;
+    feedbackCaptureNotice = null;
+    feedbackSubmitNotice = null;
+    await tick();
+    if (feedbackBridge) {
+      try {
+        feedbackScreenshot = await feedbackBridge.captureWindow();
+      } catch {
+        feedbackCaptureNotice = "窗口截图失败，可以不附加截图继续反馈。";
+      }
+    } else {
+      feedbackCaptureNotice = "当前环境无法截取应用窗口。";
+    }
+    feedbackOpen = true;
+  }
+
+  function closeFeedback() {
+    if (feedbackSubmitBusy) return;
+    feedbackOpen = false;
+    feedbackScreenshot = null;
+    feedbackCaptureNotice = null;
+    feedbackSubmitNotice = null;
+  }
+
+  async function submitFeedback(form: FeedbackFormValue) {
+    const result = state.currentResult;
+    if (!result || !feedbackBridge || feedbackSubmitBusy) {
+      feedbackSubmitNotice = "反馈服务暂不可用，请稍后重试。";
+      return;
+    }
+    feedbackSubmitBusy = true;
+    feedbackSubmitNotice = null;
+    const sourceText = result.sourceText ?? state.inputText;
+    try {
+      await feedbackBridge.submit({
+        sentiment: feedbackSentiment,
+        category: form.category,
+        message: form.message,
+        expected_output: form.expectedOutput,
+        contact: form.contact,
+        context: {
+          app_version: appVersion,
+          os_version: navigator.userAgent.slice(0, 128),
+          provider: result.provider ?? state.requestDraft.provider ?? "",
+          model: result.model ?? state.requestDraft.model ?? "",
+          mode: result.mode,
+          style: result.style,
+          scene: result.scene ?? state.detectedScene ?? "",
+          request_id: result.requestId,
+          diagnostic_id: state.diagnosticId ?? "",
+          error_code: state.errorCode ?? "",
+          elapsed_ms: result.elapsedMs
+        },
+        include_prompt: form.includePrompt,
+        include_result: form.includeResult,
+        include_screenshot: form.includeScreenshot && feedbackScreenshot !== null,
+        prompt_text: form.includePrompt ? sourceText : null,
+        result_text: form.includeResult ? result.output : null,
+        screenshot: form.includeScreenshot ? feedbackScreenshot : null,
+        consent_version: "2026-07-14"
+      });
+      feedbackOpen = false;
+      feedbackScreenshot = null;
+      showToast("反馈已发送，谢谢。", "success");
+    } catch (error) {
+      feedbackSubmitNotice = error instanceof Error ? error.message : "反馈发送失败，请稍后重试。";
+    } finally {
+      feedbackSubmitBusy = false;
+    }
+  }
+
   async function handleCompletionClipboard() {
     const policy = persistedConfig?.clipboard_policy ?? "manual";
     await executeClipboardAction(
@@ -1745,6 +1852,8 @@
             onRetry={state.errorRecoverable ? retryRun : undefined}
             onOpenSettings={openSettingsView}
             onCopyDiagnosticId={state.diagnosticId ? copyDiagnosticId : undefined}
+            onPositiveFeedback={() => beginFeedback("positive")}
+            onNegativeFeedback={() => beginFeedback("negative")}
           />
         </div>
       </section>
@@ -1767,9 +1876,21 @@
         description={confirmation.description}
         confirmLabel={confirmation.confirmLabel}
         cancelLabel={tr("取消")}
-        danger
+        danger={confirmation.danger ?? true}
         onCancel={() => (confirmation = null)}
         onConfirm={confirmCurrentAction}
+      />
+    {/if}
+
+    {#if feedbackOpen}
+      <FeedbackDialog
+        sentiment={feedbackSentiment}
+        screenshot={feedbackScreenshot}
+        captureNotice={feedbackCaptureNotice}
+        busy={feedbackSubmitBusy}
+        notice={feedbackSubmitNotice}
+        onClose={closeFeedback}
+        onSubmit={submitFeedback}
       />
     {/if}
 

@@ -1,0 +1,210 @@
+from __future__ import annotations
+
+from datetime import timedelta
+from uuid import uuid4
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from .config import CloudSettings
+from .models import ConsentRecord, FeedbackItem, Installation, utc_now
+from .schemas import ConsentUpdate, FeedbackCreate, FeedbackUpdate
+from .security import new_installation_token, redact_text, token_hash
+from .storage import AttachmentStore
+
+
+class CloudServiceError(RuntimeError):
+    def __init__(self, code: str, status_code: int) -> None:
+        super().__init__(code)
+        self.code = code
+        self.status_code = status_code
+
+
+class CloudService:
+    def __init__(self, settings: CloudSettings, attachments: AttachmentStore) -> None:
+        self.settings = settings
+        self.attachments = attachments
+        self._pepper = settings.token_pepper.get_secret_value()
+
+    def create_installation(self, session: Session) -> tuple[Installation, str]:
+        token = new_installation_token()
+        installation = Installation(
+            id=str(uuid4()),
+            token_hash=token_hash(token, self._pepper),
+        )
+        session.add(installation)
+        session.add(
+            ConsentRecord(
+                installation=installation,
+                usage_metrics=False,
+                improvement_data=False,
+                feedback_attachments=False,
+                policy_version="2026-07-14",
+            )
+        )
+        session.commit()
+        return installation, token
+
+    def authenticate_installation(self, session: Session, token: str) -> Installation:
+        if not token or len(token) > 256:
+            raise CloudServiceError("installation_unauthorized", 401)
+        installation = session.scalar(
+            select(Installation).where(
+                Installation.token_hash == token_hash(token, self._pepper),
+                Installation.deleted_at.is_(None),
+            )
+        )
+        if installation is None:
+            raise CloudServiceError("installation_unauthorized", 401)
+        installation.last_seen_at = utc_now()
+        session.commit()
+        return installation
+
+    def latest_consent(self, session: Session, installation_id: str) -> ConsentRecord:
+        record = session.scalar(
+            select(ConsentRecord)
+            .where(ConsentRecord.installation_id == installation_id)
+            .order_by(ConsentRecord.id.desc())
+            .limit(1)
+        )
+        if record is None:
+            raise CloudServiceError("consent_unavailable", 409)
+        return record
+
+    def update_consent(
+        self, session: Session, installation: Installation, payload: ConsentUpdate
+    ) -> ConsentRecord:
+        record = ConsentRecord(
+            installation_id=installation.id,
+            usage_metrics=payload.usage_metrics,
+            improvement_data=payload.improvement_data,
+            feedback_attachments=payload.feedback_attachments,
+            policy_version=payload.policy_version,
+        )
+        session.add(record)
+        session.commit()
+        return record
+
+    def submit_feedback(
+        self, session: Session, installation: Installation, payload: FeedbackCreate
+    ) -> FeedbackItem:
+        cutoff = utc_now() - timedelta(hours=1)
+        recent = session.scalar(
+            select(func.count(FeedbackItem.id)).where(
+                FeedbackItem.installation_id == installation.id,
+                FeedbackItem.created_at >= cutoff,
+            )
+        )
+        if int(recent or 0) >= self.settings.feedback_limit_per_hour:
+            raise CloudServiceError("feedback_rate_limited", 429)
+
+        feedback_id = str(uuid4())
+        screenshot_path: str | None = None
+        if payload.screenshot is not None:
+            screenshot_path = self.attachments.save_screenshot(feedback_id, payload.screenshot)
+
+        context = payload.context
+        feedback = FeedbackItem(
+            id=feedback_id,
+            installation_id=installation.id,
+            sentiment=payload.sentiment,
+            category=payload.category,
+            message=redact_text(payload.message.strip()),
+            expected_output=redact_text(payload.expected_output.strip()),
+            contact=redact_text(payload.contact.strip()),
+            app_version=context.app_version,
+            os_version=context.os_version,
+            provider=context.provider,
+            model=context.model,
+            mode=context.mode,
+            style=context.style,
+            scene=context.scene,
+            request_id=context.request_id,
+            diagnostic_id=context.diagnostic_id,
+            error_code=context.error_code,
+            elapsed_ms=context.elapsed_ms,
+            include_prompt=payload.include_prompt,
+            include_result=payload.include_result,
+            include_screenshot=payload.include_screenshot,
+            prompt_text=redact_text(payload.prompt_text) if payload.prompt_text else None,
+            result_text=redact_text(payload.result_text) if payload.result_text else None,
+            screenshot_path=screenshot_path,
+            screenshot_media_type=(payload.screenshot.media_type if payload.screenshot else None),
+            consent_version=payload.consent_version,
+        )
+        try:
+            session.add(feedback)
+            session.commit()
+        except Exception:
+            session.rollback()
+            self.attachments.delete(screenshot_path)
+            raise
+        return feedback
+
+    def list_feedback(
+        self,
+        session: Session,
+        *,
+        status: str | None,
+        category: str | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[FeedbackItem], int]:
+        filters = []
+        if status:
+            filters.append(FeedbackItem.status == status)
+        if category:
+            filters.append(FeedbackItem.category == category)
+        total = int(session.scalar(select(func.count(FeedbackItem.id)).where(*filters)) or 0)
+        items = list(
+            session.scalars(
+                select(FeedbackItem)
+                .where(*filters)
+                .order_by(FeedbackItem.created_at.desc(), FeedbackItem.id.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        )
+        return items, total
+
+    def feedback_detail(self, session: Session, feedback_id: str) -> FeedbackItem:
+        item = session.get(FeedbackItem, feedback_id)
+        if item is None:
+            raise CloudServiceError("feedback_not_found", 404)
+        return item
+
+    def update_feedback(
+        self, session: Session, feedback_id: str, payload: FeedbackUpdate
+    ) -> FeedbackItem:
+        item = self.feedback_detail(session, feedback_id)
+        item.status = payload.status
+        if payload.category is not None:
+            item.category = payload.category
+        item.updated_at = utc_now()
+        session.commit()
+        return item
+
+    def delete_installation_data(self, session: Session, installation: Installation) -> None:
+        screenshot_paths = list(
+            session.scalars(
+                select(FeedbackItem.screenshot_path).where(
+                    FeedbackItem.installation_id == installation.id,
+                    FeedbackItem.screenshot_path.is_not(None),
+                )
+            )
+        )
+        session.delete(installation)
+        session.commit()
+        for path in screenshot_paths:
+            self.attachments.delete(path)
+
+    def purge_expired_feedback(self, session: Session) -> int:
+        cutoff = utc_now() - timedelta(days=self.settings.retention_days)
+        expired = list(
+            session.scalars(select(FeedbackItem).where(FeedbackItem.created_at < cutoff))
+        )
+        for item in expired:
+            self.attachments.delete(item.screenshot_path)
+            session.delete(item)
+        session.commit()
+        return len(expired)

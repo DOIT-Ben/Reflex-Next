@@ -1,16 +1,18 @@
 mod clipboard;
+mod cloud_token_store;
 mod commands;
 mod config_store;
 mod desktop;
 mod diagnostic_bundle;
 mod diagnostics;
+mod feedback;
 mod history_export;
 mod history_key_store;
 mod plugin_commands;
 mod runtime_commands;
 mod secret_store;
-mod sidecar;
 mod sensitive_scan;
+mod sidecar;
 mod window;
 
 pub fn run() {
@@ -63,6 +65,7 @@ pub fn run() {
             app.manage(history_key_store::HistoryKeyStore::windows());
             app.manage(commands::HistoryOperationControl::new());
             app.manage(commands::DiagnosticExportControl::new());
+            app.manage(feedback::FeedbackCloudState::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -92,7 +95,9 @@ pub fn run() {
             commands::diagnostic_bundle_cancel,
             commands::history_admin_operation,
             commands::history_operation_cancel,
-            commands::history_reuse_intent
+            commands::history_reuse_intent,
+            feedback::capture_feedback_screenshot,
+            feedback::submit_feedback
         ])
         .build(tauri::generate_context!())
         .expect("error while building Reflex host");
@@ -172,6 +177,8 @@ mod tests {
             "allow-set-window-size",
             "allow-diagnostic-bundle-export",
             "allow-diagnostic-bundle-cancel",
+            "allow-capture-feedback-screenshot",
+            "allow-submit-feedback",
         ] {
             assert!(permissions.contains(&permission), "missing {permission}");
         }

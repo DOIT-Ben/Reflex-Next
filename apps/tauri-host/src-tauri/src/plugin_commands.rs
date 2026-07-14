@@ -27,6 +27,8 @@ const MAIN_CAPABILITY_PERMISSIONS: &[&str] = &[
     "allow-delete-provider-secret",
     "allow-diagnostic-bundle-export",
     "allow-diagnostic-bundle-cancel",
+    "allow-capture-feedback-screenshot",
+    "allow-submit-feedback",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
 ];

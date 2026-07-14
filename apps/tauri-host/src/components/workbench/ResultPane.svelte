@@ -1,4 +1,7 @@
 <script lang="ts">
+  import ThumbsDown from "@lucide/svelte/icons/thumbs-down";
+  import ThumbsUp from "@lucide/svelte/icons/thumbs-up";
+
   import type {
     ResultMetaItem,
     WorkbenchActionHandler,
@@ -34,6 +37,8 @@
   export let onRetry: WorkbenchActionHandler | undefined = undefined;
   export let onOpenSettings: WorkbenchActionHandler | undefined = undefined;
   export let onCopyDiagnosticId: WorkbenchActionHandler | undefined = undefined;
+  export let onPositiveFeedback: WorkbenchActionHandler | undefined = undefined;
+  export let onNegativeFeedback: WorkbenchActionHandler | undefined = undefined;
 
   $: hasOutput = output.length > 0;
   $: showOutput = hasOutput && (phase === "running" || phase === "completed" || phase === "cancelled" || phase === "error");
@@ -179,6 +184,16 @@
         {/if}
         {#if onOpenHistory}
           <button class="secondary-result-action" type="button" on:click={() => void onOpenHistory?.()}>历史</button>
+        {/if}
+        {#if onPositiveFeedback || onNegativeFeedback}
+          <span class="feedback-actions" aria-label="结果反馈">
+            <button type="button" aria-label="结果满意" title="满意" disabled={!onPositiveFeedback} on:click={() => void onPositiveFeedback?.()}>
+              <ThumbsUp size={15} strokeWidth={2} />
+            </button>
+            <button type="button" aria-label="结果不满意" title="不满意" disabled={!onNegativeFeedback} on:click={() => void onNegativeFeedback?.()}>
+              <ThumbsDown size={15} strokeWidth={2} />
+            </button>
+          </span>
         {/if}
         {#if onRate}
           <span class="rating-actions" aria-label="结果评分">
@@ -600,7 +615,8 @@
   }
 
   .secondary-result-action,
-  .rating-actions button {
+  .rating-actions button,
+  .feedback-actions button {
     min-height: 31px;
     padding: 0 9px;
     color: var(--muted, #697386);
@@ -612,7 +628,8 @@
   }
 
   .secondary-result-action:hover:not(:disabled),
-  .rating-actions button:hover:not(:disabled) {
+  .rating-actions button:hover:not(:disabled),
+  .feedback-actions button:hover:not(:disabled) {
     color: var(--text, #202535);
     background: var(--accent-soft, #eef1ff);
     border-color: var(--line-strong, #cbd4e2);
@@ -621,7 +638,20 @@
   .rating-actions {
     display: inline-flex;
     gap: 2px;
+  }
+
+  .feedback-actions {
+    display: inline-flex;
+    gap: 3px;
     margin-left: auto;
+  }
+
+  .feedback-actions button {
+    display: grid;
+    width: 31px;
+    height: 31px;
+    place-items: center;
+    padding: 0;
   }
 
   .rating-actions button {

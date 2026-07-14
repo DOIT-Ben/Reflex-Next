@@ -1,0 +1,43 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_DEVELOPMENT_SECRET = "development-only-secret-change-before-deploy"
+
+
+class CloudSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="REFLEX_CLOUD_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    environment: str = "development"
+    database_url: str = "sqlite:///./data/reflex-cloud.db"
+    upload_directory: Path = Path("./data/uploads")
+    admin_token: SecretStr = SecretStr(_DEVELOPMENT_SECRET)
+    token_pepper: SecretStr = SecretStr(_DEVELOPMENT_SECRET)
+    retention_days: int = Field(default=90, ge=1, le=3650)
+    feedback_limit_per_hour: int = Field(default=10, ge=1, le=1000)
+    max_screenshot_bytes: int = Field(default=3 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024)
+
+    @field_validator("environment")
+    @classmethod
+    def normalize_environment(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"development", "test", "production"}:
+            raise ValueError("invalid environment")
+        return normalized
+
+    @model_validator(mode="after")
+    def reject_development_secrets_in_production(self) -> "CloudSettings":
+        if self.environment != "production":
+            return self
+        secrets = (self.admin_token.get_secret_value(), self.token_pepper.get_secret_value())
+        if any(secret == _DEVELOPMENT_SECRET or len(secret) < 32 for secret in secrets):
+            raise ValueError("production secrets must be independently configured")
+        return self
