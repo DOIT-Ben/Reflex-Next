@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { appendHistoryPage, applyHistoryDetailFailure, applyHistoryDetailTerminal, applyHistoryRatingToDetail, createHistoryBackupsState, createHistoryState, failHistoryBackupsLoad, failHistoryQuery, finishHistoryBackupsLoad, finishHistoryOperation, historyElapsedLabel, historyExportFilters, historyScanMessage, normalizeHistoryBackups, removeHistoryItem, selectHistoryItem, setHistoryDetail, startHistoryBackupsLoad, startHistoryOperation, startHistoryQuery, updateHistoryRating } from "./historyState";
+import { appendHistoryPage, applyHistoryDetailFailure, applyHistoryDetailTerminal, applyHistoryRatingToDetail, createHistoryBackupsState, createHistoryState, failHistoryBackupsLoad, failHistoryQuery, finishHistoryBackupsLoad, finishHistoryOperation, historyElapsedLabel, historyExportFilters, historyListInput, historyScanMessage, normalizeHistoryBackups, removeHistoryItem, selectHistoryItem, setHistoryDetail, startHistoryBackupsLoad, startHistoryOperation, startHistoryQuery, updateHistoryRating } from "./historyState";
 
 describe("history state", () => {
   it("resets the cursor and ignores an old response after filters change", () => {
@@ -94,6 +94,23 @@ describe("history state", () => {
   it("exports only supported metadata filters and rejects active text search", () => {
     expect(historyExportFilters({ scene: "email", style: "concise", provider: "minimax" })).toEqual({ scene: "email", style: "concise", provider: "minimax" });
     expect(historyExportFilters({ search: "private phrase", scene: "email" })).toBeNull();
+  });
+
+  it("builds a strict runtime list payload without blank fields", () => {
+    expect(historyListInput({ search: "  ", scene: "general", style: "", provider: "" })).toEqual({
+      filters: { scene: "general" },
+      page_size: 30,
+      sort: "created_at",
+      direction: "desc"
+    });
+    expect(historyListInput({ search: " needle ", provider: " minimax " }, "cursor-1")).toEqual({
+      keyword: "needle",
+      filters: { provider: "minimax" },
+      page_size: 30,
+      sort: "created_at",
+      direction: "desc",
+      cursor: "cursor-1"
+    });
   });
 
   it("accepts only safe backup summaries from the plugin result", () => {

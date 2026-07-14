@@ -126,6 +126,18 @@ export function historyExportFilters(query: HistoryQuery): Record<string, string
   return Object.fromEntries(Object.entries({ scene, style, provider }).filter(([, value]) => value)) as Record<string, string>;
 }
 
+export function historyListInput(query: HistoryQuery, cursor: string | null = null): Record<string, unknown> {
+  const { search, scene, style, provider } = cleanQuery(query);
+  return {
+    ...(search ? { keyword: search } : {}),
+    filters: Object.fromEntries(Object.entries({ scene, style, provider }).filter(([, value]) => value)),
+    page_size: 30,
+    sort: "created_at",
+    direction: "desc",
+    ...(cursor ? { cursor } : {})
+  };
+}
+
 export function normalizeHistoryBackups(value: unknown): HistoryBackup[] {
   if (!isRecord(value) || !Array.isArray(value.items)) return [];
   return value.items.flatMap((item) => {
@@ -165,7 +177,12 @@ export function applyHistoryRatingToDetail(
 }
 
 function cleanQuery(query: HistoryQuery): HistoryQuery {
-  return Object.fromEntries(Object.entries(query).filter(([, value]) => typeof value === "string" && value.trim())) as HistoryQuery;
+  return Object.fromEntries(
+    Object.entries(query).flatMap(([key, value]) => {
+      if (typeof value !== "string" || !value.trim()) return [];
+      return [[key, value.trim()]];
+    })
+  ) as HistoryQuery;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

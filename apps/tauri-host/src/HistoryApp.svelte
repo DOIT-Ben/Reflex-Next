@@ -8,7 +8,7 @@
   import { createTauriHostApi } from "./domain/tauriHostApi";
   import { createSettingsApi, type AppConfig } from "./domain/settingsApi";
   import { createHistoryAdminBridge } from "./domain/historyAdminBridge";
-  import { appendHistoryPage, applyHistoryDetailFailure, applyHistoryDetailTerminal, applyHistoryRatingToDetail, createHistoryBackupsState, createHistoryState, failHistoryBackupsLoad, failHistoryQuery, finishHistoryBackupsLoad, historyExportFilters, historyScanMessage, removeHistoryItem, selectHistoryItem, startHistoryBackupsLoad, startHistoryQuery, updateHistoryRating, type HistoryPage, type HistorySummary } from "./domain/historyState";
+  import { appendHistoryPage, applyHistoryDetailFailure, applyHistoryDetailTerminal, applyHistoryRatingToDetail, createHistoryBackupsState, createHistoryState, failHistoryBackupsLoad, failHistoryQuery, finishHistoryBackupsLoad, historyExportFilters, historyListInput, historyScanMessage, removeHistoryItem, selectHistoryItem, startHistoryBackupsLoad, startHistoryQuery, updateHistoryRating, type HistoryPage, type HistorySummary } from "./domain/historyState";
   import { listSceneOptions } from "./domain/reflexSession";
   import { translate, type UiLanguage } from "./domain/i18n";
 
@@ -76,7 +76,7 @@
     const started = more ? { state: { ...state, phase: "loading-more" as const }, request: state.request } : startHistoryQuery(state, query);
     state = started.state;
     try {
-      const input = { keyword: state.query.search ?? "", filters: { scene: state.query.scene, style: state.query.style, provider: state.query.provider }, page_size: 30, sort: "created_at", direction: "desc", ...(more && state.cursor ? { cursor: state.cursor } : {}) };
+      const input = historyListInput(state.query, more ? state.cursor : null);
       if (!capability) throw new Error();
       let received = false;
       for await (const event of capability.invoke("history-sqlite", "list", input)) {
