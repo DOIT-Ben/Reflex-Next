@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $verifyScript = Join-Path $root "tools\verify_backend.ps1"
 $workflowPath = Join-Path $root ".github\workflows\backend-ci.yml"
+$tauriBuildScript = Join-Path $root "apps\tauri-host\src-tauri\build.rs"
 $powershell = Join-Path $PSHOME "powershell.exe"
 
 function Assert-True {
@@ -36,12 +37,26 @@ function Invoke-Verify {
 
 Assert-True (Test-Path -LiteralPath $verifyScript -PathType Leaf) "tools\verify_backend.ps1 is missing."
 Assert-True (Test-Path -LiteralPath $workflowPath -PathType Leaf) ".github\workflows\backend-ci.yml is missing."
+Assert-True (Test-Path -LiteralPath $tauriBuildScript -PathType Leaf) "Tauri build.rs is missing."
 $workflow = [System.IO.File]::ReadAllText($workflowPath, [System.Text.Encoding]::UTF8)
+$tauriBuild = [System.IO.File]::ReadAllText($tauriBuildScript, [System.Text.Encoding]::UTF8)
 Assert-True ($workflow -match 'uses: actions/cache@v4') "Windows CI must cache pinned Cargo tool binaries."
 Assert-True ($workflow -match 'cargo-tools-windows-audit-0\.22\.2-license-0\.6\.1-cyclonedx-0\.5\.9') "Cargo tool cache key must include every pinned version."
 Assert-True ($workflow -match "if: steps\.cargo-tools-cache\.outputs\.cache-hit != 'true'") "Pinned Cargo tools must install only on a cache miss."
 foreach ($version in @("0.22.2", "0.6.1", "0.5.9")) {
   Assert-True ($workflow -match [regex]::Escape($version)) "Windows CI must verify pinned Cargo tool version $version."
+}
+foreach ($command in @(
+    "capture_feedback_screenshot",
+    "submit_feedback",
+    "cloud_optimize",
+    "cloud_cancel",
+    "cloud_get_consent",
+    "cloud_update_consent",
+    "cloud_get_quota",
+    "cloud_delete_data"
+  )) {
+  Assert-True ($tauriBuild -match [regex]::Escape($command)) "Tauri build.rs must register the $command command for clean permission generation."
 }
 
 $list = Invoke-Verify -Arguments @("-ListSteps")

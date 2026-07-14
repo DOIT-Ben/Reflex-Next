@@ -487,7 +487,7 @@ wheels = [
 
 [[package]]
 name = "reflex-cloud"
-version = "0.7.0a7"
+version = "0.7.0a8"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -523,7 +523,7 @@ provides-extras = ["postgres", "dev"]
 
 [[package]]
 name = "reflex-core"
-version = "0.7.0a7"
+version = "0.7.0a8"
 source = { editable = "../../packages/reflex-core" }
 
 [package.metadata]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reflex-cloud"
-version = "0.7.0-alpha.7"
+version = "0.7.0-alpha.8"
 description = "Cloud feedback, quota, and optimization service for Reflex Next."
 requires-python = ">=3.12"
 dependencies = [

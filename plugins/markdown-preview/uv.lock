@@ -86,7 +86,7 @@ wheels = [
 
 [[package]]
 name = "reflex-core"
-version = "0.7.0a7"
+version = "0.7.0a8"
 source = { editable = "../../packages/reflex-core" }
 
 [package.metadata]

@@ -28,6 +28,14 @@ fn main() {
             "provider_secret_status",
             "save_provider_secret",
             "delete_provider_secret",
+            "capture_feedback_screenshot",
+            "submit_feedback",
+            "cloud_optimize",
+            "cloud_cancel",
+            "cloud_get_consent",
+            "cloud_update_consent",
+            "cloud_get_quota",
+            "cloud_delete_data",
         ]),
     ))
     .expect("failed to build Tauri application");
