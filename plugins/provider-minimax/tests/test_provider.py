@@ -137,12 +137,82 @@ def test_stream_accepts_minimax_finish_reason_without_done_marker():
     ) == ["first", "last"]
 
 
+def test_stream_filters_thought_blocks_across_content_chunks():
+    content = (
+        b'data: {"choices":[{"delta":{"content":"<thi"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"nk>private reasoning"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"</thi"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"nk>\\n\\nFinal result"},"finish_reason":"stop"}]}\n\n'
+    )
+    provider = MiniMaxProvider(
+        PRIVATE_SENTINEL,
+        provider_config(),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=content,
+            )
+        ),
+    )
+
+    chunks = list(provider.stream({"text": "input"}, request(), CancellationToken()))
+
+    assert "".join(chunks) == "Final result"
+    assert "private reasoning" not in "".join(chunks)
+
+
+def test_stream_preserves_visible_content_around_fenced_thought_block():
+    content = (
+        b'data: {"choices":[{"delta":{"content":"Before ```thi"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"nk\\nprivate\\n```After"},"finish_reason":"stop"}]}\n\n'
+    )
+    provider = MiniMaxProvider(
+        PRIVATE_SENTINEL,
+        provider_config(),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=content,
+            )
+        ),
+    )
+
+    assert "".join(
+        provider.stream({"text": "input"}, request(), CancellationToken())
+    ) == "Before After"
+
+
 def test_complete_json_response_is_supported():
     transport = httpx.MockTransport(
         lambda _: httpx.Response(
             200,
             headers={"content-type": "application/json"},
             content=JSON_BYTES,
+        )
+    )
+    provider = MiniMaxProvider(PRIVATE_SENTINEL, provider_config(), transport=transport)
+
+    assert list(
+        provider.stream(
+            {"text": "一段待优化内容"},
+            request(stream=False),
+            CancellationToken(),
+        )
+    ) == ["完整结果"]
+
+
+def test_complete_json_response_filters_thought_block():
+    transport = httpx.MockTransport(
+        lambda _: httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={
+                "choices": [
+                    {"message": {"content": "<think>private</think>\n\n完整结果"}}
+                ]
+            },
         )
     )
     provider = MiniMaxProvider(PRIVATE_SENTINEL, provider_config(), transport=transport)

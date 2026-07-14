@@ -23,6 +23,7 @@ SUPPORTED_MODELS = (DEFAULT_MODEL,)
 RETRY_DELAYS_SECONDS = (0.25, 0.5)
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_STREAM_EVENTS = 50_000
+_THOUGHT_OPENERS = (("<think>", "</think>"), ("```think", "```"))
 
 _SAFE_MESSAGES = {
     "provider_auth_failed": "Provider authentication failed.",
@@ -43,6 +44,72 @@ class MiniMaxProviderError(RuntimeError):
 
     def __repr__(self) -> str:
         return f"MiniMaxProviderError(code={self.code!r}, retryable={self.retryable!r})"
+
+
+class _ThoughtBlockFilter:
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._closing_marker: str | None = None
+
+    def feed(self, chunk: str) -> list[str]:
+        self._buffer += chunk
+        visible: list[str] = []
+
+        while self._buffer:
+            if self._closing_marker is not None:
+                lower = self._buffer.lower()
+                closing_at = lower.find(self._closing_marker)
+                if closing_at < 0:
+                    _, self._buffer = _split_before_possible_marker(
+                        self._buffer, (self._closing_marker,)
+                    )
+                    break
+                self._buffer = self._buffer[
+                    closing_at + len(self._closing_marker) :
+                ].lstrip("\r\n")
+                self._closing_marker = None
+                continue
+
+            lower = self._buffer.lower()
+            opening_matches = [
+                (lower.find(opener), opener, closer)
+                for opener, closer in _THOUGHT_OPENERS
+                if lower.find(opener) >= 0
+            ]
+            if opening_matches:
+                opening_at, opener, closer = min(opening_matches, key=lambda item: item[0])
+                if opening_at:
+                    visible.append(self._buffer[:opening_at])
+                self._buffer = self._buffer[opening_at + len(opener) :]
+                self._closing_marker = closer
+                continue
+
+            released, self._buffer = _split_before_possible_marker(
+                self._buffer, tuple(opener for opener, _ in _THOUGHT_OPENERS)
+            )
+            if released:
+                visible.append(released)
+            break
+
+        return visible
+
+    def finish(self) -> list[str]:
+        if self._closing_marker is not None:
+            self._buffer = ""
+            return []
+        trailing = self._buffer
+        self._buffer = ""
+        return [trailing] if trailing else []
+
+
+def _split_before_possible_marker(text: str, markers: tuple[str, ...]) -> tuple[str, str]:
+    lower = text.lower()
+    max_suffix = min(len(text), max(len(marker) for marker in markers) - 1)
+    for suffix_length in range(max_suffix, 0, -1):
+        suffix = lower[-suffix_length:]
+        if any(marker.startswith(suffix) for marker in markers):
+            return text[:-suffix_length], text[-suffix_length:]
+    return text, ""
 
 
 class MiniMaxProvider:
@@ -93,7 +160,20 @@ class MiniMaxProvider:
             for attempt in range(3):
                 try:
                     attempt_had_content = False
-                    for chunk in self._stream_once(client, payload, cancellation):
+                    thought_filter = _ThoughtBlockFilter()
+                    raw_chunks = self._stream_once(client, payload, cancellation)
+                    visible_chunks = (
+                        visible
+                        for raw_chunk in raw_chunks
+                        for visible in thought_filter.feed(raw_chunk)
+                    )
+                    for chunk in visible_chunks:
+                        if cancellation.is_cancelled:
+                            return
+                        attempt_had_content = True
+                        yielded_content = True
+                        yield chunk
+                    for chunk in thought_filter.finish():
                         if cancellation.is_cancelled:
                             return
                         attempt_had_content = True
