@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from reflex_cloud.version import __version__
 from test_optimize_api import _client
+
+
+def test_openapi_reports_the_installed_cloud_distribution_version(
+    client: TestClient,
+) -> None:
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    assert response.json()["info"]["version"] == __version__
 
 
 def test_live_health_does_not_require_provider(

@@ -17,6 +17,7 @@ from .database import Database
 from .optimizer import CloudOptimizer, CloudOptimizerError
 from .service import CloudService, CloudServiceError
 from .storage import AttachmentError, AttachmentStore
+from .version import __version__
 
 
 logger = logging.getLogger("reflex_cloud")
@@ -97,7 +98,7 @@ def create_app(
 
     app = FastAPI(
         title="Reflex Cloud",
-        version="0.1.0",
+        version=__version__,
         docs_url=None if current_settings.environment == "production" else "/docs",
         redoc_url=None,
         lifespan=lifespan,

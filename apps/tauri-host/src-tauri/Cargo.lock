@@ -2976,7 +2976,7 @@ dependencies = [
 
 [[package]]
 name = "reflex-next-tauri-host"
-version = "0.1.0"
+version = "0.7.0-alpha.7"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",

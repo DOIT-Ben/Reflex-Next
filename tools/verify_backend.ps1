@@ -140,6 +140,22 @@ $steps += New-VerificationStep `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\scan_release_secrets.ps1")
 
 $steps += New-VerificationStep `
+  -Id "release:version-contract" `
+  -Category "release" `
+  -WorkDir "." `
+  -LockFile "" `
+  -Executable "powershell" `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\check_version_consistency_contract.ps1")
+
+$steps += New-VerificationStep `
+  -Id "release:version-consistency" `
+  -Category "release" `
+  -WorkDir "." `
+  -LockFile "" `
+  -Executable "powershell" `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\check_version_consistency.ps1", "-IgnoreTag")
+
+$steps += New-VerificationStep `
   -Id "security:dependency-contract" `
   -Category "security" `
   -WorkDir "." `

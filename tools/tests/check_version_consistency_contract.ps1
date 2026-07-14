@@ -32,11 +32,24 @@ function New-VersionFixture {
   )
 
   New-Item -ItemType Directory -Path $Path -Force | Out-Null
+  Write-Utf8NoBom -Path (Join-Path $Path "VERSION") -Content $Version
   Write-Utf8NoBom -Path (Join-Path $Path "apps\tauri-host\package.json") -Content (@{
       name = "@reflex-next/tauri-host"
       version = $Version
       private = $true
     } | ConvertTo-Json)
+  $lockPackages = [ordered]@{}
+  $lockPackages[""] = [ordered]@{
+    name = "@reflex-next/tauri-host"
+    version = $Version
+  }
+  Write-Utf8NoBom -Path (Join-Path $Path "apps\tauri-host\package-lock.json") -Content ([ordered]@{
+      name = "@reflex-next/tauri-host"
+      version = $Version
+      lockfileVersion = 3
+      requires = $true
+      packages = $lockPackages
+    } | ConvertTo-Json -Depth 10)
   Write-Utf8NoBom -Path (Join-Path $Path "apps\tauri-host\src-tauri\tauri.conf.json") -Content (@{
       productName = "Reflex"
       version = $Version
@@ -49,6 +62,13 @@ version = "$Version"
 
 [dependencies]
 example = { version = "99.0.0" }
+"@
+  Write-Utf8NoBom -Path (Join-Path $Path "apps\tauri-host\src-tauri\Cargo.lock") -Content @"
+version = 3
+
+[[package]]
+name = "reflex-next-tauri-host"
+version = "$Version"
 "@
   foreach ($package in @("reflex-core", "reflex-runtime")) {
     Write-Utf8NoBom -Path (Join-Path $Path "packages\$package\pyproject.toml") -Content @"
@@ -63,6 +83,48 @@ version = "$Version"
 dev = ["pytest>=99"]
 "@
   }
+  Write-Utf8NoBom -Path (Join-Path $Path "packages\reflex-core\uv.lock") -Content @"
+version = 1
+
+[[package]]
+name = "reflex-core"
+version = "$Version"
+source = { editable = "." }
+"@
+  Write-Utf8NoBom -Path (Join-Path $Path "packages\reflex-runtime\uv.lock") -Content @"
+version = 1
+
+[[package]]
+name = "reflex-core"
+version = "$Version"
+source = { editable = "../reflex-core" }
+
+[[package]]
+name = "reflex-runtime"
+version = "$Version"
+source = { editable = "." }
+"@
+  Write-Utf8NoBom -Path (Join-Path $Path "services\reflex-cloud\pyproject.toml") -Content @"
+[build-system]
+requires = ["setuptools>=68"]
+
+[project]
+name = "reflex-cloud"
+version = "$Version"
+"@
+  Write-Utf8NoBom -Path (Join-Path $Path "services\reflex-cloud\uv.lock") -Content @"
+version = 1
+
+[[package]]
+name = "reflex-cloud"
+version = "$Version"
+source = { editable = "." }
+
+[[package]]
+name = "reflex-core"
+version = "$Version"
+source = { editable = "../../packages/reflex-core" }
+"@
 
   # Independent workspace plugins intentionally have their own release cadence.
   Write-Utf8NoBom -Path (Join-Path $Path "plugins\example\pyproject.toml") -Content @"
@@ -128,6 +190,30 @@ function Set-JsonVersion {
   Write-Utf8NoBom -Path $Path -Content ($value | ConvertTo-Json -Depth 10)
 }
 
+function Set-NpmLockVersion {
+  param(
+    [string]$Path,
+    [string]$Version
+  )
+
+  $raw = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+  if ($PSVersionTable.PSVersion.Major -ge 6) {
+    $value = $raw | ConvertFrom-Json -AsHashtable
+  }
+  else {
+    Add-Type -AssemblyName System.Web.Extensions
+    $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+    $value = $serializer.DeserializeObject($raw)
+  }
+  $value["version"] = $Version
+  if ($PSVersionTable.PSVersion.Major -ge 6) {
+    Write-Utf8NoBom -Path $Path -Content ($value | ConvertTo-Json -Depth 10)
+  }
+  else {
+    Write-Utf8NoBom -Path $Path -Content ($serializer.Serialize($value))
+  }
+}
+
 function Set-TomlSectionVersion {
   param(
     [string]$Path,
@@ -152,6 +238,13 @@ try {
   Assert-True ($consistent.ExitCode -eq 0) "A consistent release fixture must pass. Output: $($consistent.Output -join ' | ')"
   Assert-True (($consistent.Output | Where-Object { $_ -eq "Version consistency check passed: 1.2.3-beta.4" }).Count -eq 1) "Success output must report the common release version."
 
+  $coreLock = Join-Path $consistentRoot "packages\reflex-core\uv.lock"
+  $coreLockContent = Get-Content -Raw -Encoding UTF8 -LiteralPath $coreLock
+  Write-Utf8NoBom -Path $coreLock -Content ($coreLockContent -replace 'version = "1\.2\.3-beta\.4"', 'version = "1.2.3b4"')
+  $pep440Equivalent = Invoke-Check -FixtureRoot $consistentRoot
+  Write-Utf8NoBom -Path $coreLock -Content $coreLockContent
+  Assert-True ($pep440Equivalent.ExitCode -eq 0) "PEP 440 lock versions must compare equal to their SemVer release form."
+
   $fixtureScript = Join-Path $consistentRoot "tools\check_version_consistency.ps1"
   New-Item -ItemType Directory -Path (Split-Path -Parent $fixtureScript) -Force | Out-Null
   Copy-Item -LiteralPath $checkScript -Destination $fixtureScript
@@ -167,7 +260,8 @@ try {
     @{ Path = "apps\tauri-host\src-tauri\Cargo.toml"; Kind = "toml"; Section = "package"; Label = "Cargo" },
     @{ Path = "apps\tauri-host\package.json"; Kind = "json"; Label = "npm" },
     @{ Path = "packages\reflex-core\pyproject.toml"; Kind = "toml"; Section = "project"; Label = "Python reflex-core" },
-    @{ Path = "packages\reflex-runtime\pyproject.toml"; Kind = "toml"; Section = "project"; Label = "Python reflex-runtime" }
+    @{ Path = "packages\reflex-runtime\pyproject.toml"; Kind = "toml"; Section = "project"; Label = "Python reflex-runtime" },
+    @{ Path = "services\reflex-cloud\pyproject.toml"; Kind = "toml"; Section = "project"; Label = "Python reflex-cloud" }
   )
   foreach ($case in $mismatchCases) {
     $manifestPath = Join-Path $consistentRoot $case.Path
@@ -183,6 +277,21 @@ try {
     Assert-True ($result.ExitCode -ne 0) "$($case.Label) version drift must fail."
     Assert-True (($result.Output | Where-Object { $_ -match [regex]::Escape($case.Label) }).Count -gt 0) "$($case.Label) failure must identify the drifting source."
   }
+
+  $versionFile = Join-Path $consistentRoot "VERSION"
+  Write-Utf8NoBom -Path $versionFile -Content "1.2.4"
+  $versionMismatch = Invoke-Check -FixtureRoot $consistentRoot
+  Write-Utf8NoBom -Path $versionFile -Content "1.2.3-beta.4"
+  Assert-True ($versionMismatch.ExitCode -ne 0) "The release version file must be compared with every product manifest."
+  Assert-True (($versionMismatch.Output | Where-Object { $_ -match 'Release version file' }).Count -gt 0) "Version file drift must identify the release source."
+
+  $npmLock = Join-Path $consistentRoot "apps\tauri-host\package-lock.json"
+  $npmLockContent = Get-Content -Raw -Encoding UTF8 -LiteralPath $npmLock
+  Set-NpmLockVersion -Path $npmLock -Version "1.2.4"
+  $npmLockMismatch = Invoke-Check -FixtureRoot $consistentRoot
+  Write-Utf8NoBom -Path $npmLock -Content $npmLockContent
+  Assert-True ($npmLockMismatch.ExitCode -ne 0) "npm lockfile version drift must fail."
+  Assert-True (($npmLockMismatch.Output | Where-Object { $_ -match 'npm lockfile' }).Count -gt 0) "npm lockfile drift must identify the lock source."
 
   & git -C $consistentRoot tag -d "v1.2.3-beta.4" | Out-Null
   & git -C $consistentRoot tag "v1.2.4"

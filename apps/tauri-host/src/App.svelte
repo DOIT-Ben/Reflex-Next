@@ -277,7 +277,7 @@
   let cloudQuota: CloudQuota | null = null;
   let cloudPrivacyBusy = false;
   let cloudPrivacyNotice: string | null = null;
-  let appVersion = "development";
+  let appVersion = __REFLEX_APP_VERSION__;
   let viewScale = 1;
   let windowSizePreset: WindowSizePreset = "default";
   let commandPaletteOpen = false;
@@ -1968,7 +1968,7 @@
       inputCount={state.inputText.length}
       languageLabel={uiLanguage === "zh-CN" ? "中文" : "English"}
       themeLabel={settingsDraft.theme === "system" ? tr("系统") : settingsDraft.theme === "dark" ? tr("深色") : tr("浅色")}
-      versionLabel="v0.6 beta"
+      versionLabel={`v${appVersion}`}
     />
 
     <Toast visible={toastVisible} message={toastText} tone={toastTone} />
