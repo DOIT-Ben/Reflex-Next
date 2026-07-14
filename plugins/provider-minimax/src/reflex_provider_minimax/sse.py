@@ -29,6 +29,7 @@ def iter_sse_payloads(
 ) -> Iterator[Any]:
     event_count = 0
     saw_done = False
+    saw_terminal_payload = False
     for data in _iter_byte_event_data(chunks, max_bytes=max_bytes):
         if data == "[DONE]":
             saw_done = True
@@ -37,10 +38,13 @@ def iter_sse_payloads(
         if event_count > max_events:
             raise SseProtocolError()
         try:
-            yield json.loads(data)
+            payload = json.loads(data)
         except (TypeError, json.JSONDecodeError):
             raise SseProtocolError() from None
-    if not saw_done:
+        yield payload
+        if _has_terminal_finish_reason(payload):
+            saw_terminal_payload = True
+    if not saw_done and not saw_terminal_payload:
         raise SseProtocolError()
 
 
@@ -78,6 +82,27 @@ def extract_json_content(payload: Any) -> str:
                 return content
     text = choice.get("text")
     return text if isinstance(text, str) else ""
+
+
+def _has_terminal_finish_reason(payload: Any) -> bool:
+    payloads = payload if isinstance(payload, list) else [payload]
+    for item in payloads:
+        if not isinstance(item, dict):
+            continue
+        choices = item.get("choices")
+        if not isinstance(choices, list):
+            continue
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            finish_reason = choice.get("finish_reason")
+            if (
+                isinstance(finish_reason, str)
+                and finish_reason.strip()
+                and len(finish_reason) <= 64
+            ):
+                return True
+    return False
 
 
 def _iter_event_data(lines: Iterable[str]) -> Iterator[str]:

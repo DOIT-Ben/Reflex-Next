@@ -115,6 +115,28 @@ def test_stream_maps_request_and_yields_incremental_content_without_repr_leakage
     assert PRIVATE_SENTINEL not in repr(provider)
 
 
+def test_stream_accepts_minimax_finish_reason_without_done_marker():
+    content = (
+        b'data: {"choices":[{"delta":{"content":"first"},"index":0}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"last"},"finish_reason":"stop","index":0}]}\n\n'
+    )
+    provider = MiniMaxProvider(
+        PRIVATE_SENTINEL,
+        provider_config(),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=content,
+            )
+        ),
+    )
+
+    assert list(
+        provider.stream({"text": "input"}, request(), CancellationToken())
+    ) == ["first", "last"]
+
+
 def test_complete_json_response_is_supported():
     transport = httpx.MockTransport(
         lambda _: httpx.Response(
