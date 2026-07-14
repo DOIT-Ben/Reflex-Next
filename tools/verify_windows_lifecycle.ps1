@@ -72,6 +72,27 @@ function Assert-ProductFilesRemoved {
   }
 }
 
+function Wait-ProductFilesRemoved {
+  param([string]$Destination)
+
+  $deadline = [DateTime]::UtcNow.AddSeconds(10)
+  do {
+    $remaining = @(
+      "Reflex.exe",
+      "runtime\reflex-runtime.exe",
+      "uninstall.exe"
+    ) | Where-Object {
+      Test-Path -LiteralPath (Join-Path $Destination $_) -PathType Leaf
+    }
+    if ($remaining.Count -eq 0) {
+      return
+    }
+    Start-Sleep -Milliseconds 250
+  } while ([DateTime]::UtcNow -lt $deadline)
+
+  throw "uninstaller_product_files_timeout"
+}
+
 function Invoke-SidecarProbe {
   param([string]$Path)
 
@@ -213,7 +234,7 @@ function Invoke-SilentUninstaller {
   if ($process.ExitCode -ne 0) {
     throw "uninstaller_exit_code_$($process.ExitCode)"
   }
-  Start-Sleep -Milliseconds 500
+  Wait-ProductFilesRemoved -Destination $Destination
 }
 
 $installer = Resolve-RequiredFile -Path $InstallerPath

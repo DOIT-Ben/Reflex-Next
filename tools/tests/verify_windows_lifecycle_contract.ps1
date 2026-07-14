@@ -26,6 +26,8 @@ foreach ($required in @(
     "Invoke-SilentUninstaller",
     'ArgumentList @("/S")',
     '("/D=" + $Destination)',
+    "Wait-ProductFilesRemoved",
+    "uninstaller_product_files_timeout",
     "EnvironmentVariables",
     "REFLEX_LIFECYCLE_DATA_ROOT",
     "REFLEX_DIAGNOSTICS_ENABLED",
