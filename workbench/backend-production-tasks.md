@@ -41,7 +41,7 @@
 | P1-005 | 增强 SSE/JSON 断流与超大响应防护 | 完成 | P1-004 | 两类 Provider 均完成 2 MiB/50,000 上限、截断和非法 UTF-8 测试 |
 | P1-006 | Sidecar 崩溃和并发恢复验证 | 完成 | P1-004 | 唯一安全终态、路由清理、进程终止和下一请求重启测试通过 |
 | P1-007 | 建立脱敏真实 Provider 冒烟工具 | 完成 | P1-004 | Runtime NDJSON、Credential Manager、8 MiB 输出上限、500 ms 迟到事件观察与 8 项契约通过 |
-| P1-008 | 完成真实流式与取消实机门禁 | 阻塞 | P1-007、新凭据 | 人工实机证据，不保存正文或密钥 |
+| P1-008 | 完成真实流式与取消实机门禁 | 完成 | P1-007、新凭据 | MiniMax 目录、流式成功和取消实机通过，见 `docs/verification/provider-smoke-2026-07-15.md` |
 | P1-009 | 正确分类 `OperationCancelled` | 完成 | P0-013 | Core 取消终态测试通过 |
 | P1-010 | 主动中断 Provider 阻塞读取 | 完成 | P1-009 | Token 回调主动关闭 client/response，阻塞读取和退避取消测试通过 |
 | P1-011 | 建立 Runtime 并发和等待队列上限 | 完成 | P0-013 | 固定 4 worker/32 真等待、FIFO/取消/关闭回收、`runtime_busy` 通过 |
@@ -65,7 +65,7 @@
 | ID | 任务 | 状态 | 依赖 | 验证 |
 |---|---|---|---|---|
 | P3-001 | 建立冷启动与首状态基准 | 完成 | P0-006 | 本地 Mock P50/P95/P99、失败计数、环境元数据和 9 项契约通过 |
-| P3-002 | 建立 10,000 次请求/取消浸泡 | 进行中 | P1-006 | 工具、100 次 CI 短门禁和 10,000 次本机门禁通过；72 小时持续运行待执行 |
+| P3-002 | 建立 10,000 次请求/取消浸泡 | 进行中 | P1-006 | 工具、100 次 CI 短门禁和 10,000 次本机门禁通过；72 小时持续运行中 |
 | P3-003 | 建立插件和历史资源浸泡 | 完成 | P2-003 | 三轮 1,000 次、Private Bytes/句柄/线程/SQLite 连接预算通过 |
 | P3-004 | 审查请求 ID、线程、队列和缓冲上限 | 完成 | P0-004 | Runtime/插件/Host 硬上限、唯一终态、会话轮转和连接归零通过 |
 | P3-005 | 建立轮转脱敏诊断 | 完成 | P0-004、P0-002 | Runtime/Host 请求与生命周期、配置恢复、历史修复/恢复终态、轮转上限和隐私负向测试通过 |
@@ -80,7 +80,7 @@
 | P4-001 | 统一版本号和构建元数据 | 完成 | P0-008 | `VERSION`、产品清单、锁文件、界面和云服务元数据一致 |
 | P4-002 | 干净 Windows 10/11 构建验证 | 待验证 | P2、P3 完成 | Windows 11 已通过，Windows 10 待验证；见 `docs/verification/release-alpha8-windows-lifecycle.md` |
 | P4-003 | 安装、覆盖安装、卸载和重装生命周期 | 待验证 | P4-002 | Windows 11 已通过，Windows 10 待验证；见 `docs/verification/release-alpha8-windows-lifecycle.md` |
-| P4-004 | 配置和历史升级兼容 | 进行中 | P4-002 | 配置 11 项、History 158 项通过；跨版本安装夹具待验证，见 `docs/verification/backend-upgrade-compatibility.md` |
+| P4-004 | 配置和历史升级兼容 | 进行中 | P4-002 | 配置 11 项、History 158 项和 beta.11 到 alpha.8 安装目录覆盖通过；旧数据首次启动迁移待验证 |
 | P4-005 | 签名、更新与回滚方案 | 待办 | 用户采购决策 | 签名验证、回滚演练 |
 | P4-006 | 发布清单、校验和、SBOM 和恢复手册 | 待办 | P4-003、P4-005 | RC 交付包审计 |
 
@@ -97,23 +97,24 @@
 ## 当前验证基线
 
 - Python：9 个包共 690 项通过；
-- Rust/Tauri Host：184 项通过，3 项 Windows Credential Manager 实机测试默认忽略且已单独实跑通过；
+- Rust/Tauri Host：191 项通过，3 项 Windows Credential Manager 实机测试默认忽略且已单独实跑通过；
 - 生产工具：Provider 冒烟 8 项加 2 个子用例、性能基准 9 项、History 基准 38 项、插件/历史资源工具 40 项通过；
 - Runtime 浸泡：工具契约 14 项、CI 100 次短门禁通过；本机 10,000 次中 5,000 完成、5,000 取消、65,002 个协议事件、迟到事件 0、安全退出；
 - 72 小时 Runtime 门禁已启动：PID `23848`，受控速率每分钟 3 次，报告为 `workbench\runtime-soak-72h-alpha8-20260715-045742.json`；当前仍在运行，未计入完成证据；
 - 插件/历史浸泡：三轮各 1,000 次均通过，Private Bytes 最大增量 454,656 B，三轮句柄/线程增量均为 0，SQLite 最终活动连接 0、峰值 1；统一门禁保留 100 次短烟测；
-- TypeScript Domain Bridge 与前端架构契约：24 个文件、151 项测试通过，最大 2 workers；
+- TypeScript Domain Bridge 与前端架构契约：25 个文件、158 项测试通过，最大 2 workers；
 - 前端生产构建：Vite 构建通过，193 个模块，主包约 230.58 kB、gzip 约 73.31 kB；
 - 前端视觉与交互：680x480、760x540、920x720 无页面溢出或控件裁切，Demo Core 生成、命令面板、设置导航和悬浮反馈实跑通过；
 - 发布前敏感扫描：契约测试与当前受版本控制文件实扫通过；
 - 依赖门禁：九个 Python 环境、RustSec、Rust/npm 许可证和 npm 全 lockfile 真实审计通过；`cryptography` 已升至 `48.0.1`；
 - RustSec 临时例外：`quick-xml 0.39.4` 两项公告仅存在于非 Windows Wayland 依赖图，例外在 2026-10-01 到期，进入 Windows 依赖图会立即失败；
-- Windows CI：Run `29287933356` 完成安全扫描、干净依赖安装、全量测试、100 次 Runtime 浸泡、生产构建、构建物扫描和 SBOM 上传，结论为 `success`；
+- Windows CI：Run `29375217256` 完成安全扫描、干净依赖安装、全量测试、100 次 Runtime 浸泡、生产构建、构建物扫描和 SBOM 上传，结论为 `success`；
 - 版本一致性检查：14 个产品版本来源统一为 `0.7.0-alpha.8`；Python/uv 的 PEP 440 规范化形式 `0.7.0a8` 经过等价校验；
 - alpha.8 干净 Windows 构建：从提交 `8310736` 的干净副本完成冻结依赖、Runtime 单文件、Rust release 和 NSIS 构建；三件发布物敏感扫描与 11 项 SBOM 验证通过；
 - alpha.8 隔离生命周期：首次安装、Sidecar ping/shutdown、同版本覆盖安装、卸载、重装和最终清理通过；详见 `docs/verification/release-alpha8-windows-lifecycle.md`；
 - 生命周期工具：`tools\verify_windows_lifecycle.ps1` 已固化隔离安装、覆盖、卸载、重装、Sidecar 协议和 Host 启动检查，契约测试与 alpha.8 实跑均通过；
-- 配置与历史升级契约：Rust 配置迁移 11 项、History 旧库夹具与全套 158 项通过；真实跨版本覆盖安装仍由 P4-004 继续验证；
+- 真实 Provider：MiniMax 目录、流式成功和定时取消实机通过，结果只保留分类和时延；详见 `docs/verification/provider-smoke-2026-07-15.md`；
+- 配置与历史升级契约：Rust 配置迁移 11 项、History 旧库夹具与全套 158 项以及 beta.11 到 alpha.8 安装目录覆盖通过；旧数据首次启动迁移仍由 P4-004 继续验证；
 - 统一验证脚本契约：步骤、锁文件、失败码、Rust/Vitest 并发上限通过；
 - 当前已知测试工程缺口：根目录一次性收集全部 pytest 会因同名测试模块冲突，必须按包隔离或改用 importlib 模式；
 - 当前工作区原有未跟踪内容：`resources/` 与用户提供的前端重做归档，任何任务不得修改或暂存。
