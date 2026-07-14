@@ -9,6 +9,7 @@ import pytest
 
 import reflex_history_sqlite.export as export_module
 from reflex_history_sqlite.contract import HistoryPluginError
+from reflex_history_sqlite.repository import HistoryRepository
 
 
 EXPORT_FIELDS = (
@@ -26,6 +27,38 @@ EXPORT_FIELDS = (
     "rating",
     "tags",
 )
+
+
+def _track_connections(monkeypatch):
+    counts = {"opened": 0, "closed": 0, "active": 0}
+    original_open = HistoryRepository._open_connection
+
+    class CountedConnection:
+        def __init__(self, connection):
+            self._connection = connection
+            self._closed = False
+
+        def __getattr__(self, name):
+            return getattr(self._connection, name)
+
+        def close(self):
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                self._connection.close()
+            finally:
+                counts["closed"] += 1
+                counts["active"] -= 1
+
+    def counted_open(repository, *, read_only):
+        connection = original_open(repository, read_only=read_only)
+        counts["opened"] += 1
+        counts["active"] += 1
+        return CountedConnection(connection)
+
+    monkeypatch.setattr(HistoryRepository, "_open_connection", counted_open)
+    return counts
 
 
 def _save(history_plugin, history_services, cancellation, snapshot):
@@ -183,6 +216,7 @@ def test_export_enforces_bounded_record_and_byte_limits(
         make_snapshot(id="history-limit-2", input="x" * 96, output="y" * 96),
     )
     monkeypatch.setattr(export_module, limit_name, limit_value)
+    connections = _track_connections(monkeypatch)
 
     with pytest.raises(HistoryPluginError, match="history_export_too_large"):
         list(
@@ -193,6 +227,9 @@ def test_export_enforces_bounded_record_and_byte_limits(
                 cancellation,
             )
         )
+
+    assert connections["opened"] == connections["closed"]
+    assert connections["active"] == 0
 
 
 def test_export_checks_cancellation_between_streamed_chunks(
@@ -209,6 +246,7 @@ def test_export_checks_cancellation_between_streamed_chunks(
         make_snapshot(input="x" * 256, output="y" * 256),
     )
     monkeypatch.setattr(export_module, "CHUNK_SIZE", 64)
+    connections = _track_connections(monkeypatch)
     events = history_plugin.invoke(
         "export",
         {"format": "json", "filters": {}},
@@ -217,7 +255,35 @@ def test_export_checks_cancellation_between_streamed_chunks(
     )
 
     assert next(events)["status"] == "chunk"
+    assert connections["active"] == 0
     cancellation.cancel()
     with pytest.raises(Exception) as caught:
         next(events)
     assert caught.value.__class__.__name__ == "OperationCancelled"
+    assert connections["opened"] == connections["closed"]
+    assert connections["active"] == 0
+
+
+def test_repeated_exports_close_every_opened_connection(
+    history_plugin,
+    history_services,
+    cancellation,
+    make_snapshot,
+    monkeypatch,
+):
+    _save(
+        history_plugin,
+        history_services,
+        cancellation,
+        make_snapshot(),
+    )
+    connections = _track_connections(monkeypatch)
+
+    for format_name in ("json", "csv", "markdown") * 3:
+        assert _export_bytes(
+            history_plugin, history_services, cancellation, format_name
+        )
+
+    assert connections["opened"] >= 9
+    assert connections["opened"] == connections["closed"]
+    assert connections["active"] == 0

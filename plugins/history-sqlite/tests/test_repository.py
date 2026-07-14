@@ -23,6 +23,64 @@ def list_records(history_plugin, services, cancellation, **payload):
     return history_plugin.invoke("list", request, services, cancellation)
 
 
+class ConnectionCounter:
+    def __init__(self):
+        self.opened = 0
+        self.closed = 0
+        self.active = 0
+        self.active_writable = 0
+        self._lock = threading.Lock()
+
+    def wrap(self, connection, *, read_only):
+        with self._lock:
+            self.opened += 1
+            self.active += 1
+            if not read_only:
+                self.active_writable += 1
+        return CountedConnection(connection, self, read_only=read_only)
+
+    def on_close(self, *, read_only):
+        with self._lock:
+            self.closed += 1
+            self.active -= 1
+            if not read_only:
+                self.active_writable -= 1
+
+
+class CountedConnection:
+    def __init__(self, connection, counter, *, read_only):
+        self._connection = connection
+        self._counter = counter
+        self._read_only = read_only
+        self._closed = False
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._connection.close()
+        finally:
+            self._counter.on_close(read_only=self._read_only)
+
+
+def track_repository_connections(monkeypatch):
+    counter = ConnectionCounter()
+    original_open = HistoryRepository._open_connection
+
+    def counted_open(repository, *, read_only):
+        return counter.wrap(
+            original_open(repository, read_only=read_only),
+            read_only=read_only,
+        )
+
+    monkeypatch.setattr(HistoryRepository, "_open_connection", counted_open)
+    return counter
+
+
 def test_no_key_or_disabled_new_store_does_not_create_directory_or_database(
     history_plugin,
     history_services,
@@ -547,7 +605,7 @@ def test_pre_cancelled_operation_stops_before_database_creation(
 
 
 def test_cancelled_save_waiting_for_write_lock_rolls_back_without_new_record(
-    history_plugin, history_services, make_snapshot, cancellation
+    history_plugin, history_services, make_snapshot, cancellation, monkeypatch
 ):
     save(history_plugin, make_snapshot(id="seed"), history_services, cancellation)
     database_path = history_services["history"]["database_path"]
@@ -555,6 +613,7 @@ def test_cancelled_save_waiting_for_write_lock_rolls_back_without_new_record(
     blocker.execute("BEGIN IMMEDIATE")
     token = type(cancellation)()
     errors = []
+    connections = track_repository_connections(monkeypatch)
 
     def worker():
         try:
@@ -569,8 +628,12 @@ def test_cancelled_save_waiting_for_write_lock_rolls_back_without_new_record(
 
     thread = threading.Thread(target=worker)
     thread.start()
-    threading.Event().wait(0.1)
+    for _ in range(100):
+        if connections.active_writable:
+            break
+        threading.Event().wait(0.01)
     assert thread.is_alive()
+    assert connections.active_writable == 1
     token.cancel()
     blocker.rollback()
     blocker.close()
@@ -579,6 +642,9 @@ def test_cancelled_save_waiting_for_write_lock_rolls_back_without_new_record(
     assert not thread.is_alive()
     assert len(errors) == 1
     assert isinstance(errors[0], OperationCancelled)
+    assert connections.active == 0
+    assert connections.active_writable == 0
+    assert connections.opened == connections.closed
     connection = sqlite3.connect(database_path)
     try:
         ids = [row[0] for row in connection.execute("SELECT id FROM history_records")]
@@ -771,3 +837,57 @@ def test_plugin_uses_per_call_connections_safely_across_threads(
     assert len(
         list_records(history_plugin, history_services, CancellationToken())["items"]
     ) == 4
+
+
+def test_repeated_repository_calls_close_every_opened_connection(
+    history_plugin,
+    history_services,
+    make_snapshot,
+    cancellation,
+    monkeypatch,
+):
+    save(history_plugin, make_snapshot(), history_services, cancellation)
+    connections = track_repository_connections(monkeypatch)
+
+    for rating in range(1, 6):
+        assert list_records(history_plugin, history_services, cancellation)["items"]
+        assert history_plugin.invoke(
+            "detail", {"id": "history-001"}, history_services, cancellation
+        )["record"]["id"] == "history-001"
+        history_plugin.invoke(
+            "rate",
+            {"id": "history-001", "rating": rating},
+            history_services,
+            cancellation,
+        )
+
+    assert connections.opened >= 20
+    assert connections.opened == connections.closed
+    assert connections.active == 0
+    assert connections.active_writable == 0
+
+
+def test_repository_exception_closes_active_connection(
+    history_plugin,
+    history_services,
+    make_snapshot,
+    cancellation,
+    monkeypatch,
+):
+    save(history_plugin, make_snapshot(), history_services, cancellation)
+    connections = track_repository_connections(monkeypatch)
+
+    def fail_after_open(repository, request, cursor, limit):
+        del request, cursor, limit
+        with repository._connection(create=False, writable=False) as connection:
+            assert connection.execute("SELECT 1").fetchone()[0] == 1
+            raise RuntimeError("fixture repository failure")
+
+    monkeypatch.setattr(HistoryRepository, "_select_rows", fail_after_open)
+
+    with pytest.raises(HistoryPluginError, match="history_operation_failed"):
+        list_records(history_plugin, history_services, cancellation)
+
+    assert connections.opened == connections.closed
+    assert connections.active == 0
+    assert connections.active_writable == 0
