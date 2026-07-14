@@ -136,19 +136,24 @@ function Invoke-HostProbe {
     [string]$TemporaryRoot
   )
 
-  $roaming = Join-Path $ProfileRoot "AppData\Roaming"
-  $local = Join-Path $ProfileRoot "AppData\Local"
-  New-Item -ItemType Directory -Path $roaming, $local -Force | Out-Null
+  $config = Join-Path $ProfileRoot "config"
+  $data = Join-Path $ProfileRoot "data"
+  New-Item -ItemType Directory -Path $config, $data -Force | Out-Null
+  [System.IO.File]::WriteAllText(
+    (Join-Path $config "config.json"),
+    "{lifecycle-invalid-config",
+    (New-Object System.Text.UTF8Encoding($false))
+  )
 
   $startInfo = New-Object System.Diagnostics.ProcessStartInfo
   $startInfo.FileName = $Path
   $startInfo.WorkingDirectory = Split-Path -Parent $Path
   $startInfo.UseShellExecute = $false
   $startInfo.CreateNoWindow = $true
-  $startInfo.EnvironmentVariables["APPDATA"] = $roaming
-  $startInfo.EnvironmentVariables["LOCALAPPDATA"] = $local
   $startInfo.EnvironmentVariables["TEMP"] = $TemporaryRoot
   $startInfo.EnvironmentVariables["TMP"] = $TemporaryRoot
+  $startInfo.EnvironmentVariables["REFLEX_LIFECYCLE_DATA_ROOT"] = $ProfileRoot
+  $startInfo.EnvironmentVariables["REFLEX_DIAGNOSTICS_ENABLED"] = "1"
 
   $process = New-Object System.Diagnostics.Process
   $process.StartInfo = $startInfo
@@ -169,9 +174,23 @@ function Invoke-HostProbe {
       $process.WaitForExit()
       $forcedTermination = $true
     }
+    $diagnostics = Join-Path $data "diagnostics\host-diagnostics.jsonl"
+    if (-not (Test-Path -LiteralPath $diagnostics -PathType Leaf)) {
+      throw "host_isolation_diagnostics_missing"
+    }
+    $recovery = @(
+      Get-Content -LiteralPath $diagnostics -Encoding UTF8 |
+        Where-Object { $_ } |
+        ForEach-Object { $_ | ConvertFrom-Json } |
+        Where-Object { $_.event -eq "config_recovery" -and $_.status -eq "defaulted" }
+    )
+    if ($recovery.Count -lt 1) {
+      throw "host_config_isolation_not_observed"
+    }
     return [PSCustomObject]@{
       CloseRequested = [bool]$closeRequested
       ForcedTermination = $forcedTermination
+      IsolatedDataRoot = $true
     }
   }
   finally {
@@ -247,6 +266,7 @@ try {
   Add-Pass -Step "host-start" -Details @{
     close_requested = $hostProbe.CloseRequested
     forced_termination = $hostProbe.ForcedTermination
+    isolated_data_root = $hostProbe.IsolatedDataRoot
   }
 
   [System.IO.File]::WriteAllText($sentinel, "overlay-preserved")

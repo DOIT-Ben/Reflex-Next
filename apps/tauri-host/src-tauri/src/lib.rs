@@ -1,3 +1,4 @@
+mod app_paths;
 mod clipboard;
 mod cloud_token_store;
 mod commands;
@@ -37,7 +38,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             configure_bundled_runtime(app);
-            let app_data_dir = app.path().app_data_dir()?;
+            let paths = app_paths::AppPaths::resolve(
+                app.path().app_config_dir()?,
+                app.path().app_data_dir()?,
+            )?;
+            let app_data_dir = paths.data_dir().to_path_buf();
             let _ = diagnostic_bundle::cleanup_pending_export(&app_data_dir.join("diagnostics"));
             let diagnostics = diagnostics::HostDiagnostics::from_environment(&app_data_dir);
             configure_runtime_diagnostics(&app_data_dir, diagnostics.enabled());
@@ -46,7 +51,7 @@ pub fn run() {
             ))
             .map_err(std::io::Error::other)?;
             let config_store = config_store::ConfigStore::with_diagnostics(
-                app.path().app_config_dir()?,
+                paths.config_dir().to_path_buf(),
                 diagnostics.clone(),
             );
             let config = config_store.load().unwrap_or_default();
@@ -66,6 +71,7 @@ pub fn run() {
             app.manage(commands::HistoryOperationControl::new());
             app.manage(commands::DiagnosticExportControl::new());
             app.manage(feedback::FeedbackCloudState::new());
+            app.manage(paths);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -27,6 +27,11 @@ foreach ($required in @(
     'ArgumentList @("/S")',
     '("/D=" + $Destination)',
     "EnvironmentVariables",
+    "REFLEX_LIFECYCLE_DATA_ROOT",
+    "REFLEX_DIAGNOSTICS_ENABLED",
+    "host_config_isolation_not_observed",
+    "recovery.Count -lt 1",
+    'isolated_data_root = $hostProbe.IsolatedDataRoot',
     "process.Kill()",
     "steps.ToArray()"
   )) {

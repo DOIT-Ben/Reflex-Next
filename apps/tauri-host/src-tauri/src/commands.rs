@@ -5,9 +5,10 @@ use std::time::Duration;
 
 use base64::Engine;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, LogicalSize, State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+use crate::app_paths::AppPaths;
 use crate::config_store::{AppConfig, ConfigStore};
 use crate::desktop::{DesktopState, DesktopStatus};
 use crate::diagnostics::HostDiagnostics;
@@ -331,7 +332,7 @@ pub async fn delete_provider_secret(
 
 #[tauri::command]
 pub async fn runtime_optimize(
-    app: AppHandle,
+    paths: State<'_, AppPaths>,
     window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
     config_store: State<'_, ConfigStore>,
@@ -341,11 +342,7 @@ pub async fn runtime_optimize(
 ) -> Result<(), String> {
     require_main_window(window.label())?;
     let command = validate_command(command, CommandKind::Optimize).map_err(str::to_string)?;
-    let history_path = app
-        .path()
-        .app_data_dir()
-        .map(|path| history_database_path(&path))
-        .map_err(|_| "应用数据目录不可用。".to_string())?;
+    let history_path = history_database_path(paths.data_dir());
     send_configured_optimize_to(
         &state.runtime,
         &config_store,
@@ -395,7 +392,7 @@ pub async fn runtime_list_plugins(
 
 #[tauri::command]
 pub async fn runtime_plugin_call(
-    app: AppHandle,
+    paths: State<'_, AppPaths>,
     window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
     config_store: State<'_, ConfigStore>,
@@ -405,12 +402,8 @@ pub async fn runtime_plugin_call(
 ) -> Result<(), String> {
     let command = crate::plugin_commands::validate_authorized_plugin_call(window.label(), command)
         .map_err(str::to_string)?;
+    let history_path = history_database_path(paths.data_dir());
     if command.payload.get("plugin_id").and_then(Value::as_str) == Some("history-sqlite") {
-        let history_path = app
-            .path()
-            .app_data_dir()
-            .map(|path| history_database_path(&path))
-            .map_err(|_| "应用数据目录不可用。".to_string())?;
         return send_configured_plugin_call_to(
             state.runtime(),
             &config_store,
@@ -426,10 +419,7 @@ pub async fn runtime_plugin_call(
         &config_store,
         &secret_store,
         &history_key_store,
-        &app.path()
-            .app_data_dir()
-            .map(|path| history_database_path(&path))
-            .map_err(|_| "应用数据目录不可用。".to_string())?,
+        &history_path,
         window.label(),
         command,
     );
@@ -585,6 +575,7 @@ fn history_reuse_payload(
 #[tauri::command]
 pub async fn history_reuse_intent(
     app: AppHandle,
+    paths: State<'_, AppPaths>,
     window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
     config_store: State<'_, ConfigStore>,
@@ -597,11 +588,7 @@ pub async fn history_reuse_intent(
         return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
     }
     let reuse_sequence = HISTORY_REUSE_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-    let history_path = app
-        .path()
-        .app_data_dir()
-        .map(|path| history_database_path(&path))
-        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    let history_path = history_database_path(paths.data_dir());
     let request_id = format!(
         "history-reuse-{}",
         std::time::SystemTime::now()
@@ -637,6 +624,7 @@ pub async fn history_reuse_intent(
 #[tauri::command]
 pub async fn history_export(
     app: AppHandle,
+    paths: State<'_, AppPaths>,
     window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
     config_store: State<'_, ConfigStore>,
@@ -668,12 +656,8 @@ pub async fn history_export(
     let Some(target) = selected.and_then(|path| path.into_path().ok()) else {
         return Ok("cancelled".to_string());
     };
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
-    let history_path = history_database_path(&app_data_dir);
-    let export_journal = crate::history_export::pending_export_journal(&app_data_dir);
+    let history_path = history_database_path(paths.data_dir());
+    let export_journal = crate::history_export::pending_export_journal(paths.data_dir());
     let input = serde_json::json!({
         "format": request.format.wire_name(),
         "filters": request.filters,
@@ -696,6 +680,7 @@ pub async fn history_export(
 #[tauri::command]
 pub async fn diagnostic_bundle_export(
     app: AppHandle,
+    paths: State<'_, AppPaths>,
     window: tauri::WebviewWindow,
     control: State<'_, DiagnosticExportControl>,
 ) -> Result<String, String> {
@@ -710,11 +695,7 @@ pub async fn diagnostic_bundle_export(
     let Some(target) = selected.and_then(|path| path.into_path().ok()) else {
         return Ok("cancelled".to_string());
     };
-    let diagnostics_directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| crate::diagnostic_bundle::DIAGNOSTIC_EXPORT_ERROR_MESSAGE.to_string())?
-        .join("diagnostics");
+    let diagnostics_directory = paths.data_dir().join("diagnostics");
     control.begin()?;
     let result =
         crate::diagnostic_bundle::export_diagnostic_bundle(&diagnostics_directory, &target, || {
@@ -740,6 +721,7 @@ pub async fn diagnostic_bundle_cancel(
 #[tauri::command]
 pub async fn history_admin_operation(
     app: AppHandle,
+    paths: State<'_, AppPaths>,
     window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
     config_store: State<'_, ConfigStore>,
@@ -763,11 +745,7 @@ pub async fn history_admin_operation(
     if !confirmed {
         return Ok("cancelled".to_string());
     }
-    let history_path = app
-        .path()
-        .app_data_dir()
-        .map(|path| history_database_path(&path))
-        .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
+    let history_path = history_database_path(paths.data_dir());
     if operation == "rotate" {
         control.begin()?;
         let result = rotate_history_keys(
