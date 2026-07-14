@@ -756,6 +756,7 @@ pre {
 .template-list input, .template-list select, .template-fields input, .template-fields textarea, .template-variables input { width: 100%; min-width: 0; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease; }
 .template-list input, .template-list select, .template-fields input, .template-variables input { height: 34px; padding: 0 10px; }
 .template-list > .outline { min-height: 34px; border-radius: 9px; background: color-mix(in srgb, var(--surface) 84%, white); }
+.template-list > .template-new { display: flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
 .template-list input:focus-visible, .template-list select:focus-visible, .template-fields input:focus-visible, .template-fields textarea:focus-visible, .template-variables input:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 72%, transparent); }
 .template-list-items { display: grid; align-content: start; gap: 4px; min-height: 0; padding-top: 6px; overflow: auto; border-top: 1px solid color-mix(in srgb, var(--line) 80%, transparent); }
 .template-list-items > button { display: grid; width: 100%; gap: 3px; padding: 8px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 9px; transition: background 160ms ease, border-color 160ms ease, transform 160ms ease; }
@@ -890,6 +891,13 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.batch-import-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .batch-action-row p {
@@ -1791,6 +1799,17 @@ pre {
   box-shadow: 0 20px 60px rgba(28, 29, 32, 0.2);
 }
 
+.confirm-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 14px;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 8px;
+}
+
 .clipboard-modal h2 {
   margin: 0;
   font-size: 20px;
@@ -2064,7 +2083,7 @@ pre {
   }
 
   .template-list {
-    grid-template-columns: minmax(0, 1fr) 86px 78px;
+    grid-template-columns: minmax(0, 1fr) 96px 104px;
   }
 
   .template-fields,
@@ -2535,6 +2554,13 @@ pre {
   font-size: 13px;
 }
 
+.command-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
 .command-dialog header button {
   display: grid;
   width: 30px;
@@ -2550,6 +2576,15 @@ pre {
 .command-dialog header button:hover {
   color: var(--text);
   background: var(--accent-soft);
+}
+
+.command-dialog header button:focus-visible,
+.template-head .icon-button:focus-visible,
+.batch-head .icon-button:focus-visible {
+  color: var(--accent);
+  background: var(--accent-soft);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .command-list {

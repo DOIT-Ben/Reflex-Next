@@ -2,8 +2,15 @@
   import { onMount } from "svelte";
   import SettingsDialog from "./components/settings/SettingsDialog.svelte";
   import type { SettingsSection } from "./components/settings/types";
+  import ClipboardConfirmDialog from "./components/overlays/ClipboardConfirmDialog.svelte";
+  import CommandPalette from "./components/overlays/CommandPalette.svelte";
+  import type { CommandItem } from "./components/overlays/CommandPalette.svelte";
+  import PluginDialog from "./components/overlays/PluginDialog.svelte";
+  import ResultCompareDialog from "./components/overlays/ResultCompareDialog.svelte";
   import MarkdownPreviewDialog from "./components/tools/MarkdownPreviewDialog.svelte";
   import TranslationDialog from "./components/tools/TranslationDialog.svelte";
+  import TemplateManagerDialog from "./components/tools/TemplateManagerDialog.svelte";
+  import BatchDialog from "./components/tools/BatchDialog.svelte";
   import NavRail from "./components/shell/NavRail.svelte";
   import ReflexTitleBar from "./components/shell/ReflexTitleBar.svelte";
   import StatusBar from "./components/shell/StatusBar.svelte";
@@ -112,8 +119,6 @@
   } from "./domain/markdownPreviewState";
   import {
     batchCanExport,
-    batchCompletedCount,
-    batchProcessedCount,
     beginBatchParse,
     beginBatchRun,
     cancelBatch,
@@ -126,11 +131,8 @@
     finalizeBatchRun,
     openBatch,
     runBatchWorkerPool,
-    setBatchConcurrency,
     setBatchFormat,
-    setBatchScene,
     setBatchSourceText,
-    setBatchStyle,
     startBatchItem,
     type BatchFormat
   } from "./domain/batchState";
@@ -181,11 +183,6 @@
     { id: "creative", label: "创意" }
   ];
   const scenes = listSceneOptions();
-  const batchFormats: Array<{ id: BatchFormat; label: string }> = [
-    { id: "txt", label: "TXT 每行一条" },
-    { id: "csv", label: "CSV prompt 列" }
-  ];
-
   let coreBridge: CoreBridge = new DemoCoreBridge();
   let capabilityBridge: CapabilityBridge | null = null;
   let hostApi: TauriHostApi | null = null;
@@ -206,8 +203,6 @@
   let batchRun: AbortController | null = null;
   let semanticModel = createSemanticModelState();
   let semanticModelRun: AbortController | null = null;
-  let batchCloseButton: HTMLButtonElement | null = null;
-  let batchFileInput: HTMLInputElement | null = null;
   let batchFileNotice: string | null = null;
   let customTemplates: PromptTemplate[] = [];
   let templateDraft: TemplateDraft = createTemplateDraft();
@@ -217,7 +212,6 @@
   let templateValues: Record<string, string> = {};
   let templateNotice: string | null = null;
   let templateBusy = false;
-  let templateCloseButton: HTMLButtonElement | null = null;
   let templateCategories: string[] = [];
   let visibleTemplates: PromptTemplate[] = [];
   let persistedConfig: AppConfig | null = null;
@@ -250,6 +244,7 @@
   let viewScale = 1;
   let windowSizePreset: WindowSizePreset = "default";
   let commandPaletteOpen = false;
+  let commandItems: CommandItem[] = [];
   let activeNavId = "workbench";
   let workbenchPhase: WorkbenchPhase = "empty";
   let workbenchStatusMessage = "准备就绪";
@@ -412,6 +407,15 @@
     { id: "plugins", label: tr("插件"), symbol: "" },
     { id: "history", label: tr("历史记录"), symbol: "", group: "utility" },
     { id: "settings", label: tr("设置"), symbol: "", shortcut: "Ctrl+,", group: "utility" }
+  ];
+  $: commandItems = [
+    { id: "adjust", label: "调整生成方案", run: () => { closeCommandPalette(); beginAdjust(); } },
+    { id: "templates", label: "模板管理", run: () => { closeCommandPalette(); openTemplateManager(); } },
+    { id: "batch", label: "批量处理", disabled: !batchRunnerEnabled, run: () => { closeCommandPalette(); openBatchView(); } },
+    { id: "translate", label: "翻译当前结果", disabled: !translatorEnabled || !state.currentResult?.output, run: () => { closeCommandPalette(); openTranslationView(); } },
+    { id: "markdown", label: "预览 Markdown", disabled: !markdownPreviewEnabled || !state.currentResult?.output, run: () => { closeCommandPalette(); openMarkdownPreviewView(); } },
+    { id: "history", label: "打开历史记录", run: () => { closeCommandPalette(); openHistoryWindow(); } },
+    { id: "settings", label: "打开设置", run: () => { closeCommandPalette(); beginSettings(); } }
   ];
   $: configSummaryItems = [
     { id: "mode", label: tr("模式"), value: modeLabel(state.requestDraft.mode) },
@@ -935,7 +939,6 @@
     if (translation.phase !== "closed") closeTranslationView();
     batch = openBatch(batch);
     batchFileNotice = null;
-    window.setTimeout(() => batchCloseButton?.focus());
   }
 
   function closeBatchView(restoreFocus = false) {
@@ -952,7 +955,6 @@
     templateValues = {};
     templateNotice = null;
     state = { ...state, overlay: "template_manager" };
-    window.setTimeout(() => templateCloseButton?.focus());
   }
 
   function closeTemplateManager(restoreFocus = false) {
@@ -1051,15 +1053,7 @@
     }
   }
 
-  function requestBatchFileImport() {
-    if (batch.phase === "parsing" || batch.phase === "running") return;
-    batchFileInput?.click();
-  }
-
-  async function importBatchFile(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
+  async function importBatchFile(file: File) {
     if (!file || batch.phase === "parsing" || batch.phase === "running") return;
 
     const imported = await readBatchImportFile(file);
@@ -1708,210 +1702,50 @@
     {/if}
 
     {#if commandPaletteOpen}
-      <div class="command-layer" role="presentation">
-        <div class="command-dialog" role="dialog" aria-modal="true" aria-label={tr("命令面板")}>
-          <header>
-            <strong>{tr("命令")}</strong>
-            <button type="button" aria-label={tr("关闭命令面板")} on:click={closeCommandPalette}>×</button>
-          </header>
-          <div class="command-list">
-            <button type="button" on:click={() => { closeCommandPalette(); beginAdjust(); }}>{tr("调整生成方案")}</button>
-            <button type="button" on:click={() => { closeCommandPalette(); openTemplateManager(); }}>{tr("模板管理")}</button>
-            <button type="button" disabled={!batchRunnerEnabled} on:click={() => { closeCommandPalette(); openBatchView(); }}>{tr("批量处理")}</button>
-            <button type="button" disabled={!translatorEnabled || !state.currentResult?.output} on:click={() => { closeCommandPalette(); openTranslationView(); }}>{tr("翻译当前结果")}</button>
-            <button type="button" disabled={!markdownPreviewEnabled || !state.currentResult?.output} on:click={() => { closeCommandPalette(); openMarkdownPreviewView(); }}>{tr("预览 Markdown")}</button>
-            <button type="button" on:click={() => { closeCommandPalette(); openHistoryWindow(); }}>{tr("打开历史记录")}</button>
-            <button type="button" on:click={() => { closeCommandPalette(); beginSettings(); }}>{tr("打开设置")}</button>
-          </div>
-        </div>
-      </div>
+      <CommandPalette items={commandItems} translate={tr} onClose={closeCommandPalette} />
     {/if}
 
     {#if state.overlay === "template_manager"}
-      <div class="template-layer" role="presentation">
-        <div class="template-dialog" role="dialog" aria-modal="true" aria-label={tr("模板管理")}>
-          <div class="template-head">
-            <div><h2>{tr("模板管理")}</h2><p>{tr("自定义模板仅保存在本机配置中。")}</p></div>
-            <button class="icon-button" aria-label={tr("关闭模板管理")} bind:this={templateCloseButton} on:click={() => closeTemplateManager(true)}>×</button>
-          </div>
-          <div class="template-layout">
-            <aside class="template-list">
-              <input aria-label={tr("搜索模板")} bind:value={templateQuery} placeholder={tr("搜索名称、分类或标签")} />
-              <select aria-label={tr("模板分类")} bind:value={templateCategory}>
-                <option value={null}>{tr("全部分类")}</option>
-                {#each templateCategories as category}<option value={category}>{category}</option>{/each}
-              </select>
-              <button class="outline" type="button" on:click={() => { selectedTemplateId = null; templateDraft = createTemplateDraft(); templateValues = {}; templateNotice = null; }}>{tr("新建模板")}</button>
-              <div class="template-list-items">
-                {#each visibleTemplates as template}
-                  <button class:active={selectedTemplateId === template.id} type="button" on:click={() => selectTemplate(template)}>
-                    <strong>{template.name}</strong><span>{template.category}{template.tags.length ? ` · ${template.tags.join("、")}` : ""}</span>
-                  </button>
-                {:else}<p>{tr("还没有符合条件的模板。")}</p>{/each}
-              </div>
-            </aside>
-            <section class="template-editor">
-              <div class="template-fields">
-                <label><span>{tr("名称")}</span><input bind:value={templateDraft.name} disabled={templateBusy} /></label>
-                <label><span>{tr("分类")}</span><input bind:value={templateDraft.category} disabled={templateBusy} /></label>
-                <label class="wide"><span>{tr("标签（用逗号分隔）")}</span><input value={templateDraft.tags.join(", ")} disabled={templateBusy} on:input={(event) => templateDraft = { ...templateDraft, tags: event.currentTarget.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean) }} /></label>
-                <label class="wide"><span>{tr("说明")}</span><input bind:value={templateDraft.description} disabled={templateBusy} /></label>
-                <label class="wide"><span>{tr("模板内容")}</span><textarea bind:value={templateDraft.content} disabled={templateBusy} placeholder={tr("使用 {变量名} 插入需要填写的内容")}></textarea></label>
-              </div>
-              {#if templateVariables(templateDraft.content).length}
-                <div class="template-variables">
-                  <h3>{tr("填写变量")}</h3>
-                  {#each templateVariables(templateDraft.content) as variable}
-                    <label><span>{variable}</span><input value={templateValues[variable] ?? ""} on:input={(event) => templateValues = { ...templateValues, [variable]: event.currentTarget.value }} /></label>
-                  {/each}
-                </div>
-              {/if}
-              <p class="template-notice" aria-live="polite">{templateNotice ? tr(templateNotice) : ""}</p>
-              <div class="template-footer">
-                <button class="outline danger" type="button" disabled={!selectedTemplateId || templateBusy} on:click={deleteTemplate}>{tr("删除")}</button>
-                <span></span><button class="outline" type="button" disabled={templateBusy} on:click={saveTemplate}>{tr("保存模板")}</button><button class="primary small" type="button" on:click={applyTemplate}>{tr("应用到输入区")}</button>
-              </div>
-            </section>
-          </div>
-        </div>
-      </div>
+      <TemplateManagerDialog
+        query={templateQuery}
+        category={templateCategory}
+        categories={templateCategories}
+        templates={visibleTemplates}
+        selectedId={selectedTemplateId}
+        draft={templateDraft}
+        values={templateValues}
+        notice={templateNotice}
+        busy={templateBusy}
+        translate={tr}
+        onQueryChange={(value) => (templateQuery = value)}
+        onCategoryChange={(value) => (templateCategory = value)}
+        onNew={() => { selectedTemplateId = null; templateDraft = createTemplateDraft(); templateValues = {}; templateNotice = null; }}
+        onSelect={selectTemplate}
+        onDraftChange={(value) => (templateDraft = value)}
+        onValuesChange={(value) => (templateValues = value)}
+        onDelete={deleteTemplate}
+        onSave={saveTemplate}
+        onApply={applyTemplate}
+        onClose={() => closeTemplateManager(true)}
+      />
     {/if}
 
     {#if batch.phase !== "closed"}
-      <div class="batch-layer" role="presentation">
-        <div class="batch-dialog" role="dialog" aria-modal="true" aria-label={tr("批量处理")}>
-          <div class="batch-head">
-            <div>
-              <h2>{tr("批量处理")}</h2>
-              <p>{tr("最多导入 200 条提示词，结果在本机导出。")}</p>
-            </div>
-            <button class="icon-button" aria-label={tr("关闭批量处理")} bind:this={batchCloseButton} on:click={() => closeBatchView(true)}>×</button>
-          </div>
-
-          <div class="batch-controls">
-            <div class="batch-format" role="group" aria-label={tr("导入格式")}>
-              {#each batchFormats as item}
-                <button
-                  type="button"
-                  class:active={batch.format === item.id}
-                  aria-pressed={batch.format === item.id}
-                  disabled={batch.phase === "parsing" || batch.phase === "running"}
-                  on:click={() => batch = setBatchFormat(batch, item.id)}
-                >{tr(item.label)}</button>
-              {/each}
-            </div>
-            <label>
-              <span>{tr("处理风格")}</span>
-              <select
-                value={batch.style}
-                disabled={batch.phase === "running"}
-                on:change={(event) => batch = setBatchStyle(batch, event.currentTarget.value as OptimizeStyle)}
-              >
-                {#each styles as item}
-                  <option value={item.id}>{tr(item.label)}</option>
-                {/each}
-              </select>
-            </label>
-            <label>
-              <span>{tr("场景")}</span>
-              <select
-                value={batch.scene ?? ""}
-                disabled={batch.phase === "running"}
-                on:change={(event) => batch = setBatchScene(batch, event.currentTarget.value)}
-              >
-                <option value="">{tr("自动识别")}</option>
-                {#each scenes as scene}
-                  <option value={scene.id}>{tr(scene.label)}</option>
-                {/each}
-              </select>
-            </label>
-            <label>
-              <span>{tr("并发数")}</span>
-              <select
-                value={batch.concurrency}
-                disabled={batch.phase === "running"}
-                on:change={(event) => batch = setBatchConcurrency(batch, Number(event.currentTarget.value))}
-              >
-                {#each [1, 2, 3, 4] as value}
-                  <option value={value}>{value}</option>
-                {/each}
-              </select>
-            </label>
-          </div>
-
-          <label class="batch-source">
-            <span>{tr(batch.format === "csv" ? "粘贴 CSV，需包含 prompt 或 提示词 列" : "粘贴文本，每行一条提示词")}</span>
-            <textarea
-              aria-label={tr("批量输入内容")}
-              value={batch.sourceText}
-              disabled={batch.phase === "parsing" || batch.phase === "running"}
-              on:input={(event) => batch = setBatchSourceText(batch, event.currentTarget.value)}
-              placeholder={batch.format === "csv" ? "prompt\nWrite a business email" : tr("写一封商务邮件\n解释什么是机器学习")}
-            ></textarea>
-          </label>
-          <input
-            type="file"
-            accept=".csv,text/csv,.txt,text/plain"
-            hidden
-            bind:this={batchFileInput}
-            on:change={importBatchFile}
-          />
-
-          <div class="batch-action-row">
-            <div class="batch-import-actions">
-              <button class="outline" type="button" disabled={batch.phase === "parsing" || batch.phase === "running"} on:click={requestBatchFileImport}>{tr("导入文件")}</button>
-              <button class="outline" type="button" disabled={batch.phase === "parsing" || batch.phase === "running"} on:click={downloadBatchTemplate}>{tr("下载模板")}</button>
-              <button class="outline" type="button" disabled={batch.phase === "parsing" || batch.phase === "running" || !batch.sourceText.trim()} on:click={parseBatchSource}>
-                {tr(batch.phase === "parsing" ? "正在解析" : "解析内容")}
-              </button>
-            </div>
-            <p aria-live="polite">
-              {#if batchFileNotice}
-                <span class="error">{tr(batchFileNotice)}</span>
-              {:else if batch.phase === "running"}
-                {tr("正在处理 {processed}/{total}，已完成 {completed} 条", { processed: batchProcessedCount(batch), total: batch.items.length, completed: batchCompletedCount(batch) })}
-              {:else if batch.phase === "completed"}
-                {tr("已完成 {completed}/{total} 条", { completed: batchCompletedCount(batch), total: batch.items.length })}
-              {:else if batch.phase === "cancelled"}
-                {tr("已停止，已完成 {completed} 条", { completed: batchCompletedCount(batch) })}
-              {:else if batch.error}
-                <span class="error">{tr(batch.error)}</span>
-              {:else if batch.items.length}
-                {tr("已解析 {count} 条提示词", { count: batch.items.length })}
-              {:else}
-                {tr("等待导入内容")}
-              {/if}
-            </p>
-          </div>
-
-          <div class="batch-list" aria-label={tr("批处理列表")}>
-            {#if batch.items.length}
-              {#each batch.items as item}
-                <article class:completed={item.status === "completed"} class:failed={item.status === "failed"} class:running={item.status === "running"} class="batch-item">
-                  <span class="batch-item-id">{item.id}</span>
-                  <div>
-                    <strong>{item.prompt}</strong>
-                    {#if item.result}<p>{item.result}</p>{/if}
-                    {#if item.error}<p class="error">{tr(item.error)}</p>{/if}
-                  </div>
-                  <span class="batch-status">{tr(item.status === "pending" ? "等待" : item.status === "running" ? "处理中" : item.status === "completed" ? "已完成" : item.status === "cancelled" ? "已停止" : "失败")}</span>
-                </article>
-              {/each}
-            {:else}
-              <p class="batch-empty">{tr("解析后将在这里显示待处理的提示词。")}</p>
-            {/if}
-          </div>
-
-          <div class="batch-footer">
-            {#if batch.phase === "running"}
-              <button class="outline" type="button" on:click={cancelBatchRun}>{tr("停止")}</button>
-            {:else}
-              <button class="outline" type="button" disabled={!batchCanExport(batch)} on:click={exportBatch}>{tr("导出结果")}</button>
-              <button class="primary small" type="button" disabled={!batch.items.length} on:click={runBatch}>{tr("开始处理")}</button>
-            {/if}
-          </div>
-        </div>
-      </div>
+      <BatchDialog
+        state={batch}
+        fileNotice={batchFileNotice}
+        {styles}
+        {scenes}
+        translate={tr}
+        onStateChange={(value) => (batch = value)}
+        onFileSelected={importBatchFile}
+        onDownloadTemplate={downloadBatchTemplate}
+        onParse={parseBatchSource}
+        onCancel={cancelBatchRun}
+        onExport={exportBatch}
+        onRun={runBatch}
+        onClose={() => closeBatchView(true)}
+      />
     {/if}
 
     {#if translation.phase !== "closed"}
@@ -1941,92 +1775,22 @@
     {/if}
 
     {#if state.overlay === "clipboard_confirm"}
-      <div class="modal-layer" role="presentation">
-        <section class="clipboard-modal" aria-label={tr("替换剪贴板确认")}>
-          <h2>{tr("替换当前剪贴板内容？")}</h2>
-          <p>{tr("原剪贴板内容会被本次结果覆盖。首次使用需要确认，之后可在设置中修改。")}</p>
-          {#if clipboardNotice}
-            <p class="clipboard-feedback" aria-live="polite">{tr(clipboardNotice)}</p>
-          {/if}
-          <div>
-            <button class="outline" on:click={closeOverlay}>{t(uiLanguage, "cancel")}</button>
-            <button class="primary small" on:click={confirmReplaceClipboard}>{tr("确认替换")}</button>
-          </div>
-        </section>
-      </div>
+      <ClipboardConfirmDialog notice={clipboardNotice} translate={tr} onCancel={closeOverlay} onConfirm={confirmReplaceClipboard} />
     {/if}
 
     {#if state.overlay === "result_compare"}
-      <div class="translation-layer" role="presentation">
-        <div class="translation-dialog" role="dialog" aria-modal="true" aria-label={tr("结果对比")}>
-          <div class="translation-head">
-            <div><h2>{tr("结果对比")}</h2></div>
-            <button class="icon-button" aria-label={tr("关闭结果对比")} on:click={closeOverlay}>×</button>
-          </div>
-          <div class="translation-content">
-            <section class="translation-pane" aria-label={tr("原文")}>
-              <div class="translation-pane-head">
-                <h3>{tr("原文")}</h3>
-                <button class="outline small" type="button" on:click={copyComparisonSource}>{tr("复制")}</button>
-              </div>
-              {#if state.currentResult?.sourceText}
-                <pre>{state.currentResult.sourceText}</pre>
-              {/if}
-            </section>
-            <section class="translation-pane translated" aria-label={tr("优化结果")}>
-              <div class="translation-pane-head">
-                <h3>{tr("优化结果")}</h3>
-                <button class="outline small" type="button" on:click={copyComparisonResult}>{tr("复制")}</button>
-              </div>
-              <pre>{state.output}</pre>
-            </section>
-          </div>
-          <div class="translation-footer">
-            <button class="primary small" type="button" on:click={closeOverlay}>{tr("关闭")}</button>
-          </div>
-        </div>
-      </div>
+      <ResultCompareDialog
+        sourceText={state.currentResult?.sourceText ?? ""}
+        output={state.output}
+        translate={tr}
+        onCopySource={copyComparisonSource}
+        onCopyOutput={copyComparisonResult}
+        onClose={closeOverlay}
+      />
     {/if}
 
     {#if state.overlay === "plugin_manager"}
-      <div class="settings-layer" role="presentation">
-        <section class="plugin-dialog" aria-label={tr("插件")}>
-          <div class="settings-head">
-            <div>
-              <h2>{tr("插件")}</h2>
-              <p>{tr("查看当前可用能力及其访问范围。")}</p>
-            </div>
-            <button class="icon-button" aria-label={tr("关闭插件")} on:click={closeOverlay}>×</button>
-          </div>
-          <div class="plugin-list">
-            <article class="plugin-row">
-              <div>
-                <strong>{tr("MiniMax 模型服务")}</strong>
-                <span>{tr("生成与优化文本")}</span>
-              </div>
-              <span class="permission-badge">{tr("网络访问")}</span>
-            </article>
-            <article class="plugin-row">
-              <div>
-                <strong>{tr("内置模板")}</strong>
-                <span>{tr("提供场景、风格与语言模板")}</span>
-              </div>
-              <span class="permission-badge">{tr("本地内容")}</span>
-            </article>
-            <article class="plugin-row">
-              <div>
-                <strong>{tr("场景识别")}</strong>
-                <span>{tr("根据当前文本选择适合的处理方式")}</span>
-              </div>
-              <span class="permission-badge">{tr("本地文本")}</span>
-            </article>
-          </div>
-          <div class="plugin-footer">
-            <span>{tr("3 项内置能力")}</span>
-            <button class="primary small" type="button" on:click={managePluginSettings}>{tr("管理设置")}</button>
-          </div>
-        </section>
-      </div>
+      <PluginDialog translate={tr} onManage={managePluginSettings} onClose={closeOverlay} />
     {/if}
 
     {#if state.overlay === "settings"}

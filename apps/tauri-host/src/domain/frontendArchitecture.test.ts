@@ -166,6 +166,12 @@ describe("production frontend architecture", () => {
       "SettingsDialog",
       "TranslationDialog",
       "MarkdownPreviewDialog",
+      "TemplateManagerDialog",
+      "BatchDialog",
+      "CommandPalette",
+      "ClipboardConfirmDialog",
+      "ResultCompareDialog",
+      "PluginDialog",
       "InputPane",
       "ConfigSummary",
       "ResultPane",
@@ -194,5 +200,6 @@ describe("production frontend architecture", () => {
     expect(styles).toMatch(/@media\s*\(max-width:\s*620px\)/);
     expect(appSource).not.toContain("false &&");
     expect(appSource).not.toContain("closeMoreActions");
+    expect(appSource).not.toMatch(/class=["'](?:command|template|batch)-dialog["']/);
   });
 });
