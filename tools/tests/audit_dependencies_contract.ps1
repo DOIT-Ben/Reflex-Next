@@ -58,6 +58,19 @@ Assert-True (@($policy.licenses.allowed_expressions.python).Count -gt 0) "Python
 Assert-True (@($policy.licenses.allowed_expressions.rust).Count -gt 0) "Rust licenses require an explicit allowlist."
 Assert-True (@($policy.licenses.allowed_expressions.npm).Count -gt 0) "npm licenses require an explicit allowlist."
 Assert-True (@($policy.rust_advisory_exceptions).Count -gt 0) "Rust advisory exceptions must be explicit and reviewable."
+$expectedRustLicenseOverrides = @{
+  "hyper-rustls@0.27.9" = "Apache-2.0 OR ISC OR MIT"
+  "ring@0.17.14" = "Apache-2.0 AND ISC"
+  "rustls@0.23.42" = "Apache-2.0 OR ISC OR MIT"
+  "ryu@1.0.23" = "Apache-2.0 OR BSL-1.0"
+  "webpki-roots@1.0.8" = "CDLA-Permissive-2.0"
+}
+foreach ($entry in $expectedRustLicenseOverrides.GetEnumerator()) {
+  $override = @($policy.licenses.package_overrides.rust.PSObject.Properties | Where-Object { $_.Name -eq $entry.Key }) | Select-Object -First 1
+  Assert-True ($null -ne $override) ("Missing reviewed Rust license override: " + $entry.Key)
+  Assert-True ([string]$override.Value -eq $entry.Value) ("Rust license override drifted: " + $entry.Key)
+  Assert-True (@($policy.licenses.allowed_expressions.rust) -contains $entry.Value) ("Reviewed Rust license must remain explicitly allowed: " + $entry.Key)
+}
 foreach ($exception in @($policy.rust_advisory_exceptions)) {
   Assert-True ([string]$exception.scope -eq "non-windows-transitive-only") "Rust advisory exceptions must be limited to non-Windows transitive dependencies."
   Assert-True ([string]$exception.expires_on -match '^[0-9]{4}-[0-9]{2}-[0-9]{2}$') "Rust advisory exceptions require an expiry date."

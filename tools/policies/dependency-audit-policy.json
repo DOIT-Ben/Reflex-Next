@@ -65,6 +65,7 @@
         "(MIT OR Apache-2.0) AND Unicode-3.0",
         "0BSD OR Apache-2.0 OR MIT",
         "Apache-2.0",
+        "Apache-2.0 AND ISC",
         "Apache-2.0 AND MIT",
         "Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT",
         "Apache-2.0 OR BSD-2-Clause OR MIT",
@@ -72,6 +73,8 @@
         "Apache-2.0 OR BSD-3-Clause OR MIT",
         "Apache-2.0 OR CC0-1.0 OR MIT-0",
         "Apache-2.0 OR LGPL-2.1-or-later OR MIT",
+        "Apache-2.0 OR BSL-1.0",
+        "Apache-2.0 OR ISC OR MIT",
         "Apache-2.0 OR MIT",
         "Apache-2.0 OR MIT OR Zlib",
         "Apache-2.0 WITH LLVM-exception",
@@ -79,6 +82,7 @@
         "BSD-3-Clause AND MIT",
         "BSD-3-Clause OR MIT",
         "BSL-1.0",
+        "CDLA-Permissive-2.0",
         "ISC",
         "MIT",
         "MIT OR Unlicense",
@@ -109,7 +113,13 @@
         "typing_extensions@4.16.0": "PSF-2.0",
         "webencodings@0.5.1": "BSD-3-Clause"
       },
-      "rust": {},
+      "rust": {
+        "hyper-rustls@0.27.9": "Apache-2.0 OR ISC OR MIT",
+        "ring@0.17.14": "Apache-2.0 AND ISC",
+        "rustls@0.23.42": "Apache-2.0 OR ISC OR MIT",
+        "ryu@1.0.23": "Apache-2.0 OR BSL-1.0",
+        "webpki-roots@1.0.8": "CDLA-Permissive-2.0"
+      },
       "npm": {}
     },
     "forbidden_patterns": [
