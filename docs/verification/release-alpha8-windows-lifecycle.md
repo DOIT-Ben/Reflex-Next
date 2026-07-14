@@ -51,11 +51,22 @@ npm run tauri:build
 C:\Users\DOIT\AppData\Local\Temp\reflex-lifecycle-alpha8-20260715043146\install
 ```
 
+可重复验证命令：
+
+```powershell
+.\tools\verify_windows_lifecycle.ps1 `
+  -InstallerPath "<alpha8-installer>" `
+  -KeepWorkRoot
+```
+
+本次脚本实跑结果：7 个阶段全部通过，退出码 `0`。脚本契约检查
+`tools\tests\verify_windows_lifecycle_contract.ps1` 同时通过。
+
 验证结果：
 
 1. 首次静默安装：`/S /D=<install>`，退出码 `0`；`Reflex.exe`、`runtime\reflex-runtime.exe`、`uninstall.exe` 均存在。
 2. 发布版 Sidecar：发送 `ping` 和 `shutdown` NDJSON，进程退出码 `0`，收到 2 个对应终态事件，stderr 为空。
-3. 发布版 Host 启动：隔离环境启动后保持运行 6 秒；随后只关闭并终止本次验证创建的进程，安装目录下无 Sidecar 残留。
+3. 发布版 Host 启动：隔离环境启动后保持运行 6 秒；关闭请求后应用仍保持托盘/窗口进程，脚本只终止本次验证创建的进程，安装目录下无 Sidecar 残留。
 4. 同版本覆盖安装：退出码 `0`，产品文件和卸载器恢复；安装目录中的未知哨兵文件保持不变。
 5. 卸载：退出码 `0`，产品文件和卸载器全部移除；未知用户文件按 NSIS 保留策略保留，随后已单独清理测试哨兵。
 6. 重装：退出码 `0`，三个预期产品文件重新出现。

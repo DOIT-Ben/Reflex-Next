@@ -111,6 +111,7 @@
 - 版本一致性检查：14 个产品版本来源统一为 `0.7.0-alpha.8`；Python/uv 的 PEP 440 规范化形式 `0.7.0a8` 经过等价校验；
 - alpha.8 干净 Windows 构建：从提交 `8310736` 的干净副本完成冻结依赖、Runtime 单文件、Rust release 和 NSIS 构建；三件发布物敏感扫描与 11 项 SBOM 验证通过；
 - alpha.8 隔离生命周期：首次安装、Sidecar ping/shutdown、同版本覆盖安装、卸载、重装和最终清理通过；详见 `docs/verification/release-alpha8-windows-lifecycle.md`；
+- 生命周期工具：`tools\verify_windows_lifecycle.ps1` 已固化隔离安装、覆盖、卸载、重装、Sidecar 协议和 Host 启动检查，契约测试与 alpha.8 实跑均通过；
 - 配置与历史升级契约：Rust 配置迁移 11 项、History 旧库夹具与全套 158 项通过；真实跨版本覆盖安装仍由 P4-004 继续验证；
 - 统一验证脚本契约：步骤、锁文件、失败码、Rust/Vitest 并发上限通过；
 - 当前已知测试工程缺口：根目录一次性收集全部 pytest 会因同名测试模块冲突，必须按包隔离或改用 importlib 模式；
