@@ -8,9 +8,13 @@ import pytest
 from cryptography.exceptions import InvalidTag
 
 from reflex_core import OperationCancelled
-from reflex_history_sqlite.codec import HistoryCodec
+from reflex_history_sqlite.codec import HistoryCodec, HistoryMetadata
 from reflex_history_sqlite.contract import HistoryPluginError
-from reflex_history_sqlite.repository import HistoryRepository
+from reflex_history_sqlite.repository import (
+    LEGACY_INDEX_DEFINITIONS,
+    SCHEMA_SQL,
+    HistoryRepository,
+)
 
 
 def save(history_plugin, snapshot, services, cancellation):
@@ -145,10 +149,61 @@ def test_legacy_schema_uses_online_backup_before_migration(
 ):
     database_path = history_services["history"]["database_path"]
     database_path.parent.mkdir(parents=True)
+    legacy = make_snapshot(
+        id="legacy-record",
+        input="legacy input",
+        output="legacy output",
+    )
+    metadata = HistoryMetadata(
+        id=legacy["id"],
+        created_at=legacy["created_at"],
+        mode=legacy["mode"],
+        style=legacy["style"],
+        scene=legacy["scene"],
+        provider=legacy["provider"],
+        model=legacy["model"],
+        elapsed_ms=legacy["elapsed_ms"],
+        status=legacy["status"],
+    )
+    codec = HistoryCodec({1: bytes.fromhex("11" * 32)})
+    input_field = codec.encrypt(legacy["input"], metadata, 1, "input")
+    output_field = codec.encrypt(legacy["output"], metadata, 1, "output")
     connection = sqlite3.connect(database_path)
     try:
+        connection.executescript(SCHEMA_SQL)
+        for _name, statement in LEGACY_INDEX_DEFINITIONS:
+            connection.execute(statement)
         connection.execute("CREATE TABLE legacy_marker(value TEXT NOT NULL)")
         connection.execute("INSERT INTO legacy_marker(value) VALUES (?)", ("preserved",))
+        connection.execute(
+            """
+            INSERT INTO history_records(
+                id, created_at, input_nonce, input_ciphertext,
+                output_nonce, output_ciphertext, key_version,
+                mode, style, scene, provider, model, elapsed_ms,
+                status, rating, tags_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                legacy["id"],
+                legacy["created_at"],
+                sqlite3.Binary(input_field.nonce),
+                sqlite3.Binary(input_field.ciphertext),
+                sqlite3.Binary(output_field.nonce),
+                sqlite3.Binary(output_field.ciphertext),
+                1,
+                legacy["mode"],
+                legacy["style"],
+                legacy["scene"],
+                legacy["provider"],
+                legacy["model"],
+                legacy["elapsed_ms"],
+                legacy["status"],
+                None,
+                json.dumps(legacy["tags"], separators=(",", ":")),
+            ),
+        )
+        connection.execute("PRAGMA user_version = 0")
         connection.commit()
     finally:
         connection.close()
@@ -159,14 +214,26 @@ def test_legacy_schema_uses_online_backup_before_migration(
     backup = sqlite3.connect(backup_path)
     try:
         assert backup.execute("SELECT value FROM legacy_marker").fetchone()[0] == "preserved"
+        assert backup.execute(
+            "SELECT id FROM history_records WHERE id = ?", (legacy["id"],)
+        ).fetchone()[0] == legacy["id"]
         assert backup.execute("PRAGMA user_version").fetchone()[0] == 0
     finally:
         backup.close()
     migrated = sqlite3.connect(database_path)
     try:
         assert migrated.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert migrated.execute(
+            "SELECT value FROM schema_meta WHERE key = 'index_layout_version'"
+        ).fetchone()[0] == "3"
     finally:
         migrated.close()
+
+    detail = history_plugin.invoke(
+        "detail", {"id": legacy["id"]}, history_services, cancellation
+    )
+    assert detail["record"]["input"] == legacy["input"]
+    assert detail["record"]["output"] == legacy["output"]
 
 
 def test_migration_backup_failure_enters_sticky_read_only_recovery_mode(
