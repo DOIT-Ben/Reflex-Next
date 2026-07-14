@@ -175,9 +175,9 @@ $steps += New-VerificationStep `
   -Id "tools:history-benchmark-contract" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "packages\reflex-runtime\uv.lock" `
+  -LockFile "plugins\history-sqlite\uv.lock" `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_benchmark_history_sqlite.py", "-q")
+  -Arguments @("run", "--frozen", "--project", "plugins\history-sqlite", "--extra", "dev", "pytest", "tools\tests\test_benchmark_history_sqlite.py", "-q")
 
 $steps += New-VerificationStep `
   -Id "tools:history-benchmark-small-smoke" `
