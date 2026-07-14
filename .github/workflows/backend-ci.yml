@@ -11,6 +11,8 @@ on:
       - "template-packs/**"
       - "tools/verify_backend.ps1"
       - "tools/tests/verify_backend_contract.ps1"
+      - "tools/verify_windows_lifecycle.ps1"
+      - "tools/tests/verify_windows_lifecycle_contract.ps1"
       - "tools/check_version_consistency.ps1"
       - "tools/tests/check_version_consistency_contract.ps1"
       - "tools/scan_release_secrets.ps1"
@@ -48,6 +50,8 @@ on:
       - "template-packs/**"
       - "tools/verify_backend.ps1"
       - "tools/tests/verify_backend_contract.ps1"
+      - "tools/verify_windows_lifecycle.ps1"
+      - "tools/tests/verify_windows_lifecycle_contract.ps1"
       - "tools/check_version_consistency.ps1"
       - "tools/tests/check_version_consistency_contract.ps1"
       - "tools/scan_release_secrets.ps1"
@@ -146,6 +150,10 @@ jobs:
       - name: Verify backend script contract
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tests\verify_backend_contract.ps1
+
+      - name: Verify Windows lifecycle tool contract
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tests\verify_windows_lifecycle_contract.ps1
 
       - name: Run locked backend verification
         shell: powershell
