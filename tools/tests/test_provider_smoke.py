@@ -66,7 +66,7 @@ class ProviderSmokeContractTests(unittest.TestCase):
         for record in records:
             self.assertEqual(set(record), ALLOWED_FIELDS)
             self.assertRegex(record["provider_id"], r"^[a-z0-9_.-]{1,64}$")
-            self.assertRegex(record["model_id"], r"^[A-Za-z0-9_.:-]{1,128}$")
+            self.assertRegex(record["model_id"], r"^[A-Za-z0-9_.:/-]{1,128}$")
         visible = result.stdout + result.stderr
         for private_value in PRIVATE_VALUES:
             self.assertNotIn(private_value, visible)
@@ -96,6 +96,9 @@ class ProviderSmokeContractTests(unittest.TestCase):
         self.assertEqual(record["provider_id"], "minimax")
         self.assertEqual(record["model_id"], "fixture-model")
         self.assertEqual(record["classification"], "catalog_ok")
+
+    def test_model_ids_with_provider_scopes_are_accepted(self):
+        self.assertIsNotNone(provider_smoke.MODEL_ID_PATTERN.fullmatch("deepseek-ai/DeepSeek-V3"))
 
     def test_untrusted_provider_and_model_are_rejected_with_fixed_safe_codes(self):
         provider = self.run_tool("--operation", "list", "--provider", "unknown")

@@ -217,5 +217,7 @@ describe("production frontend architecture", () => {
     const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
     expect(styles).not.toMatch(/\.history-shell\s*\{[^}]*min-width:\s*760px/s);
     expect(styles).toMatch(/@media\s*\(max-width:\s*760px\)[\s\S]*\.history-workspace/);
+    expect(historySource).toContain("if (!config.history_enabled)");
+    expect(historySource).toMatch(/event\.status === "error" \|\| event\.status === "cancelled"/);
   });
 });

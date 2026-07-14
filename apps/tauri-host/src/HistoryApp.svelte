@@ -58,6 +58,11 @@
         const config = await createSettingsApi(host).loadConfig();
         uiLanguage = config.language;
         theme = config.theme;
+        if (!config.history_enabled) {
+          state = { ...state, phase: "error", error: "历史记录未启用，请先在设置中开启。" };
+          backupsState = { ...backupsState, phase: "error", items: [], selectedId: "" };
+          return;
+        }
       } catch {
         uiLanguage = "zh-CN";
         theme = "system";
@@ -73,9 +78,16 @@
     try {
       const input = { keyword: state.query.search ?? "", filters: { scene: state.query.scene, style: state.query.style, provider: state.query.provider }, page_size: 30, sort: "created_at", direction: "desc", ...(more && state.cursor ? { cursor: state.cursor } : {}) };
       if (!capability) throw new Error();
+      let received = false;
       for await (const event of capability.invoke("history-sqlite", "list", input)) {
-        if (event.status === "result") state = appendHistoryPage(state, started.request, event.data as unknown as HistoryPage);
+        if (event.status === "result") {
+          state = appendHistoryPage(state, started.request, event.data as unknown as HistoryPage);
+          received = true;
+        } else if (event.status === "error" || event.status === "cancelled") {
+          throw new Error();
+        }
       }
+      if (!received) throw new Error();
     } catch { state = failHistoryQuery(state, started.request, "历史记录暂时不可用，请稍后重试。"); }
   }
 
@@ -84,13 +96,17 @@
     const request = state.detailRequest;
     try {
       if (!capability) throw new Error();
+      let received = false;
       for await (const event of capability.invoke("history-sqlite", "detail", { id: item.id })) {
         if (event.status === "result" && state.detailRequest === request && state.selectedId === item.id) {
           detail = (event.data.record ?? {}) as Record<string, unknown>;
+          received = true;
         } else if (event.status === "error" || event.status === "cancelled") {
           detail = applyHistoryDetailTerminal(state, detail, item.id, request, event.status);
+          received = true;
         }
       }
+      if (!received) detail = applyHistoryDetailFailure(state, detail, item.id, request);
     }
     catch { detail = applyHistoryDetailFailure(state, detail, item.id, request); }
   }
@@ -101,7 +117,12 @@
     const detailRequest = state.detailRequest;
     try {
       if (!capability) throw new Error();
-      for await (const _ of capability.invoke("history-sqlite", "rate", { id: selectedId, rating })) {}
+      let completed = false;
+      for await (const event of capability.invoke("history-sqlite", "rate", { id: selectedId, rating })) {
+        if (event.status === "result") completed = true;
+        else if (event.status === "error" || event.status === "cancelled") throw new Error();
+      }
+      if (!completed) throw new Error();
       state = updateHistoryRating(state, selectedId, rating);
       detail = applyHistoryRatingToDetail(state, detail, selectedId, detailRequest, rating);
       busy = "评分已保存。";
@@ -162,9 +183,16 @@
     busy = "正在扫描历史记录...";
     try {
       if (!capability) throw new Error();
+      let completed = false;
       for await (const event of capability.invoke("history-sqlite", "scan", {})) {
-        if (event.status === "result") busy = historyScanMessage(event.data);
+        if (event.status === "result") {
+          busy = historyScanMessage(event.data);
+          completed = true;
+        } else if (event.status === "error" || event.status === "cancelled") {
+          throw new Error();
+        }
       }
+      if (!completed) throw new Error();
     } catch { busy = "历史记录检查失败，请稍后重试。"; }
   }
 

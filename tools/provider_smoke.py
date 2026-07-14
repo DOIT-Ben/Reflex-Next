@@ -24,7 +24,7 @@ CANCEL_OBSERVATION_SECONDS = 0.5
 MAX_RUNTIME_LINE_BYTES = 8 * 1024 * 1024
 FIXTURE_SECRET = "fixture-smoke-private-credential"
 PROVIDER_ID_PATTERN = re.compile(r"^[a-z0-9_.-]{1,64}$")
-MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
 ERROR_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 OUTPUT_FIELDS = (
     "operation",
