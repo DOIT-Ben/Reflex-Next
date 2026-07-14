@@ -11,6 +11,13 @@ from typing import Any, Mapping
 
 MAX_BODY_LENGTH = 1_000_000
 MAX_PAGE_SIZE = 100
+DEFAULT_RETENTION_MAX_RECORDS = 10_000
+DEFAULT_RETENTION_MAX_AGE_DAYS = 180
+DEFAULT_RETENTION_MAX_DATABASE_BYTES = 512 * 1024 * 1024
+DEFAULT_RETENTION_CLEANUP_BATCH_SIZE = 500
+DEFAULT_RETENTION_CHECK_INTERVAL_SAVES = 100
+DEFAULT_RETENTION_BACKUP_MAX_COUNT = 3
+DEFAULT_RETENTION_BACKUP_MAX_AGE_DAYS = 30
 ALLOWED_MODES = frozenset({"content", "prompt"})
 ALLOWED_STYLES = frozenset(
     {"concise", "balanced", "detailed", "creative", "precise"}
@@ -109,6 +116,81 @@ def _timestamp(value: object) -> str:
     return value
 
 
+def _bounded_integer(value: object, *, minimum: int, maximum: int) -> int:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not minimum <= value <= maximum
+    ):
+        raise HistoryPluginError("history_service_unavailable")
+    return value
+
+
+@dataclass(frozen=True, repr=False)
+class HistoryRetentionPolicy:
+    max_records: int = DEFAULT_RETENTION_MAX_RECORDS
+    max_age_days: int = DEFAULT_RETENTION_MAX_AGE_DAYS
+    max_database_bytes: int = DEFAULT_RETENTION_MAX_DATABASE_BYTES
+    cleanup_batch_size: int = DEFAULT_RETENTION_CLEANUP_BATCH_SIZE
+    check_interval_saves: int = DEFAULT_RETENTION_CHECK_INTERVAL_SAVES
+    backup_max_count: int = DEFAULT_RETENTION_BACKUP_MAX_COUNT
+    backup_max_age_days: int = DEFAULT_RETENTION_BACKUP_MAX_AGE_DAYS
+
+    @classmethod
+    def from_value(cls, value: object) -> "HistoryRetentionPolicy":
+        if value is None:
+            return cls()
+        allowed = {
+            "max_records",
+            "max_age_days",
+            "max_database_bytes",
+            "cleanup_batch_size",
+            "check_interval_saves",
+            "backup_max_count",
+            "backup_max_age_days",
+        }
+        if not isinstance(value, Mapping) or not set(value).issubset(allowed):
+            raise HistoryPluginError("history_service_unavailable")
+        defaults = cls()
+        return cls(
+            max_records=_bounded_integer(
+                value.get("max_records", defaults.max_records),
+                minimum=1,
+                maximum=1_000_000,
+            ),
+            max_age_days=_bounded_integer(
+                value.get("max_age_days", defaults.max_age_days),
+                minimum=1,
+                maximum=3_650,
+            ),
+            max_database_bytes=_bounded_integer(
+                value.get("max_database_bytes", defaults.max_database_bytes),
+                minimum=64 * 1024,
+                maximum=10 * 1024 * 1024 * 1024,
+            ),
+            cleanup_batch_size=_bounded_integer(
+                value.get("cleanup_batch_size", defaults.cleanup_batch_size),
+                minimum=1,
+                maximum=500,
+            ),
+            check_interval_saves=_bounded_integer(
+                value.get("check_interval_saves", defaults.check_interval_saves),
+                minimum=1,
+                maximum=10_000,
+            ),
+            backup_max_count=_bounded_integer(
+                value.get("backup_max_count", defaults.backup_max_count),
+                minimum=1,
+                maximum=100,
+            ),
+            backup_max_age_days=_bounded_integer(
+                value.get("backup_max_age_days", defaults.backup_max_age_days),
+                minimum=1,
+                maximum=3_650,
+            ),
+        )
+
+
 @dataclass(frozen=True, repr=False)
 class HistoryServiceSnapshot:
     database_path: Path
@@ -116,6 +198,7 @@ class HistoryServiceSnapshot:
     history_enabled: bool
     privacy_mode: bool
     history_redaction: str
+    retention: HistoryRetentionPolicy = HistoryRetentionPolicy()
     active_key_version: str | None = None
     pending_key_version: str | None = None
 
@@ -126,7 +209,7 @@ class HistoryServiceSnapshot:
         value = services.get("history")
         allowed = {
             "database_path", "keys", "history_enabled", "privacy_mode",
-            "history_redaction", "active_key_version", "pending_key_version",
+            "history_redaction", "retention", "active_key_version", "pending_key_version",
         }
         if not isinstance(value, Mapping) or not set(value).issubset(allowed) or not {
             "database_path", "keys", "history_enabled", "privacy_mode", "history_redaction"
@@ -162,6 +245,7 @@ class HistoryServiceSnapshot:
             history_enabled=value["history_enabled"],
             privacy_mode=value["privacy_mode"],
             history_redaction=value["history_redaction"],
+            retention=HistoryRetentionPolicy.from_value(value.get("retention")),
             active_key_version=value.get("active_key_version"),
             pending_key_version=value.get("pending_key_version"),
         )

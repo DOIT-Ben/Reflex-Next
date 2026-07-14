@@ -10,9 +10,10 @@ import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
+from time import monotonic
 from typing import Any, Iterator
 
 from cryptography.exceptions import InvalidTag
@@ -71,15 +72,26 @@ CREATE TABLE IF NOT EXISTS rotation_checkpoint(
     high_water_mark TEXT,
     last_record_id TEXT
 );
-CREATE INDEX IF NOT EXISTS history_records_created_at_idx ON history_records(created_at);
-CREATE INDEX IF NOT EXISTS history_records_provider_idx ON history_records(provider);
-CREATE INDEX IF NOT EXISTS history_records_scene_idx ON history_records(scene);
-CREATE INDEX IF NOT EXISTS history_records_style_idx ON history_records(style);
-CREATE INDEX IF NOT EXISTS history_records_rating_idx ON history_records(rating);
-CREATE INDEX IF NOT EXISTS history_records_status_idx ON history_records(status);
 """
 
 INDEX_DEFINITIONS = (
+    ("history_records_created_at_idx", "CREATE INDEX history_records_created_at_idx ON history_records(created_at, id)"),
+    ("history_records_provider_idx", "CREATE INDEX history_records_provider_idx ON history_records(provider)"),
+    ("history_records_scene_idx", "CREATE INDEX history_records_scene_idx ON history_records(scene, created_at, id)"),
+    ("history_records_style_idx", "CREATE INDEX history_records_style_idx ON history_records(style, created_at, id)"),
+    ("history_records_rating_idx", "CREATE INDEX history_records_rating_idx ON history_records((rating IS NULL), rating, id)"),
+    ("history_records_status_idx", "CREATE INDEX history_records_status_idx ON history_records(key_version, id, status)"),
+)
+
+LEGACY_INDEX_NAMES = (
+    "history_records_created_at_idx",
+    "history_records_provider_idx",
+    "history_records_scene_idx",
+    "history_records_style_idx",
+    "history_records_rating_idx",
+    "history_records_status_idx",
+)
+LEGACY_INDEX_DEFINITIONS = (
     ("history_records_created_at_idx", "CREATE INDEX history_records_created_at_idx ON history_records(created_at)"),
     ("history_records_provider_idx", "CREATE INDEX history_records_provider_idx ON history_records(provider)"),
     ("history_records_scene_idx", "CREATE INDEX history_records_scene_idx ON history_records(scene)"),
@@ -87,6 +99,13 @@ INDEX_DEFINITIONS = (
     ("history_records_rating_idx", "CREATE INDEX history_records_rating_idx ON history_records(rating)"),
     ("history_records_status_idx", "CREATE INDEX history_records_status_idx ON history_records(status)"),
 )
+
+RETENTION_RECORD_COUNT_KEY = "retention_record_count"
+RETENTION_SAVE_COUNT_KEY = "retention_save_count"
+RETENTION_PENDING_KEY = "retention_pending"
+INDEX_LAYOUT_KEY = "index_layout_version"
+INDEX_LAYOUT_VERSION = 3
+SEARCH_TIMEOUT_SECONDS = 5.0
 
 
 class HistoryRepository:
@@ -146,6 +165,19 @@ class HistoryRepository:
                         snapshot.status,
                         json.dumps(snapshot.tags, ensure_ascii=False, separators=(",", ":")),
                     ),
+                )
+                record_count = self._increment_meta_integer(
+                    connection, RETENTION_RECORD_COUNT_KEY
+                )
+                save_count = self._increment_meta_integer(
+                    connection, RETENTION_SAVE_COUNT_KEY
+                )
+                self._apply_retention(
+                    connection,
+                    record_count=record_count,
+                    save_count=save_count,
+                    current_record_id=snapshot.id,
+                    cancellation=cancellation,
                 )
                 cancellation.raise_if_cancelled()
                 connection.commit()
@@ -221,6 +253,9 @@ class HistoryRepository:
                 )
                 if cursor.rowcount != 1:
                     raise HistoryPluginError("history_not_found")
+                self._increment_meta_integer(
+                    connection, RETENTION_RECORD_COUNT_KEY, delta=-1
+                )
                 cancellation.raise_if_cancelled()
                 connection.commit()
             except Exception:
@@ -238,6 +273,8 @@ class HistoryRepository:
                 cursor = connection.execute("DELETE FROM history_records")
                 if cursor.rowcount < 1:
                     raise HistoryPluginError("history_not_found")
+                self._set_meta_integer(connection, RETENTION_RECORD_COUNT_KEY, 0)
+                self._set_meta_integer(connection, RETENTION_PENDING_KEY, 0)
                 cancellation.raise_if_cancelled()
                 connection.commit()
             except Exception:
@@ -297,10 +334,17 @@ class HistoryRepository:
                     )
                     connection.execute("DELETE FROM history_records WHERE id = ?", (row["id"],))
                     quarantined += 1
-                for name, _statement in INDEX_DEFINITIONS:
+                for name in (*LEGACY_INDEX_NAMES, *(item[0] for item in INDEX_DEFINITIONS)):
                     connection.execute(f'DROP INDEX IF EXISTS "{name}"')
                 for _name, statement in INDEX_DEFINITIONS:
                     connection.execute(statement)
+                self._set_meta_integer(
+                    connection, RETENTION_RECORD_COUNT_KEY, verified
+                )
+                connection.execute(
+                    "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
+                    (INDEX_LAYOUT_KEY, str(INDEX_LAYOUT_VERSION)),
+                )
                 cancellation.raise_if_cancelled()
                 connection.commit()
             except BaseException:
@@ -341,6 +385,7 @@ class HistoryRepository:
                 os.fsync(stream.fileno())
             os.replace(temporary, manifest_path)
             _fsync_directory(directory)
+            self._prune_backups(manifest["id"], cancellation)
             return manifest
         except BaseException:
             database_path.unlink(missing_ok=True)
@@ -643,7 +688,10 @@ class HistoryRepository:
                     "AND sql IS NOT NULL"
                 )
             )
-            if indexes != dict(INDEX_DEFINITIONS):
+            if indexes not in (
+                dict(INDEX_DEFINITIONS),
+                dict(LEGACY_INDEX_DEFINITIONS),
+            ):
                 raise HistoryPluginError("history_backup_invalid")
         finally:
             connection.close()
@@ -698,6 +746,54 @@ class HistoryRepository:
     def _backup_directory(self) -> Path:
         return self._path.parent / "backups"
 
+    def _prune_backups(self, current_backup_id: str, cancellation: Any) -> None:
+        directory = self._backup_directory()
+        protected = {current_backup_id}
+        checkpoint = self._rotation_checkpoint()
+        if checkpoint is not None and isinstance(checkpoint["backup_id"], str):
+            protected.add(checkpoint["backup_id"])
+
+        candidates: list[tuple[datetime, str, Path, Path]] = []
+        for manifest_path in directory.glob("backup-*.json"):
+            cancellation.raise_if_cancelled()
+            try:
+                manifest = self._load_manifest(manifest_path)
+                created_at = datetime.fromisoformat(
+                    manifest["created_at"].replace("Z", "+00:00")
+                )
+            except (HistoryPluginError, TypeError, ValueError):
+                continue
+            database_path = directory / f"{manifest['id']}.sqlite3"
+            if database_path.is_file():
+                candidates.append(
+                    (created_at, manifest["id"], manifest_path, database_path)
+                )
+
+        candidates.sort(reverse=True)
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            days=self._services.retention.backup_max_age_days
+        )
+        retained = sum(1 for _created, backup_id, *_paths in candidates if backup_id in protected)
+        removals: list[tuple[Path, Path]] = []
+        for created_at, backup_id, manifest_path, database_path in candidates:
+            cancellation.raise_if_cancelled()
+            if backup_id in protected:
+                continue
+            if (
+                created_at >= cutoff
+                and retained < self._services.retention.backup_max_count
+            ):
+                retained += 1
+                continue
+            removals.append((manifest_path, database_path))
+
+        cancellation.raise_if_cancelled()
+        for manifest_path, database_path in removals:
+            database_path.unlink(missing_ok=True)
+            manifest_path.unlink(missing_ok=True)
+        if removals:
+            _fsync_directory(directory)
+
     def _load_manifest(self, path: Path) -> dict[str, Any]:
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
@@ -749,6 +845,7 @@ class HistoryRepository:
                 )
             ):
                 raise HistoryPluginError("history_backup_invalid")
+            self._ensure_retention_metadata(expected_record_count)
             cancellation.raise_if_cancelled()
             rollback.unlink(missing_ok=True)
             for suffix in ("-wal", "-shm"):
@@ -764,6 +861,22 @@ class HistoryRepository:
             except BaseException as recovery_error:
                 raise HistoryPluginError("history_recovery_required") from recovery_error
             raise
+
+    def _ensure_retention_metadata(self, record_count: int) -> None:
+        with self._connection(create=False, writable=True) as connection:
+            connection.executescript(SCHEMA_SQL)
+            self._set_meta_integer(
+                connection, RETENTION_RECORD_COUNT_KEY, record_count
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_meta(key, value) VALUES (?, '0')",
+                (RETENTION_SAVE_COUNT_KEY,),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_meta(key, value) VALUES (?, '0')",
+                (RETENTION_PENDING_KEY,),
+            )
+            connection.commit()
 
     def _checkpoint_for_replace(self) -> None:
         if not self._path.is_file():
@@ -922,7 +1035,7 @@ class HistoryRepository:
     def _reencrypt_batch(self, target_version: int, batch_size: int, cancellation: Any) -> int:
         with self._connection(create=False, writable=True) as connection:
             rows = connection.execute(
-                f"SELECT {SUMMARY_COLUMNS}, input_nonce, input_ciphertext, output_nonce, output_ciphertext, key_version FROM history_records WHERE key_version != ? ORDER BY id LIMIT ?",
+                f"SELECT {SUMMARY_COLUMNS}, input_nonce, input_ciphertext, output_nonce, output_ciphertext, key_version FROM history_records WHERE key_version != ? ORDER BY key_version, id LIMIT ?",
                 (target_version, batch_size),
             ).fetchall()
             try:
@@ -971,13 +1084,15 @@ class HistoryRepository:
         matches: list[sqlite3.Row] = []
         scan_cursor = cursor
         needle = request.keyword.casefold()
+        deadline = monotonic() + SEARCH_TIMEOUT_SECONDS
         while len(matches) <= request.page_size:
-            cancellation.raise_if_cancelled()
+            self._check_search_budget(deadline, cancellation)
             rows = self._select_rows(request, scan_cursor, 100)
+            self._check_search_budget(deadline, cancellation)
             if not rows:
                 break
             for row in rows:
-                cancellation.raise_if_cancelled()
+                self._check_search_budget(deadline, cancellation)
                 try:
                     metadata = self._metadata_from_summary(row)
                     input_text = self._codec.decrypt(
@@ -986,12 +1101,14 @@ class HistoryRepository:
                         row["key_version"],
                         "input",
                     )
+                    self._check_search_budget(deadline, cancellation)
                     output_text = self._codec.decrypt(
                         EncryptedField(row["output_nonce"], row["output_ciphertext"]),
                         metadata,
                         row["key_version"],
                         "output",
                     )
+                    self._check_search_budget(deadline, cancellation)
                 except (InvalidTag, ValueError):
                     continue
                 if needle in input_text.casefold() or needle in output_text.casefold():
@@ -1001,7 +1118,14 @@ class HistoryRepository:
             scan_cursor = self._cursor_values(rows[-1], request)
             if len(rows) < 100:
                 break
+        self._check_search_budget(deadline, cancellation)
         return self._page(matches, request)
+
+    @staticmethod
+    def _check_search_budget(deadline: float, cancellation: Any) -> None:
+        cancellation.raise_if_cancelled()
+        if monotonic() >= deadline:
+            raise HistoryPluginError("history_search_timeout")
 
     def _select_rows(
         self,
@@ -1155,6 +1279,129 @@ class HistoryRepository:
         encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()
 
+    def _apply_retention(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        record_count: int,
+        save_count: int,
+        current_record_id: str,
+        cancellation: Any,
+    ) -> int:
+        policy = self._services.retention
+        pending = self._meta_integer(connection, RETENTION_PENDING_KEY) == 1
+        periodic = save_count % policy.check_interval_saves == 0
+        storage_pressure = (
+            (periodic or pending)
+            and self._database_live_bytes(connection) > policy.max_database_bytes
+        )
+        overflow = max(0, record_count - policy.max_records)
+        if not (pending or periodic or storage_pressure or overflow):
+            return 0
+
+        limit = policy.cleanup_batch_size
+        selected: list[str] = []
+        selected_set: set[str] = set()
+
+        def select_oldest(where: str = "", parameters: tuple[Any, ...] = ()) -> None:
+            remaining = limit - len(selected)
+            if remaining <= 0:
+                return
+            exclusion = ""
+            values: list[Any] = list(parameters)
+            excluded = [current_record_id, *selected]
+            placeholders = ",".join("?" for _ in excluded)
+            exclusion = f"{' AND ' if where else ' WHERE '}id NOT IN ({placeholders})"
+            values.extend(excluded)
+            rows = connection.execute(
+                "SELECT id FROM history_records"
+                f"{where}{exclusion} ORDER BY created_at ASC, id ASC LIMIT ?",
+                (*values, remaining),
+            ).fetchall()
+            for row in rows:
+                record_id = row["id"]
+                if record_id not in selected_set:
+                    selected.append(record_id)
+                    selected_set.add(record_id)
+
+        if periodic or pending:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=policy.max_age_days)
+            cutoff_text = cutoff.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            select_oldest(" WHERE created_at < ?", (cutoff_text,))
+
+        required_for_count = min(
+            max(0, overflow - len(selected)), limit - len(selected)
+        )
+        if required_for_count:
+            before = len(selected)
+            select_oldest()
+            if len(selected) - before > required_for_count:
+                del selected[before + required_for_count :]
+                selected_set = set(selected)
+
+        if storage_pressure:
+            select_oldest()
+
+        cancellation.raise_if_cancelled()
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            connection.execute(
+                f"DELETE FROM history_records WHERE id IN ({placeholders})", selected
+            )
+            record_count -= len(selected)
+            self._set_meta_integer(
+                connection, RETENTION_RECORD_COUNT_KEY, record_count
+            )
+
+        if self._database_live_bytes(connection) > policy.max_database_bytes:
+            raise HistoryPluginError("history_storage_limit")
+
+        more_work = len(selected) == limit and record_count > 0
+        self._set_meta_integer(
+            connection, RETENTION_PENDING_KEY, int(more_work)
+        )
+        return len(selected)
+
+    @staticmethod
+    def _database_live_bytes(connection: sqlite3.Connection) -> int:
+        page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
+        page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
+        free_pages = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+        return max(0, page_count - free_pages) * page_size
+
+    @staticmethod
+    def _meta_integer(connection: sqlite3.Connection, key: str) -> int:
+        row = connection.execute(
+            "SELECT value FROM schema_meta WHERE key = ?", (key,)
+        ).fetchone()
+        if row is None:
+            raise HistoryPluginError("history_recovery_required")
+        try:
+            value = int(row[0])
+        except (TypeError, ValueError) as error:
+            raise HistoryPluginError("history_recovery_required") from error
+        if value < 0:
+            raise HistoryPluginError("history_recovery_required")
+        return value
+
+    @staticmethod
+    def _set_meta_integer(
+        connection: sqlite3.Connection, key: str, value: int
+    ) -> None:
+        connection.execute(
+            "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
+            (key, str(value)),
+        )
+
+    def _increment_meta_integer(
+        self, connection: sqlite3.Connection, key: str, *, delta: int = 1
+    ) -> int:
+        value = self._meta_integer(connection, key) + delta
+        if value < 0:
+            raise HistoryPluginError("history_recovery_required")
+        self._set_meta_integer(connection, key, value)
+        return value
+
     @contextmanager
     def _connection(
         self, *, create: bool, writable: bool
@@ -1205,13 +1452,44 @@ class HistoryRepository:
         has_tables = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1"
         ).fetchone()
+        if current == SCHEMA_VERSION and has_tables:
+            try:
+                layout = connection.execute(
+                    "SELECT value FROM schema_meta WHERE key = ?",
+                    (INDEX_LAYOUT_KEY,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                layout = None
+            if layout is not None and layout[0] == str(INDEX_LAYOUT_VERSION):
+                return
         if current < SCHEMA_VERSION and has_tables:
             self._migration_backup(connection, current)
         try:
             connection.executescript("BEGIN IMMEDIATE;" + SCHEMA_SQL)
+            for name in LEGACY_INDEX_NAMES:
+                connection.execute(f'DROP INDEX IF EXISTS "{name}"')
+            for _name, statement in INDEX_DEFINITIONS:
+                connection.execute(statement)
             connection.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
                 ("schema_version", str(SCHEMA_VERSION)),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_meta(key, value) "
+                "SELECT ?, CAST(COUNT(*) AS TEXT) FROM history_records",
+                (RETENTION_RECORD_COUNT_KEY,),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_meta(key, value) VALUES (?, '0')",
+                (RETENTION_SAVE_COUNT_KEY,),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_meta(key, value) VALUES (?, '0')",
+                (RETENTION_PENDING_KEY,),
+            )
+            connection.execute(
+                "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
+                (INDEX_LAYOUT_KEY, str(INDEX_LAYOUT_VERSION)),
             )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             connection.commit()
