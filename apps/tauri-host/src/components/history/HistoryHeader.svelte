@@ -1,0 +1,61 @@
+<script lang="ts">
+  import MoreHorizontal from "@lucide/svelte/icons/ellipsis";
+  import type { HistoryExportFormat } from "../../domain/historyAdminBridge";
+  import type { HistoryBackupsState } from "../../domain/historyState";
+
+  interface Props {
+    exportFormat: HistoryExportFormat;
+    backups: HistoryBackupsState;
+    translate: (source: string, values?: Record<string, string | number>) => string;
+    onExportFormatChange: (format: HistoryExportFormat) => void;
+    onBackupChange: (id: string) => void;
+    onExport: () => void;
+    onScan: () => void;
+    onRepair: () => void;
+    onRetryBackups: () => void;
+    onRestore: () => void;
+    onRotate: () => void;
+    onClear: () => void;
+  }
+
+  let {
+    exportFormat,
+    backups,
+    translate,
+    onExportFormatChange,
+    onBackupChange,
+    onExport,
+    onScan,
+    onRepair,
+    onRetryBackups,
+    onRestore,
+    onRotate,
+    onClear
+  }: Props = $props();
+</script>
+
+<header class="history-head">
+  <div class="history-brand"><span class="history-mark" aria-hidden="true">R</span><div><strong>Reflex Next</strong><span>{translate("历史记录")}</span></div></div>
+  <div class="history-actions">
+    <details class="history-menu">
+      <summary aria-label={translate("历史记录维护")}><MoreHorizontal size={17} strokeWidth={2} /><span>{translate("维护")}</span></summary>
+      <div class="history-menu-panel">
+        <label>{translate("导出格式")}<select aria-label={translate("导出格式")} value={exportFormat} onchange={(event) => onExportFormatChange(event.currentTarget.value as HistoryExportFormat)}><option value="json">JSON</option><option value="csv">CSV</option><option value="markdown">Markdown</option></select></label>
+        <button type="button" aria-label={translate("导出历史记录")} onclick={onExport}>{translate("导出")}</button>
+        <button type="button" onclick={onScan}>{translate("检查记录")}</button>
+        <button type="button" aria-label={translate("修复历史记录")} onclick={onRepair}>{translate("修复")}</button>
+        <label>{translate("恢复备份")}<select aria-label={translate("恢复备份")} value={backups.selectedId} disabled={backups.phase !== "ready" || !backups.items.length} onchange={(event) => onBackupChange(event.currentTarget.value)}>
+          {#if backups.phase === "loading"}<option value="">{translate("正在加载备份...")}</option>
+          {:else if backups.phase === "error"}<option value="">{translate("备份列表暂时不可用")}</option>
+          {:else if !backups.items.length}<option value="">{translate("暂无备份")}</option>{/if}
+          {#each backups.items as backup (backup.id)}<option value={backup.id}>{backup.created_at} · {backup.record_count}</option>{/each}
+        </select></label>
+        {#if backups.phase === "loading" || backups.phase === "error"}<p class:error={backups.phase === "error"} class="history-backup-status" role="status" aria-live="polite">{translate(backups.phase === "loading" ? "正在加载备份..." : "备份列表暂时不可用")}</p>{/if}
+        {#if backups.phase === "error"}<button type="button" aria-label={translate("重试加载备份")} onclick={onRetryBackups}>{translate("重试备份")}</button>{/if}
+        <button type="button" disabled={backups.phase !== "ready" || !backups.selectedId} onclick={onRestore}>{translate("恢复")}</button>
+        <button type="button" onclick={onRotate}>{translate("轮换密钥")}</button>
+        <button class="danger" type="button" onclick={onClear}>{translate("清空历史")}</button>
+      </div>
+    </details>
+  </div>
+</header>

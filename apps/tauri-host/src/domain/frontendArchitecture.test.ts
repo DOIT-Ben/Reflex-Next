@@ -202,4 +202,16 @@ describe("production frontend architecture", () => {
     expect(appSource).not.toContain("closeMoreActions");
     expect(appSource).not.toMatch(/class=["'](?:command|template|batch)-dialog["']/);
   });
+
+  it("keeps the history window componentized and responsive", () => {
+    const historySource = readFileSync(join(sourceRoot, "HistoryApp.svelte"), "utf8");
+    for (const component of ["HistoryHeader", "HistoryFilters", "HistoryList", "HistoryDetail"]) {
+      expect(historySource).toMatch(new RegExp(`import\\s+${component}\\s+from`));
+      expect(historySource).toContain(`<${component}`);
+    }
+
+    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+    expect(styles).not.toMatch(/\.history-shell\s*\{[^}]*min-width:\s*760px/s);
+    expect(styles).toMatch(/@media\s*\(max-width:\s*760px\)[\s\S]*\.history-workspace/);
+  });
 });

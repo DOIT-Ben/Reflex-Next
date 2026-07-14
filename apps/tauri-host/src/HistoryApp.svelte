@@ -1,10 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import HistoryDetail from "./components/history/HistoryDetail.svelte";
+  import HistoryFilters from "./components/history/HistoryFilters.svelte";
+  import HistoryHeader from "./components/history/HistoryHeader.svelte";
+  import HistoryList from "./components/history/HistoryList.svelte";
   import { CapabilityBridge } from "./domain/capabilityBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
-  import { createSettingsApi } from "./domain/settingsApi";
+  import { createSettingsApi, type AppConfig } from "./domain/settingsApi";
   import { createHistoryAdminBridge } from "./domain/historyAdminBridge";
-  import { appendHistoryPage, applyHistoryDetailFailure, applyHistoryDetailTerminal, applyHistoryRatingToDetail, createHistoryBackupsState, createHistoryState, failHistoryBackupsLoad, failHistoryQuery, finishHistoryBackupsLoad, historyElapsedLabel, historyExportFilters, historyScanMessage, removeHistoryItem, selectHistoryItem, startHistoryBackupsLoad, startHistoryQuery, updateHistoryRating, type HistoryPage, type HistorySummary } from "./domain/historyState";
+  import { appendHistoryPage, applyHistoryDetailFailure, applyHistoryDetailTerminal, applyHistoryRatingToDetail, createHistoryBackupsState, createHistoryState, failHistoryBackupsLoad, failHistoryQuery, finishHistoryBackupsLoad, historyExportFilters, historyScanMessage, removeHistoryItem, selectHistoryItem, startHistoryBackupsLoad, startHistoryQuery, updateHistoryRating, type HistoryPage, type HistorySummary } from "./domain/historyState";
   import { listSceneOptions } from "./domain/reflexSession";
   import { translate, type UiLanguage } from "./domain/i18n";
 
@@ -28,6 +32,7 @@
   let backupsState = createHistoryBackupsState();
   let busy = "";
   let uiLanguage: UiLanguage = "zh-CN";
+  let theme: AppConfig["theme"] = "system";
 
   function tr(source: string, values: Record<string, string | number> = {}): string {
     return translate(uiLanguage, source, values);
@@ -49,7 +54,14 @@
       }
       capability = new CapabilityBridge(host);
       admin = createHistoryAdminBridge(host);
-      try { uiLanguage = (await createSettingsApi(host).loadConfig()).language; } catch { uiLanguage = "zh-CN"; }
+      try {
+        const config = await createSettingsApi(host).loadConfig();
+        uiLanguage = config.language;
+        theme = config.theme;
+      } catch {
+        uiLanguage = "zh-CN";
+        theme = "system";
+      }
       void load({});
       void loadBackups();
     });
@@ -160,22 +172,47 @@
   async function hostInvoke(command: string, args: Record<string, unknown>) { const host = await createTauriHostApi(); if (!host) throw new Error(); return host.invoke(command, args); }
 </script>
 
-<main class="history-shell">
-  <header class="history-head"><div><strong>Reflex</strong><span>{tr("历史记录")}</span></div><div class="history-actions"><details class="history-menu"><summary aria-label={tr("历史记录维护")}>{tr("维护")}</summary><div class="history-menu-panel"><label>{tr("导出格式")}<select aria-label={tr("导出格式")} bind:value={exportFormat}><option value="json">JSON</option><option value="csv">CSV</option><option value="markdown">Markdown</option></select></label><button aria-label={tr("导出历史记录")} on:click={exportHistory}>{tr("导出")}</button><button on:click={scanHistory}>{tr("检查记录")}</button><button aria-label={tr("修复历史记录")} on:click={() => operate("repair")}>{tr("修复")}</button><label>{tr("恢复备份")}<select aria-label={tr("恢复备份")} bind:value={backupsState.selectedId} disabled={backupsState.phase !== "ready" || !backupsState.items.length}>{#if backupsState.phase === "loading"}<option value="">{tr("正在加载备份...")}</option>{:else if backupsState.phase === "error"}<option value="">{tr("备份列表暂时不可用")}</option>{:else if !backupsState.items.length}<option value="">{tr("暂无备份")}</option>{/if}{#each backupsState.items as backup (backup.id)}<option value={backup.id}>{backup.created_at} · {backup.record_count}</option>{/each}</select></label>{#if backupsState.phase === "loading" || backupsState.phase === "error"}<p class:error={backupsState.phase === "error"} class="history-backup-status" role="status" aria-live="polite">{tr(backupsState.phase === "loading" ? "正在加载备份..." : "备份列表暂时不可用")}</p>{/if}{#if backupsState.phase === "error"}<button aria-label={tr("重试加载备份")} on:click={loadBackups}>{tr("重试备份")}</button>{/if}<button disabled={backupsState.phase !== "ready" || !backupsState.selectedId} on:click={() => operate("restore")}>{tr("恢复")}</button><button on:click={() => operate("rotate")}>{tr("轮换密钥")}</button><button class="danger" on:click={() => operate("clear")}>{tr("清空历史")}</button></div></details></div></header>
-  <section class="history-tools"><input aria-label={tr("搜索历史记录")} bind:value={search} placeholder={tr("搜索历史记录")} /><select aria-label={tr("场景筛选")} bind:value={scene}><option value="">{tr("全部场景")}</option>{#each scenes as item (item.id)}<option value={item.id}>{tr(item.label)}</option>{/each}</select><select aria-label={tr("风格筛选")} bind:value={style}><option value="">{tr("全部风格")}</option>{#each styles as item (item.id)}<option value={item.id}>{tr(item.label)}</option>{/each}</select><input aria-label={tr("Provider 筛选")} bind:value={provider} placeholder={tr("全部 Provider")} /><button on:click={() => load({ search, scene, style, provider })}>{tr("筛选")}</button></section>
+<main class="history-shell" data-theme={theme}>
+  <HistoryHeader
+    {exportFormat}
+    backups={backupsState}
+    translate={tr}
+    onExportFormatChange={(value) => (exportFormat = value)}
+    onBackupChange={(value) => (backupsState = { ...backupsState, selectedId: value })}
+    onExport={exportHistory}
+    onScan={scanHistory}
+    onRepair={() => operate("repair")}
+    onRetryBackups={loadBackups}
+    onRestore={() => operate("restore")}
+    onRotate={() => operate("rotate")}
+    onClear={() => operate("clear")}
+  />
+  <HistoryFilters
+    {search}
+    {scene}
+    {style}
+    {provider}
+    {scenes}
+    {styles}
+    translate={tr}
+    onSearchChange={(value) => (search = value)}
+    onSceneChange={(value) => (scene = value)}
+    onStyleChange={(value) => (style = value)}
+    onProviderChange={(value) => (provider = value)}
+    onSubmit={() => load({ search, scene, style, provider })}
+  />
   {#if busy}<p class="history-notice" role="status" aria-live="polite">{tr(busy)}</p>{/if}
   <section class="history-workspace">
-    <aside class="history-list" aria-label={tr("历史记录列表")}>
-      {#if state.phase === "loading"}<p class="history-state">{tr("正在加载历史记录...")}</p>
-      {:else if state.phase === "empty"}<p class="history-state">{tr("暂无历史记录。")}</p>
-      {:else if state.phase === "error"}<p class="history-state error">{tr(state.error ?? "历史记录暂时不可用，请稍后重试。")}</p>
-      {:else}{#each state.items as item (item.id)}<button class:active={item.id === state.selectedId} class="history-row" on:click={() => open(item)}><time>{item.created_at}</time><span>{sceneLabel(item.scene)} · {styleLabel(item.style)}</span><small>{item.provider} · {item.rating ?? tr("未评分")}</small></button>{/each}{#if state.cursor}<button class="more" on:click={() => load(state.query, true)} disabled={state.phase === "loading-more"}>{tr(state.phase === "loading-more" ? "正在加载..." : "加载更多")}</button>{/if}{/if}
-    </aside>
-    <article class="history-detail">
-      {#if !state.selectedId}<p class="history-state">{tr("选择一条历史记录查看详情。")}</p>
-      {:else if !detail}<p class="history-state" role="status" aria-live="polite">{tr("正在加载详情...")}</p>
-      {:else if typeof detail.error === "string"}<p class="history-state error" role="alert">{tr(detail.error)}</p>
-      {:else}<div class="detail-actions"><span>{tr("评分")}</span>{#each [1,2,3,4,5] as score}<button aria-label={`${tr("评分")} ${score}`} aria-pressed={detail.rating === score} on:click={() => rate(score)}>{score}</button>{/each}<button aria-label={tr("删除当前历史记录")} on:click={() => operate("delete")}>{tr("删除")}</button></div><dl class="history-fields"><div><dt>{tr("场景")}</dt><dd>{typeof detail.scene === "string" ? sceneLabel(detail.scene) : "-"}</dd></div><div><dt>Provider</dt><dd>{detail.provider ?? "-"}</dd></div><div><dt>{tr("模式")}</dt><dd>{typeof detail.mode === "string" ? tr(detail.mode === "prompt" ? "提示词生成" : "内容优化") : "-"}</dd></div><div><dt>{tr("耗时")}</dt><dd>{historyElapsedLabel(detail)}</dd></div></dl><h2>{tr("原文")}</h2><pre>{detail.input ?? ""}</pre><h2>{tr("结果")}</h2><pre>{detail.output ?? ""}</pre><div class="detail-actions"><button on:click={() => reuse("input")}>{tr("载入原文")}</button><button on:click={() => reuse("result")}>{tr("使用结果")}</button></div>{/if}
-    </article>
+    <HistoryList {state} translate={tr} {sceneLabel} {styleLabel} onSelect={open} onMore={() => load(state.query, true)} />
+    <HistoryDetail
+      {state}
+      {detail}
+      translate={tr}
+      {sceneLabel}
+      onRate={rate}
+      onDelete={() => operate("delete")}
+      onReuseInput={() => reuse("input")}
+      onReuseResult={() => reuse("result")}
+    />
   </section>
 </main>
