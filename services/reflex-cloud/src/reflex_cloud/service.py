@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .config import CloudSettings
-from .models import ConsentRecord, FeedbackItem, Installation, utc_now
-from .schemas import ConsentUpdate, FeedbackCreate, FeedbackUpdate
+from .models import ConsentRecord, DailyUsage, FeedbackItem, Installation, utc_now
+from .schemas import ConsentUpdate, FeedbackCreate, FeedbackUpdate, QuotaView
 from .security import new_installation_token, redact_text, token_hash
 from .storage import AttachmentStore
 
@@ -84,6 +84,67 @@ class CloudService:
         session.add(record)
         session.commit()
         return record
+
+    def quota(self, session: Session, installation: Installation) -> QuotaView:
+        today = date.today()
+        usage = session.scalar(
+            select(DailyUsage).where(
+                DailyUsage.installation_id == installation.id,
+                DailyUsage.usage_date == today,
+            )
+        )
+        return QuotaView(
+            usage_date=today.isoformat(),
+            requests_used=usage.request_count if usage else 0,
+            requests_limit=self.settings.free_requests_per_day,
+            input_chars_used=usage.input_chars if usage else 0,
+            input_chars_limit=self.settings.free_input_chars_per_day,
+            output_chars_used=usage.output_chars if usage else 0,
+            output_chars_limit=self.settings.free_output_chars_per_day,
+        )
+
+    def reserve_quota(
+        self, session: Session, installation: Installation, *, input_chars: int
+    ) -> DailyUsage:
+        if input_chars < 0 or input_chars > self.settings.free_input_chars_per_day:
+            raise CloudServiceError("quota_input_too_large", 413)
+        today = date.today()
+        usage = session.scalar(
+            select(DailyUsage).where(
+                DailyUsage.installation_id == installation.id,
+                DailyUsage.usage_date == today,
+            )
+        )
+        if usage is None:
+            usage = DailyUsage(installation_id=installation.id, usage_date=today)
+            session.add(usage)
+            session.flush()
+        if (
+            usage.request_count >= self.settings.free_requests_per_day
+            or usage.input_chars + input_chars > self.settings.free_input_chars_per_day
+            or usage.output_chars >= self.settings.free_output_chars_per_day
+        ):
+            raise CloudServiceError("quota_exhausted", 429)
+        usage.request_count += 1
+        usage.input_chars += input_chars
+        session.commit()
+        return usage
+
+    def record_output_usage(
+        self, session: Session, installation: Installation, *, output_chars: int
+    ) -> None:
+        if output_chars < 0:
+            raise CloudServiceError("quota_output_invalid", 400)
+        usage = session.scalar(
+            select(DailyUsage).where(
+                DailyUsage.installation_id == installation.id,
+                DailyUsage.usage_date == date.today(),
+            )
+        )
+        if usage is None:
+            raise CloudServiceError("quota_unavailable", 409)
+        usage.output_chars += output_chars
+        session.commit()
 
     def submit_feedback(
         self, session: Session, installation: Installation, payload: FeedbackCreate

@@ -118,3 +118,13 @@ class FeedbackUpdate(BaseModel):
 
 class DeleteResult(BaseModel):
     deleted: bool
+
+
+class QuotaView(BaseModel):
+    usage_date: str
+    requests_used: int
+    requests_limit: int
+    input_chars_used: int
+    input_chars_limit: int
+    output_chars_used: int
+    output_chars_limit: int

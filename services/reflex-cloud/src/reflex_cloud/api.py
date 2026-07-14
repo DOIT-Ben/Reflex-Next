@@ -18,6 +18,7 @@ from .schemas import (
     FeedbackSummary,
     FeedbackUpdate,
     InstallationCreated,
+    QuotaView,
 )
 from .security import secure_equals
 from .service import CloudService, CloudServiceError
@@ -87,6 +88,15 @@ def update_consent(
     service: ServiceDependency,
 ) -> ConsentView:
     return _consent_view(service.update_consent(session, installation, payload))
+
+
+@public_router.get("/quota", response_model=QuotaView)
+def get_quota(
+    installation: InstallationDependency,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> QuotaView:
+    return service.quota(session, installation)
 
 
 @public_router.delete("/privacy/data", response_model=DeleteResult)

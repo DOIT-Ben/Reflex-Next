@@ -23,6 +23,9 @@ class CloudSettings(BaseSettings):
     token_pepper: SecretStr = SecretStr(_DEVELOPMENT_SECRET)
     retention_days: int = Field(default=90, ge=1, le=3650)
     feedback_limit_per_hour: int = Field(default=10, ge=1, le=1000)
+    free_requests_per_day: int = Field(default=20, ge=1, le=10000)
+    free_input_chars_per_day: int = Field(default=200_000, ge=1_000, le=10_000_000)
+    free_output_chars_per_day: int = Field(default=200_000, ge=1_000, le=10_000_000)
     max_screenshot_bytes: int = Field(default=3 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024)
 
     @field_validator("environment")

@@ -52,6 +52,7 @@ new -> triaged -> reproduced -> planned -> fixed -> released
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | `POST` | `/v1/installations` | 创建匿名安装身份和一次性返回的令牌 |
+| `GET` | `/v1/quota` | 查询当日免费请求、输入字符和输出字符额度 |
 | `GET` | `/v1/privacy/consent` | 查询分项授权 |
 | `PUT` | `/v1/privacy/consent` | 更新分项授权并记录版本 |
 | `DELETE` | `/v1/privacy/data` | 删除该安装身份及其反馈和附件 |
@@ -71,9 +72,10 @@ POST /v1/optimize/cancel
 GET  /v1/quota
 ```
 
-免费额度按输入和输出 token 的成本权重扣减，不按单纯请求次数扣减。匿名设备、
-账户和 IP 同时限流；Provider Key 只存在服务器密钥系统。客户端保留自备 Key
-模式作为离线于 Reflex Cloud 的替代路径。
+当前 alpha 先按请求次数、输入字符和输出字符设置三道日上限，生成请求在发送 Provider
+前预占请求与输入额度，成功后记录输出用量。匿名设备、账户和 IP 同时限流；Provider
+Key 只存在服务器密钥系统。接入真实 Provider 的 token 计量后，再增加 token 成本账本，
+不改变客户端查询契约。客户端保留自备 Key 模式作为离线于 Reflex Cloud 的替代路径。
 
 ## 7. 改进和发布闭环
 
