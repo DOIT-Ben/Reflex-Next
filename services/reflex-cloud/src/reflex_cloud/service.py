@@ -677,8 +677,6 @@ class CloudService:
             and not consent.improvement_data
         ):
             raise CloudServiceError("consent_required", 403)
-        if payload.include_screenshot and not consent.feedback_attachments:
-            raise CloudServiceError("consent_required", 403)
 
         cutoff = utc_now() - timedelta(hours=1)
         recent = session.scalar(

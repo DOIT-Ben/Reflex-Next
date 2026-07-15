@@ -148,20 +148,37 @@ def test_authorized_attachments_are_redacted_and_validated(
     assert invalid.status_code == 422
 
 
-def test_feedback_attachments_require_current_server_consent(
+def test_feedback_prompt_and_result_require_improvement_consent(
     client: TestClient, installation_headers: dict[str, str]
 ):
+    for changes in (
+        {"include_prompt": True, "prompt_text": "private prompt"},
+        {"include_result": True, "result_text": "private result"},
+    ):
+        response = client.post(
+            "/v1/feedback",
+            headers=installation_headers,
+            json=feedback_payload(**changes),
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "consent_required"
+
+
+def test_explicit_feedback_screenshot_is_allowed_without_persistent_attachment_consent(
+    client: TestClient, installation_headers: dict[str, str]
+):
+    screenshot = base64.b64encode(b"\x89PNG\r\n\x1a\nfixture").decode("ascii")
     response = client.post(
         "/v1/feedback",
         headers=installation_headers,
         json=feedback_payload(
-            include_prompt=True,
-            prompt_text="private prompt",
+            include_screenshot=True,
+            screenshot={"media_type": "image/png", "data_base64": screenshot},
         ),
     )
 
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "consent_required"
+    assert response.status_code == 201
 
 
 def test_feedback_rejects_stale_consent_version(
