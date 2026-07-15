@@ -97,6 +97,18 @@ def test_authorized_attachments_are_redacted_and_validated(
     installation_headers: dict[str, str],
     admin_headers: dict[str, str],
 ):
+    consent = client.put(
+        "/v1/privacy/consent",
+        headers=installation_headers,
+        json={
+            "usage_metrics": False,
+            "improvement_data": True,
+            "feedback_attachments": True,
+            "policy_version": "2026-07-14",
+        },
+    )
+    assert consent.status_code == 200
+
     screenshot = base64.b64encode(b"\x89PNG\r\n\x1a\nfixture").decode("ascii")
     create = client.post(
         "/v1/feedback",
@@ -134,6 +146,35 @@ def test_authorized_attachments_are_redacted_and_validated(
         ),
     )
     assert invalid.status_code == 422
+
+
+def test_feedback_attachments_require_current_server_consent(
+    client: TestClient, installation_headers: dict[str, str]
+):
+    response = client.post(
+        "/v1/feedback",
+        headers=installation_headers,
+        json=feedback_payload(
+            include_prompt=True,
+            prompt_text="private prompt",
+        ),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "consent_required"
+
+
+def test_feedback_rejects_stale_consent_version(
+    client: TestClient, installation_headers: dict[str, str]
+):
+    response = client.post(
+        "/v1/feedback",
+        headers=installation_headers,
+        json=feedback_payload(consent_version="2026-07-13"),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "consent_outdated"
 
 
 def test_feedback_rate_limit_is_per_installation(
@@ -181,6 +222,18 @@ def test_deleting_cloud_data_removes_identity_feedback_and_attachment(
     installation_headers: dict[str, str],
     admin_headers: dict[str, str],
 ):
+    consent = client.put(
+        "/v1/privacy/consent",
+        headers=installation_headers,
+        json={
+            "usage_metrics": False,
+            "improvement_data": False,
+            "feedback_attachments": True,
+            "policy_version": "2026-07-14",
+        },
+    )
+    assert consent.status_code == 200
+
     screenshot = base64.b64encode(b"\x89PNG\r\n\x1a\nfixture").decode("ascii")
     feedback_id = client.post(
         "/v1/feedback",

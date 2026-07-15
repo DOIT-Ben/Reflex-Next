@@ -40,6 +40,8 @@ _ERROR_MESSAGES = {
     "installation_concurrency_reached": "当前安装已有请求处理中，请等待完成。",
     "optimize_request_conflict": "该请求正在处理中，请勿重复提交。",
     "feedback_rate_limited": "反馈提交过于频繁，请稍后再试。",
+    "consent_required": "请先在隐私设置中开启对应的数据改进授权。",
+    "consent_outdated": "隐私授权版本已更新，请刷新授权设置后再提交。",
     "admin_unauthorized": "管理身份验证失败。",
 }
 

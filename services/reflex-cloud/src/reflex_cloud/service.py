@@ -584,6 +584,17 @@ class CloudService:
     def submit_feedback(
         self, session: Session, installation: Installation, payload: FeedbackCreate
     ) -> FeedbackItem:
+        consent = self.latest_consent(session, installation.id)
+        if payload.consent_version != consent.policy_version:
+            raise CloudServiceError("consent_outdated", 409)
+        if (
+            (payload.include_prompt or payload.include_result)
+            and not consent.improvement_data
+        ):
+            raise CloudServiceError("consent_required", 403)
+        if payload.include_screenshot and not consent.feedback_attachments:
+            raise CloudServiceError("consent_required", 403)
+
         cutoff = utc_now() - timedelta(hours=1)
         recent = session.scalar(
             select(func.count(FeedbackItem.id)).where(
