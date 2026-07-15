@@ -185,7 +185,7 @@ $steps += New-VerificationStep `
   -WorkDir "." `
   -LockFile "packages\reflex-runtime\uv.lock" `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_history_upgrade_smoke.py", "-q")
+  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "--extra", "builtins", "pytest", "tools\tests\test_history_upgrade_smoke.py", "-q")
 
 $steps += New-VerificationStep `
   -Id "tools:benchmark-contract" `
