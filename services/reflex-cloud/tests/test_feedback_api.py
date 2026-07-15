@@ -3,8 +3,11 @@ from __future__ import annotations
 import base64
 
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from conftest import feedback_payload
+from reflex_cloud.app import create_app
+from reflex_cloud.config import CloudSettings
 
 
 def test_installation_starts_with_all_optional_collection_disabled(
@@ -42,6 +45,68 @@ def test_consent_updates_are_versioned_without_implicit_opt_in(
     assert response.json()["usage_metrics"] is True
     assert response.json()["improvement_data"] is False
     assert response.json()["feedback_attachments"] is True
+
+
+def test_consent_update_rejects_a_client_defined_policy_version(
+    client: TestClient, installation_headers: dict[str, str]
+):
+    response = client.put(
+        "/v1/privacy/consent",
+        headers=installation_headers,
+        json={
+            "usage_metrics": True,
+            "improvement_data": True,
+            "feedback_attachments": True,
+            "policy_version": "client-defined-version",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "consent_outdated"
+    current = client.get("/v1/privacy/consent", headers=installation_headers).json()
+    assert current["policy_version"] == "2026-07-14"
+    assert current["improvement_data"] is False
+
+
+def test_policy_upgrade_resets_optional_consent_to_disabled(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'policy-upgrade.db'}"
+    shared = {
+        "environment": "test",
+        "database_url": database_url,
+        "upload_directory": tmp_path / "uploads",
+        "admin_token": SecretStr("a" * 32),
+        "token_pepper": SecretStr("p" * 32),
+    }
+    with TestClient(
+        create_app(CloudSettings(**shared, privacy_policy_version="2026-07-14"))
+    ) as first:
+        installation = first.post("/v1/installations").json()
+        headers = {"X-Reflex-Installation-Token": installation["token"]}
+        enabled = first.put(
+            "/v1/privacy/consent",
+            headers=headers,
+            json={
+                "usage_metrics": True,
+                "improvement_data": True,
+                "feedback_attachments": True,
+                "policy_version": "2026-07-14",
+            },
+        )
+        assert enabled.status_code == 200
+
+    with TestClient(
+        create_app(CloudSettings(**shared, privacy_policy_version="2026-07-15"))
+    ) as upgraded:
+        current = upgraded.get("/v1/privacy/consent", headers=headers)
+
+    assert current.status_code == 200
+    assert current.json() == {
+        "usage_metrics": False,
+        "improvement_data": False,
+        "feedback_attachments": False,
+        "policy_version": "2026-07-15",
+        "updated_at": current.json()["updated_at"],
+    }
 
 
 def test_feedback_requires_installation_identity(client: TestClient):

@@ -22,6 +22,12 @@ class CloudSettings(BaseSettings):
     upload_directory: Path = Path("./data/uploads")
     admin_token: SecretStr = SecretStr(_DEVELOPMENT_SECRET)
     token_pepper: SecretStr = SecretStr(_DEVELOPMENT_SECRET)
+    privacy_policy_version: str = Field(
+        default="2026-07-14",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9._-]+$",
+    )
     retention_days: int = Field(default=90, ge=1, le=3650)
     feedback_limit_per_hour: int = Field(default=10, ge=1, le=1000)
     free_requests_per_day: int = Field(default=20, ge=1, le=10000)

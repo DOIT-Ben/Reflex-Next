@@ -53,3 +53,9 @@ def test_redaction_removes_common_secret_shapes_without_removing_normal_text():
     assert "not-a-real" not in redacted
     assert "sk-private" not in redacted
     assert redacted.count("<redacted>") == 3
+
+
+def test_privacy_policy_version_is_server_owned_and_path_safe():
+    assert CloudSettings().privacy_policy_version == "2026-07-14"
+    with pytest.raises(ValidationError):
+        CloudSettings(privacy_policy_version="../policy")

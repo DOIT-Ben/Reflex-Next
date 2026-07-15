@@ -65,7 +65,7 @@ class CloudService:
                 usage_metrics=False,
                 improvement_data=False,
                 feedback_attachments=False,
-                policy_version="2026-07-14",
+                policy_version=self.settings.privacy_policy_version,
             )
         )
         session.commit()
@@ -95,17 +95,29 @@ class CloudService:
         )
         if record is None:
             raise CloudServiceError("consent_unavailable", 409)
+        if record.policy_version != self.settings.privacy_policy_version:
+            record = ConsentRecord(
+                installation_id=installation_id,
+                usage_metrics=False,
+                improvement_data=False,
+                feedback_attachments=False,
+                policy_version=self.settings.privacy_policy_version,
+            )
+            session.add(record)
+            session.commit()
         return record
 
     def update_consent(
         self, session: Session, installation: Installation, payload: ConsentUpdate
     ) -> ConsentRecord:
+        if payload.policy_version != self.settings.privacy_policy_version:
+            raise CloudServiceError("consent_outdated", 409)
         record = ConsentRecord(
             installation_id=installation.id,
             usage_metrics=payload.usage_metrics,
             improvement_data=payload.improvement_data,
             feedback_attachments=payload.feedback_attachments,
-            policy_version=payload.policy_version,
+            policy_version=self.settings.privacy_policy_version,
         )
         session.add(record)
         session.commit()
