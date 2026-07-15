@@ -1967,6 +1967,7 @@
             statusMessage={workbenchStatusMessage}
             errorMessage={state.errorMessage ? tr(state.errorMessage) : t(uiLanguage, "noProvider")}
             errorRecoverable={state.errorRecoverable}
+            errorAction={state.errorAction}
             diagnosticId={state.diagnosticId}
             sceneLabel={state.detectedScene ? sceneLabel(state.detectedScene) : state.currentResult?.scene ? sceneLabel(state.currentResult.scene) : null}
             elapsedMs={state.currentResult?.elapsedMs ?? null}
@@ -1985,8 +1986,8 @@
             onTranslate={translatorEnabled && state.currentResult?.output ? openTranslationView : undefined}
             onPreview={markdownPreviewEnabled && state.currentResult?.output ? openMarkdownPreviewView : undefined}
             onCompare={state.currentResult?.sourceText?.trim() ? openResultCompare : undefined}
-            onRetry={state.errorRecoverable ? retryRun : undefined}
-            onOpenSettings={openSettingsView}
+            onRetry={state.errorRecoverable && state.errorAction !== "settings" && state.errorAction !== "edit" && state.errorAction !== "restart" ? retryRun : undefined}
+            onOpenSettings={state.errorAction === "settings" ? openSettingsView : undefined}
             onCopyDiagnosticId={state.diagnosticId ? copyDiagnosticId : undefined}
             onPositiveFeedback={() => beginFeedback("positive")}
             onNegativeFeedback={() => beginFeedback("negative")}

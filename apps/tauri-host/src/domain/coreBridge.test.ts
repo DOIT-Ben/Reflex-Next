@@ -221,6 +221,137 @@ describe("core bridge", () => {
     expect(events[2].data).toMatchObject({ provider: "reflex-cloud", model: "MiniMax-M2.7-highspeed" });
   });
 
+  it("maps only approved Cloud host errors to stable user-facing events", async () => {
+    const cases = [
+      ["请求内容无效，请检查后重试。", "request_invalid", false, "edit"],
+      ["安装身份已失效，请重新打开应用。", "installation_unauthorized", false, "restart"],
+      ["今日免费额度已用完，可明天再试或使用自备 Provider。", "quota_exhausted", false, "settings"],
+      ["输入内容过长，请缩短后重试。", "quota_input_too_large", false, "edit"],
+      ["免费额度服务暂时不可用，请稍后再试。", "quota_unavailable", true, "retry"],
+      ["当前网络请求过于频繁，请稍后再试。", "ip_rate_limited", true, "retry"],
+      ["网络限流服务暂时不可用，请稍后再试。", "ip_quota_unavailable", true, "retry"],
+      ["今日云端请求额度已用完，请明天再试或切换到自备 Provider。", "global_request_budget_exhausted", false, "settings"],
+      ["今日云端服务预算已用完，请稍后再试或切换到自备 Provider。", "global_cost_budget_exhausted", false, "settings"],
+      ["云端计费配置暂不可用，请稍后再试。", "budget_pricing_unconfigured", true, "retry"],
+      ["云端预算服务暂时不可用，请稍后再试。", "budget_unavailable", true, "retry"],
+      ["云端 Provider 尚未配置，请改用自备 Provider 或联系管理员。", "cloud_provider_unconfigured", false, "settings"],
+      ["云端当前繁忙，请稍后重试。", "cloud_capacity_reached", true, "retry"],
+      ["当前安装已有请求处理中，请等待完成。", "installation_concurrency_reached", true, "retry"],
+      ["该请求正在处理中，请勿重复提交。", "optimize_request_conflict", true, "retry"],
+      ["请先在隐私设置中开启对应的数据改进授权。", "consent_required", false, "settings"],
+      ["隐私授权版本已更新，请刷新授权设置后再提交。", "consent_outdated", false, "settings"],
+      ["云端免费额度已用完或请求过于频繁。", "cloud_rate_limited", true, "retry"],
+      ["云端服务返回了无效数据。", "cloud_protocol_invalid", true, "retry"]
+    ] as const;
+
+    for (const [message, code, recoverable, action] of cases) {
+      const host = {
+        invoke: async (command: string) => {
+          if (command === "cloud_optimize") throw message;
+        },
+        listen: async () => () => undefined
+      };
+      const bridge = new RoutedCoreBridge(host, { requestIdFactory: () => `req-${code}` });
+      const events = [];
+
+      for await (const event of bridge.optimize({
+        ...createDraftRequest("云端优化"),
+        provider: "reflex-cloud"
+      })) {
+        events.push(event);
+      }
+
+      expect(events).toEqual([{ type: "error", data: { code, message, recoverable, action } }]);
+    }
+  });
+
+  it("redacts unknown Cloud host failures instead of echoing internal details", async () => {
+    const host = {
+      invoke: async (command: string) => {
+        if (command === "cloud_optimize") {
+          throw new Error("provider failed with api_key=private-value");
+        }
+      },
+      listen: async () => () => undefined
+    };
+    const bridge = new RoutedCoreBridge(host, { requestIdFactory: () => "req-cloud-error" });
+    const events = [];
+
+    for await (const event of bridge.optimize({
+      ...createDraftRequest("云端优化"),
+      provider: "reflex-cloud"
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        data: {
+          code: "cloud_unavailable",
+          message: "云端服务暂不可用，请稍后重试。",
+          recoverable: true,
+          action: "retry"
+        }
+      }
+    ]);
+    expect(JSON.stringify(events)).not.toContain("private-value");
+  });
+
+  it("normalizes Cloud SSE errors and drops untrusted event fields", async () => {
+    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    const host = {
+      invoke: async (command: string) => {
+        if (command === "cloud_optimize") {
+          queueMicrotask(() => {
+            listener?.({
+              payload: {
+                version: 1,
+                request_id: "req-cloud-sse-error",
+                event: {
+                  type: "error",
+                  data: {
+                    code: "provider_service_error",
+                    message: "provider failed api_key=private-value",
+                    recoverable: false,
+                    action: "ignore",
+                    secret: "private-value"
+                  }
+                }
+              }
+            });
+          });
+        }
+      },
+      listen: async (_eventName: string, handler: (event: TauriEvent<CoreEventEnvelope>) => void) => {
+        listener = handler;
+        return () => undefined;
+      }
+    };
+    const bridge = new RoutedCoreBridge(host, { requestIdFactory: () => "req-cloud-sse-error" });
+    const events = [];
+
+    for await (const event of bridge.optimize({
+      ...createDraftRequest("云端优化"),
+      provider: "reflex-cloud"
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        data: {
+          code: "provider_service_error",
+          message: "模型服务暂不可用，请稍后重试。",
+          recoverable: true,
+          action: "retry"
+        }
+      }
+    ]);
+    expect(JSON.stringify(events)).not.toContain("private-value");
+  });
+
   it("sends cancel through Tauri invoke when an active run is aborted", async () => {
     let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
     const invoked: Array<{ command: string; args: unknown }> = [];

@@ -326,6 +326,15 @@
 - 云服务测试：`36 passed`；Python 编译检查通过；运维契约 `reflex_cloud_ops_contract.ps1` 通过；`verify_cloud.ps1 -DryRun -SkipDocker` 通过；前端 `163 passed`、生产构建和 Rust Host `192 passed/3 ignored` 通过；
 - 修复提交 `ec110f6`、`c215822`、`050fc33`、`59e5464`、`4909e64`、`7593ead`、`924d35d` 已推送到 `origin/codex/full-feature-parity`；本记录不关闭 P3-002、P4-002、P4-003、P4-004、P4-005 或 P4-006。
 
+## 2026-07-15 Cloud 错误边界与前端恢复动作加固记录
+
+- Rust Host 对 Cloud 非成功响应只读取有界错误体中的白名单 `error.code`，未知码、超大错误体和服务端原始 `message` 均回退固定安全文案；反馈错误复用有界解析，避免异常响应造成无界读取；
+- Cloud HTTP 错误已覆盖额度、IP 限流、全局预算、Provider 配置、容量、并发、请求冲突和隐私授权等用户可操作分类；Cloud SSE 错误事件按白名单码重建，不再透传 Core/服务端原始字段；
+- 前端将错误转换为稳定的 `code`、中文提示和恢复动作，设置、重试、修改输入和重新打开应用分别呈现，英文界面补齐对应翻译；
+- 针对性 Rust 测试 `6 passed`，前端定向测试 `18 passed`；前端全量 `26` 个测试文件、`166 passed`，Vite `242` 个模块构建通过；Rust Host 全量 `194 passed`、`3 ignored`；
+- 全仓 `cargo fmt --check` 仍受既有 `commands.rs` 及用户修改中的 `config_store.rs` 格式差异影响；本轮只定向格式化 `feedback.rs`，未覆盖用户文件；
+- 长期 12 小时浸泡仍在运行，72 小时正式门禁和 GitHub CI 计费阻塞仍保持未决，不因本轮错误边界修复提前关闭 P3-002 或 P2-006。
+
 ## 集成约定
 
 - 子智能体完成后只进入“待集成”，不得自行宣布阶段完成；

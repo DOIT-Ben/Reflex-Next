@@ -23,6 +23,27 @@ const FEEDBACK_REQUEST_INVALID: &str = "反馈内容不完整，请检查后重�
 const CLOUD_UNAVAILABLE: &str = "云端服务暂不可用，请稍后重试。";
 const CLOUD_RATE_LIMITED: &str = "云端免费额度已用完或请求过于频繁。";
 const CLOUD_PROTOCOL_INVALID: &str = "云端服务返回了无效数据。";
+const CLOUD_REQUEST_INVALID: &str = "请求内容无效，请检查后重试。";
+const CLOUD_INSTALLATION_UNAUTHORIZED: &str = "安装身份已失效，请重新打开应用。";
+const CLOUD_QUOTA_EXHAUSTED: &str = "今日免费额度已用完，可明天再试或使用自备 Provider。";
+const CLOUD_INPUT_TOO_LARGE: &str = "输入内容过长，请缩短后重试。";
+const CLOUD_QUOTA_UNAVAILABLE: &str = "免费额度服务暂时不可用，请稍后再试。";
+const CLOUD_IP_RATE_LIMITED: &str = "当前网络请求过于频繁，请稍后再试。";
+const CLOUD_IP_QUOTA_UNAVAILABLE: &str = "网络限流服务暂时不可用，请稍后再试。";
+const CLOUD_GLOBAL_REQUEST_BUDGET_EXHAUSTED: &str =
+    "今日云端请求额度已用完，请明天再试或切换到自备 Provider。";
+const CLOUD_GLOBAL_COST_BUDGET_EXHAUSTED: &str =
+    "今日云端服务预算已用完，请稍后再试或切换到自备 Provider。";
+const CLOUD_BUDGET_PRICING_UNCONFIGURED: &str = "云端计费配置暂不可用，请稍后再试。";
+const CLOUD_BUDGET_UNAVAILABLE: &str = "云端预算服务暂时不可用，请稍后再试。";
+const CLOUD_PROVIDER_UNCONFIGURED: &str =
+    "云端 Provider 尚未配置，请改用自备 Provider 或联系管理员。";
+const CLOUD_CAPACITY_REACHED: &str = "云端当前繁忙，请稍后重试。";
+const CLOUD_INSTALLATION_CONCURRENCY_REACHED: &str = "当前安装已有请求处理中，请等待完成。";
+const CLOUD_REQUEST_CONFLICT: &str = "该请求正在处理中，请勿重复提交。";
+const CLOUD_CONSENT_REQUIRED: &str = "请先在隐私设置中开启对应的数据改进授权。";
+const CLOUD_CONSENT_OUTDATED: &str = "隐私授权版本已更新，请刷新授权设置后再提交。";
+const MAX_CLOUD_ERROR_BODY: usize = 16 * 1024;
 const MAX_CLOUD_STREAM_BUFFER: usize = 512 * 1024;
 const MAX_CLOUD_STREAM_EVENTS: usize = 50_000;
 
@@ -230,9 +251,7 @@ impl FeedbackCloudState {
             if response.status() != StatusCode::UNAUTHORIZED || attempt == 1 {
                 return Ok(response);
             }
-            self.token_store
-                .delete()
-                .map_err(|_| CLOUD_UNAVAILABLE)?;
+            self.token_store.delete().map_err(|_| CLOUD_UNAVAILABLE)?;
         }
         Err(CLOUD_UNAVAILABLE)
     }
@@ -244,10 +263,10 @@ impl FeedbackCloudState {
     ) -> Result<(), &'static str> {
         validate_cloud_optimize_payload(payload)?;
         let body = serde_json::to_value(payload).map_err(|_| CLOUD_PROTOCOL_INVALID)?;
-        let mut response = self
+        let response = self
             .send_authenticated(Method::POST, "v1/optimize", Some(body))
             .await?;
-        validate_cloud_status(response.status())?;
+        let mut response = require_cloud_success(response).await?;
         let mut buffer = Vec::new();
         let mut event_count = 0_usize;
         while let Some(chunk) = response.chunk().await.map_err(|_| CLOUD_UNAVAILABLE)? {
@@ -277,7 +296,7 @@ impl FeedbackCloudState {
         let response = self
             .send_authenticated(Method::POST, "v1/optimize/cancel", Some(body))
             .await?;
-        validate_cloud_status(response.status())?;
+        let response = require_cloud_success(response).await?;
         response
             .json::<CloudCancelResult>()
             .await
@@ -289,7 +308,7 @@ impl FeedbackCloudState {
         let response = self
             .send_authenticated(Method::GET, "v1/privacy/consent", None)
             .await?;
-        validate_cloud_status(response.status())?;
+        let response = require_cloud_success(response).await?;
         response.json().await.map_err(|_| CLOUD_PROTOCOL_INVALID)
     }
 
@@ -306,7 +325,7 @@ impl FeedbackCloudState {
         let response = self
             .send_authenticated(Method::PUT, "v1/privacy/consent", Some(body))
             .await?;
-        validate_cloud_status(response.status())?;
+        let response = require_cloud_success(response).await?;
         response.json().await.map_err(|_| CLOUD_PROTOCOL_INVALID)
     }
 
@@ -314,7 +333,7 @@ impl FeedbackCloudState {
         let response = self
             .send_authenticated(Method::GET, "v1/quota", None)
             .await?;
-        validate_cloud_status(response.status())?;
+        let response = require_cloud_success(response).await?;
         response.json().await.map_err(|_| CLOUD_PROTOCOL_INVALID)
     }
 
@@ -322,10 +341,8 @@ impl FeedbackCloudState {
         let response = self
             .send_authenticated(Method::DELETE, "v1/privacy/data", None)
             .await?;
-        validate_cloud_status(response.status())?;
-        self.token_store
-            .delete()
-            .map_err(|_| CLOUD_UNAVAILABLE)?;
+        let _response = require_cloud_success(response).await?;
+        self.token_store.delete().map_err(|_| CLOUD_UNAVAILABLE)?;
         Ok(true)
     }
 
@@ -424,23 +441,87 @@ pub async fn cloud_delete_data(
     state.delete_cloud_data().await.map_err(str::to_string)
 }
 
-fn validate_cloud_status(status: StatusCode) -> Result<(), &'static str> {
-    if status.is_success() {
-        Ok(())
-    } else if status == StatusCode::TOO_MANY_REQUESTS {
-        Err(CLOUD_RATE_LIMITED)
+async fn require_cloud_success(
+    response: reqwest::Response,
+) -> Result<reqwest::Response, &'static str> {
+    if response.status().is_success() {
+        Ok(response)
     } else {
-        Err(CLOUD_UNAVAILABLE)
+        Err(cloud_error_from_response(response).await)
     }
+}
+
+async fn cloud_error_from_response(response: reqwest::Response) -> &'static str {
+    let status = response.status();
+    let code = error_code_from_response(response).await;
+    cloud_error_for_status(status, code.as_deref())
+}
+
+fn cloud_error_for_status(status: StatusCode, code: Option<&str>) -> &'static str {
+    match code {
+        Some("request_invalid" | "budget_input_invalid") => CLOUD_REQUEST_INVALID,
+        Some("installation_unauthorized") => CLOUD_INSTALLATION_UNAUTHORIZED,
+        Some("quota_exhausted") => CLOUD_QUOTA_EXHAUSTED,
+        Some("quota_input_too_large") => CLOUD_INPUT_TOO_LARGE,
+        Some("quota_unavailable") => CLOUD_QUOTA_UNAVAILABLE,
+        Some("ip_rate_limited") => CLOUD_IP_RATE_LIMITED,
+        Some("ip_quota_unavailable") => CLOUD_IP_QUOTA_UNAVAILABLE,
+        Some("global_request_budget_exhausted") => CLOUD_GLOBAL_REQUEST_BUDGET_EXHAUSTED,
+        Some("global_cost_budget_exhausted") => CLOUD_GLOBAL_COST_BUDGET_EXHAUSTED,
+        Some("budget_pricing_unconfigured") => CLOUD_BUDGET_PRICING_UNCONFIGURED,
+        Some("budget_unavailable") => CLOUD_BUDGET_UNAVAILABLE,
+        Some("cloud_provider_unconfigured") => CLOUD_PROVIDER_UNCONFIGURED,
+        Some("cloud_capacity_reached") => CLOUD_CAPACITY_REACHED,
+        Some("installation_concurrency_reached") => CLOUD_INSTALLATION_CONCURRENCY_REACHED,
+        Some("optimize_request_conflict") => CLOUD_REQUEST_CONFLICT,
+        Some("consent_required") => CLOUD_CONSENT_REQUIRED,
+        Some("consent_outdated") => CLOUD_CONSENT_OUTDATED,
+        _ if status == StatusCode::TOO_MANY_REQUESTS => CLOUD_RATE_LIMITED,
+        _ if status == StatusCode::PAYLOAD_TOO_LARGE => CLOUD_INPUT_TOO_LARGE,
+        _ if matches!(
+            status,
+            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY
+        ) =>
+        {
+            CLOUD_REQUEST_INVALID
+        }
+        _ if status == StatusCode::UNAUTHORIZED => CLOUD_INSTALLATION_UNAUTHORIZED,
+        _ => CLOUD_UNAVAILABLE,
+    }
+}
+
+async fn error_code_from_response(mut response: reqwest::Response) -> Option<String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_CLOUD_ERROR_BODY as u64)
+    {
+        return None;
+    }
+    let mut body = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if chunk.len() > MAX_CLOUD_ERROR_BODY.saturating_sub(body.len()) {
+                    return None;
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(_) => return None,
+        }
+    }
+    error_code_from_body(&body)
+}
+
+fn error_code_from_body(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<CloudErrorEnvelope>(body)
+        .ok()
+        .map(|payload| payload.error.code)
 }
 
 async fn feedback_error_from_response(response: reqwest::Response) -> &'static str {
     let status = response.status();
-    let code = response
-        .json::<CloudErrorEnvelope>()
-        .await
-        .ok()
-        .map(|payload| payload.error.code);
+    let code = error_code_from_response(response).await;
     feedback_error_for_status(status, code.as_deref())
 }
 
@@ -705,11 +786,11 @@ mod tests {
     use reqwest::StatusCode;
 
     use super::{
-        drain_sse_envelopes, feedback_base_url, feedback_error_for_status,
-        validate_cloud_optimize_payload, validate_feedback_payload, CloudOptimizePayload,
-        FeedbackContext, FeedbackPayload, FEEDBACK_CONSENT_OUTDATED,
-        FEEDBACK_CONSENT_REQUIRED, FEEDBACK_RATE_LIMITED, FEEDBACK_REQUEST_INVALID,
-        FEEDBACK_SUBMIT_FAILED,
+        cloud_error_for_status, drain_sse_envelopes, error_code_from_body, feedback_base_url,
+        feedback_error_for_status, validate_cloud_optimize_payload, validate_feedback_payload,
+        CloudOptimizePayload, FeedbackContext, FeedbackPayload, CLOUD_RATE_LIMITED,
+        CLOUD_UNAVAILABLE, FEEDBACK_CONSENT_OUTDATED, FEEDBACK_CONSENT_REQUIRED,
+        FEEDBACK_RATE_LIMITED, FEEDBACK_REQUEST_INVALID, FEEDBACK_SUBMIT_FAILED,
     };
 
     fn payload() -> FeedbackPayload {
@@ -762,10 +843,7 @@ mod tests {
             FEEDBACK_CONSENT_OUTDATED
         );
         assert_eq!(
-            feedback_error_for_status(
-                StatusCode::TOO_MANY_REQUESTS,
-                Some("feedback_rate_limited")
-            ),
+            feedback_error_for_status(StatusCode::TOO_MANY_REQUESTS, Some("feedback_rate_limited")),
             FEEDBACK_RATE_LIMITED
         );
         assert_eq!(
@@ -775,6 +853,84 @@ mod tests {
         assert_eq!(
             feedback_error_for_status(StatusCode::BAD_GATEWAY, Some("provider-internal-detail")),
             FEEDBACK_SUBMIT_FAILED
+        );
+    }
+
+    #[test]
+    fn cloud_errors_map_only_whitelisted_codes_to_actionable_messages() {
+        let cases = [
+            ("request_invalid", "请求内容无效，请检查后重试。"),
+            (
+                "installation_unauthorized",
+                "安装身份已失效，请重新打开应用。",
+            ),
+            (
+                "quota_exhausted",
+                "今日免费额度已用完，可明天再试或使用自备 Provider。",
+            ),
+            ("quota_input_too_large", "输入内容过长，请缩短后重试。"),
+            ("quota_unavailable", "免费额度服务暂时不可用，请稍后再试。"),
+            ("ip_rate_limited", "当前网络请求过于频繁，请稍后再试。"),
+            (
+                "ip_quota_unavailable",
+                "网络限流服务暂时不可用，请稍后再试。",
+            ),
+            (
+                "global_request_budget_exhausted",
+                "今日云端请求额度已用完，请明天再试或切换到自备 Provider。",
+            ),
+            (
+                "global_cost_budget_exhausted",
+                "今日云端服务预算已用完，请稍后再试或切换到自备 Provider。",
+            ),
+            (
+                "budget_pricing_unconfigured",
+                "云端计费配置暂不可用，请稍后再试。",
+            ),
+            ("budget_unavailable", "云端预算服务暂时不可用，请稍后再试。"),
+            (
+                "cloud_provider_unconfigured",
+                "云端 Provider 尚未配置，请改用自备 Provider 或联系管理员。",
+            ),
+            ("cloud_capacity_reached", "云端当前繁忙，请稍后重试。"),
+            (
+                "installation_concurrency_reached",
+                "当前安装已有请求处理中，请等待完成。",
+            ),
+            (
+                "optimize_request_conflict",
+                "该请求正在处理中，请勿重复提交。",
+            ),
+            (
+                "consent_required",
+                "请先在隐私设置中开启对应的数据改进授权。",
+            ),
+            (
+                "consent_outdated",
+                "隐私授权版本已更新，请刷新授权设置后再提交。",
+            ),
+        ];
+
+        for (code, expected) in cases {
+            assert_eq!(
+                cloud_error_for_status(StatusCode::SERVICE_UNAVAILABLE, Some(code)),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn cloud_errors_never_echo_untrusted_server_messages() {
+        let body =
+            br#"{"error":{"code":"provider-internal-detail","message":"api_key=private-value"}}"#;
+        let code = error_code_from_body(body);
+        let message = cloud_error_for_status(StatusCode::BAD_GATEWAY, code.as_deref());
+
+        assert_eq!(message, CLOUD_UNAVAILABLE);
+        assert!(!message.contains("private-value"));
+        assert_eq!(
+            cloud_error_for_status(StatusCode::TOO_MANY_REQUESTS, None),
+            CLOUD_RATE_LIMITED
         );
     }
 

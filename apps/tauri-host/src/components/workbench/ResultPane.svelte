@@ -14,6 +14,7 @@
   export let statusMessage = "正在连接模型服务…";
   export let errorMessage = "生成失败，请稍后重试。";
   export let errorRecoverable = true;
+  export let errorAction: string | null = null;
   export let inputPreserved = true;
   export let diagnosticId: string | null = null;
   export let sceneLabel: string | null = null;
@@ -41,6 +42,15 @@
   export let onNegativeFeedback: WorkbenchActionHandler | undefined = undefined;
 
   $: hasOutput = output.length > 0;
+  $: errorGuidance = !inputPreserved
+    ? "请重新输入文本后再试。"
+    : errorAction === "settings"
+      ? "你的输入已保留，请调整设置后再试。"
+      : errorAction === "edit"
+        ? "你的输入已保留，请修改内容后再试。"
+        : errorAction === "restart"
+          ? "你的输入已保留，请重新打开应用后再试。"
+          : "你的输入已保留，可稍后重试。";
   $: showOutput = hasOutput && (phase === "running" || phase === "completed" || phase === "cancelled" || phase === "error");
   $: elapsedLabel = elapsedMs === null ? "" : elapsedMs < 1000 ? `${Math.max(0, Math.round(elapsedMs))} ms` : `${(elapsedMs / 1000).toFixed(2)} s`;
   $: confidenceLabel = sceneConfidence === null ? "" : `${Math.round(Math.max(0, Math.min(1, sceneConfidence)) * 100)}%`;
@@ -107,7 +117,7 @@
         <div>
           <h3>生成失败</h3>
           <p class="message">{errorMessage}</p>
-          <p>{inputPreserved ? "你的输入已保留，可重试或调整方案。" : "请重新输入文本后再试。"}</p>
+          <p>{errorGuidance}</p>
         </div>
         <div class="state-actions">
           {#if errorRecoverable && onRetry}

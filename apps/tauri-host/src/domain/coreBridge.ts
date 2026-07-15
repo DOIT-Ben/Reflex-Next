@@ -185,12 +185,7 @@ export class CloudCoreBridge implements CoreBridge {
     } catch (error) {
       yield {
         type: "error",
-        data: {
-          code: "cloud_unavailable",
-          message: cloudErrorMessage(error),
-          recoverable: true,
-          action: "retry"
-        }
+        data: cloudErrorPresentation(error)
       };
     } finally {
       options.signal?.removeEventListener("abort", abort);
@@ -321,13 +316,89 @@ function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function cloudErrorMessage(error: unknown): string {
-  const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
-  if (message.includes("额度") || message.includes("频繁")) return message;
-  return "云端服务暂不可用，请稍后重试。";
+type CloudErrorPresentation = {
+  code: string;
+  message: string;
+  recoverable: boolean;
+  action: "edit" | "restart" | "retry" | "settings";
+};
+
+const DEFAULT_CLOUD_ERROR: CloudErrorPresentation = {
+  code: "cloud_unavailable",
+  message: "云端服务暂不可用，请稍后重试。",
+  recoverable: true,
+  action: "retry"
+};
+
+const CLOUD_ERROR_PRESENTATIONS = new Map<string, CloudErrorPresentation>([
+  ["请求内容无效，请检查后重试。", { code: "request_invalid", message: "请求内容无效，请检查后重试。", recoverable: false, action: "edit" }],
+  ["安装身份已失效，请重新打开应用。", { code: "installation_unauthorized", message: "安装身份已失效，请重新打开应用。", recoverable: false, action: "restart" }],
+  ["今日免费额度已用完，可明天再试或使用自备 Provider。", { code: "quota_exhausted", message: "今日免费额度已用完，可明天再试或使用自备 Provider。", recoverable: false, action: "settings" }],
+  ["输入内容过长，请缩短后重试。", { code: "quota_input_too_large", message: "输入内容过长，请缩短后重试。", recoverable: false, action: "edit" }],
+  ["免费额度服务暂时不可用，请稍后再试。", { code: "quota_unavailable", message: "免费额度服务暂时不可用，请稍后再试。", recoverable: true, action: "retry" }],
+  ["当前网络请求过于频繁，请稍后再试。", { code: "ip_rate_limited", message: "当前网络请求过于频繁，请稍后再试。", recoverable: true, action: "retry" }],
+  ["网络限流服务暂时不可用，请稍后再试。", { code: "ip_quota_unavailable", message: "网络限流服务暂时不可用，请稍后再试。", recoverable: true, action: "retry" }],
+  ["今日云端请求额度已用完，请明天再试或切换到自备 Provider。", { code: "global_request_budget_exhausted", message: "今日云端请求额度已用完，请明天再试或切换到自备 Provider。", recoverable: false, action: "settings" }],
+  ["今日云端服务预算已用完，请稍后再试或切换到自备 Provider。", { code: "global_cost_budget_exhausted", message: "今日云端服务预算已用完，请稍后再试或切换到自备 Provider。", recoverable: false, action: "settings" }],
+  ["云端计费配置暂不可用，请稍后再试。", { code: "budget_pricing_unconfigured", message: "云端计费配置暂不可用，请稍后再试。", recoverable: true, action: "retry" }],
+  ["云端预算服务暂时不可用，请稍后再试。", { code: "budget_unavailable", message: "云端预算服务暂时不可用，请稍后再试。", recoverable: true, action: "retry" }],
+  ["云端 Provider 尚未配置，请改用自备 Provider 或联系管理员。", { code: "cloud_provider_unconfigured", message: "云端 Provider 尚未配置，请改用自备 Provider 或联系管理员。", recoverable: false, action: "settings" }],
+  ["云端当前繁忙，请稍后重试。", { code: "cloud_capacity_reached", message: "云端当前繁忙，请稍后重试。", recoverable: true, action: "retry" }],
+  ["当前安装已有请求处理中，请等待完成。", { code: "installation_concurrency_reached", message: "当前安装已有请求处理中，请等待完成。", recoverable: true, action: "retry" }],
+  ["该请求正在处理中，请勿重复提交。", { code: "optimize_request_conflict", message: "该请求正在处理中，请勿重复提交。", recoverable: true, action: "retry" }],
+  ["请先在隐私设置中开启对应的数据改进授权。", { code: "consent_required", message: "请先在隐私设置中开启对应的数据改进授权。", recoverable: false, action: "settings" }],
+  ["隐私授权版本已更新，请刷新授权设置后再提交。", { code: "consent_outdated", message: "隐私授权版本已更新，请刷新授权设置后再提交。", recoverable: false, action: "settings" }],
+  ["云端免费额度已用完或请求过于频繁。", { code: "cloud_rate_limited", message: "云端免费额度已用完或请求过于频繁。", recoverable: true, action: "retry" }],
+  ["云端服务返回了无效数据。", { code: "cloud_protocol_invalid", message: "云端服务返回了无效数据。", recoverable: true, action: "retry" }]
+]);
+
+const CLOUD_CODE_PRESENTATIONS = new Map<string, CloudErrorPresentation>(
+  [...CLOUD_ERROR_PRESENTATIONS.values()].map((presentation) => [presentation.code, presentation])
+);
+
+const CLOUD_STREAM_ERROR_PRESENTATIONS = new Map<string, CloudErrorPresentation>([
+  ["invalid_input", { code: "invalid_input", message: "输入内容无效，请检查后重试。", recoverable: false, action: "edit" }],
+  ["template_render_error", { code: "template_render_error", message: "生成方案准备失败，请稍后重试。", recoverable: false, action: "retry" }],
+  ["empty_result", { code: "empty_result", message: "模型没有返回可用内容，请重试。", recoverable: true, action: "retry" }],
+  ["output_too_large", { code: "output_too_large", message: "模型输出超过允许长度，请缩短输入后重试。", recoverable: false, action: "edit" }],
+  ["request_timeout", { code: "request_timeout", message: "模型响应超时，请稍后重试。", recoverable: true, action: "retry" }],
+  ["provider_unconfigured", { code: "provider_unconfigured", message: "请先在设置中配置当前 Provider。", recoverable: false, action: "settings" }],
+  ["provider_invalid_response", { code: "provider_invalid_response", message: "模型服务返回了无效结果，请重试。", recoverable: true, action: "retry" }],
+  ["provider_auth_failed", { code: "provider_auth_failed", message: "Provider 认证失败，请检查 API Key。", recoverable: false, action: "settings" }],
+  ["provider_authentication_failed", { code: "provider_authentication_failed", message: "Provider 认证失败，请检查 API Key。", recoverable: false, action: "settings" }],
+  ["provider_rate_limited", { code: "provider_rate_limited", message: "Provider 请求较多，请稍后重试。", recoverable: true, action: "retry" }],
+  ["provider_timeout", { code: "provider_timeout", message: "模型服务响应超时，请重试。", recoverable: true, action: "retry" }],
+  ["provider_network_error", { code: "provider_network_error", message: "模型服务网络连接失败，请重试。", recoverable: true, action: "retry" }],
+  ["provider_service_error", { code: "provider_service_error", message: "模型服务暂不可用，请稍后重试。", recoverable: true, action: "retry" }],
+  ["provider_unavailable", { code: "provider_unavailable", message: "模型服务暂不可用，请稍后重试。", recoverable: true, action: "retry" }],
+  ["provider_empty_response", { code: "provider_empty_response", message: "模型没有返回可用内容，请重试。", recoverable: true, action: "retry" }],
+  ["provider_error", { code: "provider_error", message: "模型服务请求失败，请稍后重试。", recoverable: true, action: "retry" }]
+]);
+
+function cloudErrorPresentation(error: unknown): CloudErrorPresentation {
+  if (isRecord(error) && typeof error.code === "string") {
+    return CLOUD_CODE_PRESENTATIONS.get(error.code) ?? CLOUD_STREAM_ERROR_PRESENTATIONS.get(error.code) ?? DEFAULT_CLOUD_ERROR;
+  }
+  const message =
+    typeof error === "string"
+      ? error
+      : error instanceof Error
+        ? error.message
+        : isRecord(error) && typeof error.message === "string"
+          ? error.message
+          : "";
+  return CLOUD_ERROR_PRESENTATIONS.get(message) ?? DEFAULT_CLOUD_ERROR;
+}
+
+function cloudStreamErrorPresentation(data: Record<string, unknown>): CloudErrorPresentation {
+  const code = typeof data.code === "string" ? data.code : "";
+  return CLOUD_STREAM_ERROR_PRESENTATIONS.get(code) ?? DEFAULT_CLOUD_ERROR;
 }
 
 function presentCloudEvent(event: CoreEvent): CoreEvent {
+  if (event.type === "error") {
+    return { ...event, data: cloudStreamErrorPresentation(event.data) };
+  }
   if (event.type !== "request" && event.type !== "done") return event;
   return {
     ...event,

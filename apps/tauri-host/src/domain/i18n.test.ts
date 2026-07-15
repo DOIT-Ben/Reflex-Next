@@ -21,5 +21,11 @@ describe("ui messages", () => {
     expect(translate("en-US", "导入文件")).toBe("Import file");
     expect(translate("en-US", "已从 {name} 导入 {count} 条提示词", { name: "prompts.csv", count: 2 }))
       .toBe("Imported 2 prompts from prompts.csv");
+    expect(translate("en-US", "请先在隐私设置中开启对应的数据改进授权。"))
+      .toBe("Enable the corresponding data-improvement consent in Privacy settings first.");
+    expect(translate("en-US", "今日云端请求额度已用完，请明天再试或切换到自备 Provider。"))
+      .toBe("Today's cloud request budget is exhausted. Try again tomorrow or switch to your own provider.");
+    expect(translate("en-US", "模型服务网络连接失败，请重试。"))
+      .toBe("The model service could not be reached. Try again.");
   });
 });
