@@ -54,6 +54,7 @@ foreach ($command in @(
     "cloud_get_consent",
     "cloud_update_consent",
     "cloud_get_quota",
+    "cloud_get_quality_release",
     "cloud_delete_data"
   )) {
   Assert-True ($tauriBuild -match [regex]::Escape($command)) "Tauri build.rs must register the $command command for clean permission generation."

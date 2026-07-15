@@ -71,12 +71,23 @@ export type CloudQuota = {
   output_chars_limit: number;
 };
 
+export type CloudQualityRelease = {
+  id: string;
+  release_version: string;
+  template_pack_version: string;
+  title: string;
+  summary: string;
+  source_feedback_count: number;
+  published_at: string;
+};
+
 export type FeedbackBridge = {
   captureWindow(): Promise<FeedbackScreenshot>;
   submit(payload: FeedbackPayload): Promise<FeedbackSubmitted>;
   getConsent(): Promise<CloudConsent>;
   updateConsent(consent: CloudConsent): Promise<CloudConsent>;
   getQuota(): Promise<CloudQuota>;
+  getQualityRelease(): Promise<CloudQualityRelease | null>;
   deleteCloudData(): Promise<boolean>;
 };
 
@@ -112,6 +123,9 @@ export function createFeedbackBridge(host: TauriHostApi): FeedbackBridge {
     },
     async getQuota() {
       return normalizeQuota(await host.invoke("cloud_get_quota"));
+    },
+    async getQualityRelease() {
+      return normalizeQualityRelease(await host.invoke("cloud_get_quality_release"));
     },
     async deleteCloudData() {
       return (await host.invoke("cloud_delete_data")) === true;
@@ -193,6 +207,37 @@ function normalizeQuota(value: unknown): CloudQuota {
     input_chars_limit: raw.input_chars_limit as number,
     output_chars_used: raw.output_chars_used as number,
     output_chars_limit: raw.output_chars_limit as number
+  };
+}
+
+function normalizeQualityRelease(value: unknown): CloudQualityRelease | null {
+  if (value === null) return null;
+  const raw = isRecord(value) ? value : {};
+  if (
+    typeof raw.id !== "string" ||
+    !raw.id ||
+    typeof raw.release_version !== "string" ||
+    !raw.release_version ||
+    typeof raw.template_pack_version !== "string" ||
+    !raw.template_pack_version ||
+    typeof raw.title !== "string" ||
+    !raw.title ||
+    typeof raw.summary !== "string" ||
+    typeof raw.published_at !== "string" ||
+    !raw.published_at ||
+    !Number.isSafeInteger(raw.source_feedback_count) ||
+    (raw.source_feedback_count as number) < 0
+  ) {
+    throw new Error("质量发布信息暂不可用。");
+  }
+  return {
+    id: raw.id,
+    release_version: raw.release_version,
+    template_pack_version: raw.template_pack_version,
+    title: raw.title,
+    summary: raw.summary,
+    source_feedback_count: raw.source_feedback_count as number,
+    published_at: raw.published_at
   };
 }
 

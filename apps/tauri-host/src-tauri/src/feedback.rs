@@ -138,6 +138,17 @@ pub struct CloudQuota {
     output_chars_limit: u64,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CloudQualityRelease {
+    id: String,
+    release_version: String,
+    template_pack_version: String,
+    title: String,
+    summary: String,
+    source_feedback_count: u64,
+    published_at: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct CloudCancelResult {
     cancelled: bool,
@@ -337,6 +348,14 @@ impl FeedbackCloudState {
         response.json().await.map_err(|_| CLOUD_PROTOCOL_INVALID)
     }
 
+    async fn cloud_quality_release(&self) -> Result<Option<CloudQualityRelease>, &'static str> {
+        let response = self
+            .send_authenticated(Method::GET, "v1/quality-release", None)
+            .await?;
+        let response = require_cloud_success(response).await?;
+        response.json().await.map_err(|_| CLOUD_PROTOCOL_INVALID)
+    }
+
     async fn delete_cloud_data(&self) -> Result<bool, &'static str> {
         let response = self
             .send_authenticated(Method::DELETE, "v1/privacy/data", None)
@@ -430,6 +449,15 @@ pub async fn cloud_get_quota(
 ) -> Result<CloudQuota, String> {
     require_main_window(window.label())?;
     state.cloud_quota().await.map_err(str::to_string)
+}
+
+#[tauri::command]
+pub async fn cloud_get_quality_release(
+    window: WebviewWindow,
+    state: State<'_, FeedbackCloudState>,
+) -> Result<Option<CloudQualityRelease>, String> {
+    require_main_window(window.label())?;
+    state.cloud_quality_release().await.map_err(str::to_string)
 }
 
 #[tauri::command]

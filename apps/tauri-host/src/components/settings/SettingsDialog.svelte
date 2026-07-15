@@ -2,7 +2,7 @@
   import Settings2 from "@lucide/svelte/icons/settings-2";
   import X from "@lucide/svelte/icons/x";
   import type { DesktopStatus } from "../../domain/desktopBridge";
-  import type { CloudQuota } from "../../domain/feedbackBridge";
+  import type { CloudQualityRelease, CloudQuota } from "../../domain/feedbackBridge";
   import {
     SETTINGS_PLUGIN_IDS,
     type HostSettingsDraft,
@@ -35,7 +35,9 @@
     semanticStatusText: string;
     diagnosticBusy: boolean;
     diagnosticNotice: string | null;
+    cloudUsageMetricsEnabled: boolean;
     cloudImprovementEnabled: boolean;
+    cloudQualityRelease: CloudQualityRelease | null;
     cloudQuota: CloudQuota | null;
     cloudPrivacyBusy: boolean;
     cloudPrivacyNotice: string | null;
@@ -55,6 +57,7 @@
     onSemanticDownload: () => void;
     onDiagnosticExport: () => void;
     onDiagnosticCancel: () => void;
+    onCloudUsageMetricsChange: (enabled: boolean) => void;
     onCloudImprovementChange: (enabled: boolean) => void;
     onCloudRefresh: () => void;
     onCloudDeleteData: () => void;
@@ -81,7 +84,9 @@
     semanticStatusText,
     diagnosticBusy,
     diagnosticNotice,
+    cloudUsageMetricsEnabled,
     cloudImprovementEnabled,
+    cloudQualityRelease,
     cloudQuota,
     cloudPrivacyBusy,
     cloudPrivacyNotice,
@@ -101,6 +106,7 @@
     onSemanticDownload,
     onDiagnosticExport,
     onDiagnosticCancel,
+    onCloudUsageMetricsChange,
     onCloudImprovementChange,
     onCloudRefresh,
     onCloudDeleteData
@@ -313,6 +319,15 @@
           <h3>{translate("安全与隐私")}</h3>
           <div class="settings-choice-list">
             <label class="settings-toggle">
+              <span><strong>{translate("参与匿名质量分析")}</strong><small>{translate("仅记录质量发布版本与反馈结果，不包含输入或输出正文，默认关闭")}</small></span>
+              <input
+                type="checkbox"
+                checked={cloudUsageMetricsEnabled}
+                disabled={busy || cloudPrivacyBusy}
+                onchange={(event) => onCloudUsageMetricsChange(event.currentTarget.checked)}
+              />
+            </label>
+            <label class="settings-toggle">
               <span><strong>{translate("加入产品改进计划")}</strong><small>{translate("仅在开启后保留脱敏的云端输入和结果，默认关闭")}</small></span>
               <input
                 type="checkbox"
@@ -333,6 +348,11 @@
           <div class="settings-block">
             <span class="field-label">{translate("云端免费额度")}</span>
             <p class="warning-note">{translate(cloudQuotaText())}</p>
+            <p class="warning-note">
+              {cloudQualityRelease
+                ? translate("当前质量发布：{version} · {title}", { version: cloudQualityRelease.release_version, title: cloudQualityRelease.title })
+                : translate("当前尚无已发布的质量改进。")}
+            </p>
             <div class="diagnostic-export-actions">
               <button class="outline" type="button" disabled={cloudPrivacyBusy} onclick={onCloudRefresh}>{translate("刷新额度")}</button>
               <button class="outline danger" type="button" disabled={cloudPrivacyBusy} onclick={onCloudDeleteData}>{translate("删除云端数据")}</button>

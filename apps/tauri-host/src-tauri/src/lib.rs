@@ -109,6 +109,7 @@ pub fn run() {
             feedback::cloud_get_consent,
             feedback::cloud_update_consent,
             feedback::cloud_get_quota,
+            feedback::cloud_get_quality_release,
             feedback::cloud_delete_data
         ])
         .build(tauri::generate_context!())
@@ -196,6 +197,7 @@ mod tests {
             "allow-cloud-get-consent",
             "allow-cloud-update-consent",
             "allow-cloud-get-quota",
+            "allow-cloud-get-quality-release",
             "allow-cloud-delete-data",
         ] {
             assert!(permissions.contains(&permission), "missing {permission}");

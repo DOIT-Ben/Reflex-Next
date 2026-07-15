@@ -35,6 +35,7 @@ fn main() {
             "cloud_get_consent",
             "cloud_update_consent",
             "cloud_get_quota",
+            "cloud_get_quality_release",
             "cloud_delete_data",
         ]),
     ))

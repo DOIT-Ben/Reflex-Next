@@ -111,4 +111,29 @@ describe("feedback bridge", () => {
     await expect(bridge.deleteCloudData()).resolves.toBe(true);
     expect(JSON.stringify(invoke.mock.calls)).not.toContain("installation");
   });
+
+  it("accepts only public quality release metadata", async () => {
+    const release = {
+      id: "release-1",
+      release_version: "1.0.1",
+      template_pack_version: "1.0.0",
+      title: "约束保留改进",
+      summary: "提高明确限制的保留率。",
+      source_feedback_count: 2,
+      published_at: "2026-07-15T13:00:00Z"
+    };
+    const invoke = vi.fn().mockResolvedValue(release);
+    const bridge = createFeedbackBridge(hostWithInvoke(invoke));
+
+    await expect(bridge.getQualityRelease()).resolves.toEqual(release);
+    expect(invoke).toHaveBeenCalledWith("cloud_get_quality_release");
+    expect(JSON.stringify(await bridge.getQualityRelease())).not.toContain("guidance");
+
+    const absent = createFeedbackBridge(hostWithInvoke(vi.fn().mockResolvedValue(null)));
+    await expect(absent.getQualityRelease()).resolves.toBeNull();
+    const malformed = createFeedbackBridge(
+      hostWithInvoke(vi.fn().mockResolvedValue({ release_version: "1.0.1" }))
+    );
+    await expect(malformed.getQualityRelease()).rejects.toThrow("质量发布信息暂不可用");
+  });
 });

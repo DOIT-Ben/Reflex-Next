@@ -34,6 +34,7 @@ const MAIN_CAPABILITY_PERMISSIONS: &[&str] = &[
     "allow-cloud-get-consent",
     "allow-cloud-update-consent",
     "allow-cloud-get-quota",
+    "allow-cloud-get-quality-release",
     "allow-cloud-delete-data",
     "core:event:allow-listen",
     "core:event:allow-unlisten",

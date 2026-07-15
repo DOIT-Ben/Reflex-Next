@@ -33,6 +33,7 @@
     createFeedbackBridge,
     feedbackSubmitErrorMessage,
     type CloudConsent,
+    type CloudQualityRelease,
     type CloudQuota,
     type FeedbackBridge,
     type FeedbackFormValue,
@@ -286,7 +287,9 @@
     policy_version: "2026-07-14",
     updated_at: null
   };
+  let cloudUsageMetricsDraft = false;
   let cloudImprovementDraft = false;
+  let cloudQualityRelease: CloudQualityRelease | null = null;
   let cloudQuota: CloudQuota | null = null;
   let cloudPrivacyBusy = false;
   let cloudPrivacyNotice: string | null = null;
@@ -614,9 +617,15 @@
     cloudPrivacyBusy = true;
     cloudPrivacyNotice = null;
     try {
-      const [consent, quota] = await Promise.all([bridge.getConsent(), bridge.getQuota()]);
+      const [consent, quota, qualityRelease] = await Promise.all([
+        bridge.getConsent(),
+        bridge.getQuota(),
+        bridge.getQualityRelease().catch(() => null)
+      ]);
       cloudConsent = consent;
+      cloudUsageMetricsDraft = consent.usage_metrics;
       cloudImprovementDraft = consent.improvement_data;
+      cloudQualityRelease = qualityRelease;
       cloudQuota = quota;
     } catch {
       cloudPrivacyNotice = "云端隐私设置暂不可用。";
@@ -626,7 +635,10 @@
   }
 
   async function saveCloudPrivacyDraft(): Promise<boolean> {
-    if (cloudImprovementDraft === cloudConsent.improvement_data) return true;
+    if (
+      cloudUsageMetricsDraft === cloudConsent.usage_metrics &&
+      cloudImprovementDraft === cloudConsent.improvement_data
+    ) return true;
     const bridge = feedbackBridge;
     if (!bridge) {
       cloudPrivacyNotice = "当前环境无法保存云端隐私设置。";
@@ -637,15 +649,16 @@
     try {
       cloudConsent = await bridge.updateConsent({
         ...cloudConsent,
+        usage_metrics: cloudUsageMetricsDraft,
         improvement_data: cloudImprovementDraft,
         policy_version: cloudConsent.policy_version
       });
+      cloudUsageMetricsDraft = cloudConsent.usage_metrics;
       cloudImprovementDraft = cloudConsent.improvement_data;
-      cloudPrivacyNotice = cloudConsent.improvement_data
-        ? "改进计划已开启。"
-        : "改进计划已关闭。";
+      cloudPrivacyNotice = "云端隐私设置已更新。";
       return true;
     } catch {
+      cloudUsageMetricsDraft = cloudConsent.usage_metrics;
       cloudImprovementDraft = cloudConsent.improvement_data;
       cloudPrivacyNotice = "云端隐私设置保存失败，请重试。";
       return false;
@@ -678,6 +691,7 @@
         policy_version: "2026-07-14",
         updated_at: null
       };
+      cloudUsageMetricsDraft = false;
       cloudImprovementDraft = false;
       cloudQuota = null;
       cloudPrivacyNotice = "云端数据已删除。";
@@ -2167,7 +2181,9 @@
         semanticStatusText={semanticModelStatusText()}
         diagnosticBusy={diagnosticExportBusy}
         diagnosticNotice={diagnosticExportNotice}
+        cloudUsageMetricsEnabled={cloudUsageMetricsDraft}
         cloudImprovementEnabled={cloudImprovementDraft}
+        {cloudQualityRelease}
         {cloudQuota}
         {cloudPrivacyBusy}
         {cloudPrivacyNotice}
@@ -2187,6 +2203,7 @@
         onSemanticDownload={downloadSemanticModel}
         onDiagnosticExport={exportDiagnosticBundle}
         onDiagnosticCancel={cancelDiagnosticBundleExport}
+        onCloudUsageMetricsChange={(enabled) => (cloudUsageMetricsDraft = enabled)}
         onCloudImprovementChange={(enabled) => (cloudImprovementDraft = enabled)}
         onCloudRefresh={hydrateCloudPrivacy}
         onCloudDeleteData={confirmDeleteCloudData}
