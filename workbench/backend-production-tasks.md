@@ -58,7 +58,7 @@
 | P2-003 | 历史损坏、恢复和轮换中断演练 | 完成 | P0-002 | 7 项灾难恢复夹具、索引/AEAD/记录一致性和幂等恢复通过 |
 | P2-004 | Markdown/CSV/路径/协议攻击性夹具 | 完成 | P0-002 | Markdown、CSV、WebView、历史路径、自定义 CA 路径与私有字段负向夹具通过 |
 | P2-005 | Python/Rust/npm 依赖漏洞和许可证门禁 | 完成 | P0-007 | 全 lockfile 漏洞、许可证 allowlist、稳定退出码和真实审计通过 |
-| P2-006 | 构建产物敏感信息扫描和 SBOM | 完成 | P0-009 | 12 个 CycloneDX 1.5 组件 SBOM、汇总摘要、前端构建物扫描和 CI Artifact 通过 |
+| P2-006 | 构建产物敏感信息扫描和 SBOM | 待验证 | P0-009 | 本机 12 个 CycloneDX 1.5 组件 SBOM 和汇总摘要通过；新提交后的前端构建物扫描与 CI Artifact 待复核 |
 
 ## 阶段 3：性能、资源与可观测性
 
@@ -312,6 +312,7 @@
 - Cloud 许可证元数据按锁定版本逐项复核并纳入精确覆盖，未放宽未知许可证规则；真实全生态依赖审计返回 `Dependency audit passed.`；
 - 真实 SBOM 复核结果：12 个 CycloneDX 1.5 组件、13 个 SBOM 目录文件，所有源锁文件 SHA-256 与组件 SBOM SHA-256 均匹配；
 - 发布工具错误输出改为稳定单行 stderr 类别，长路径 worktree 下的发布候选契约也已通过；当前候选仍需正式签名、匹配标签、干净工作树和最终 RC 审计。
+- 本轮提交 `851c29a`、`d23be08` 已推送到 `origin/codex/full-feature-parity`；新提交对应的 Windows CI、前端 Artifact 和完整发布候选复核仍待完成。
 
 ## 2026-07-15 云端隐私与准入事务加固记录
 
