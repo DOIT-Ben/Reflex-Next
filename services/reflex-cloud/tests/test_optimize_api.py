@@ -196,6 +196,30 @@ def test_budget_reservation_rolls_back_when_ip_limit_rejects(tmp_path) -> None:
         client_context.close()
 
 
+def test_quota_rejection_does_not_consume_ip_admission(tmp_path) -> None:
+    client_context = _client(tmp_path, request_limit=1, ip_limit=2)
+    client, _ = next(client_context)
+    try:
+        _, first_headers = _identity(client)
+        _, second_headers = _identity(client)
+        assert client.post(
+            "/v1/optimize", headers=first_headers, json=_payload("request-quota-1")
+        ).status_code == 200
+
+        blocked = client.post(
+            "/v1/optimize", headers=first_headers, json=_payload("request-quota-2")
+        )
+        assert blocked.status_code == 429
+        assert blocked.json()["error"]["code"] == "quota_exhausted"
+
+        admitted = client.post(
+            "/v1/optimize", headers=second_headers, json=_payload("request-quota-3")
+        )
+        assert admitted.status_code == 200
+    finally:
+        client_context.close()
+
+
 def test_cost_budget_reserves_worst_case_and_settles_actual_cost(tmp_path) -> None:
     client_context = _client(
         tmp_path,

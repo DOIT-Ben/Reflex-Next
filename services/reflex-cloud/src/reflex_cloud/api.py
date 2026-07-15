@@ -124,15 +124,13 @@ def optimize(
     optimizer.claim(payload.request_id, installation.id)
     budget_reservation_id: str | None = None
     try:
-        budget_reservation_id = service.reserve_budget(
-            session, input_chars=len(payload.text)
+        budget_reservation_id = service.reserve_request(
+            session,
+            installation,
+            client_ip=request.client.host if request.client else None,
+            input_chars=len(payload.text),
         )
-        service.reserve_ip_quota(session, request.client.host if request.client else None)
-        service.reserve_quota(session, installation, input_chars=len(payload.text))
     except Exception:
-        if budget_reservation_id is not None:
-            with request.app.state.database.sessions() as budget_session:
-                service.release_budget(budget_session, budget_reservation_id)
         optimizer.release(payload.request_id)
         raise
 

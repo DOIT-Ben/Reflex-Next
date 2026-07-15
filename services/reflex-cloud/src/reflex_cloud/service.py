@@ -129,58 +129,133 @@ class CloudService:
             output_chars_limit=self.settings.free_output_chars_per_day,
         )
 
+    def reserve_request(
+        self,
+        session: Session,
+        installation: Installation,
+        *,
+        client_ip: str | None,
+        input_chars: int,
+    ) -> str | None:
+        """Atomically reserve all admission controls for one optimization."""
+        with self._quota_lock:
+            try:
+                self._reserve_quota_locked(
+                    session, installation, input_chars=input_chars
+                )
+                self._reserve_ip_quota_locked(session, client_ip)
+                reservation_id = self._reserve_budget_locked(
+                    session, input_chars=input_chars
+                )
+                session.commit()
+                return reservation_id
+            except Exception:
+                session.rollback()
+                raise
+
     def reserve_quota(
+        self, session: Session, installation: Installation, *, input_chars: int
+    ) -> DailyUsage:
+        with self._quota_lock:
+            try:
+                usage = self._reserve_quota_locked(
+                    session, installation, input_chars=input_chars
+                )
+                session.commit()
+                return usage
+            except Exception:
+                session.rollback()
+                raise
+
+    def _reserve_quota_locked(
         self, session: Session, installation: Installation, *, input_chars: int
     ) -> DailyUsage:
         if input_chars < 0 or input_chars > self.settings.free_input_chars_per_day:
             raise CloudServiceError("quota_input_too_large", 413)
-        with self._quota_lock:
-            today = date.today()
-            usage = session.scalar(
-                select(DailyUsage)
-                .where(
-                    DailyUsage.installation_id == installation.id,
-                    DailyUsage.usage_date == today,
-                )
-                .with_for_update()
+        today = date.today()
+        usage = session.scalar(
+            select(DailyUsage)
+            .where(
+                DailyUsage.installation_id == installation.id,
+                DailyUsage.usage_date == today,
             )
-            if usage is None:
-                usage = DailyUsage(installation_id=installation.id, usage_date=today)
-                session.add(usage)
-                session.flush()
-            if (
-                usage.request_count >= self.settings.free_requests_per_day
-                or usage.input_chars + input_chars > self.settings.free_input_chars_per_day
-                or usage.output_chars >= self.settings.free_output_chars_per_day
-            ):
-                raise CloudServiceError("quota_exhausted", 429)
-            usage.request_count += 1
-            usage.input_chars += input_chars
-            session.commit()
-            return usage
+            .with_for_update()
+        )
+        if usage is None:
+            candidate = DailyUsage(installation_id=installation.id, usage_date=today)
+            try:
+                with session.begin_nested():
+                    session.add(candidate)
+                    session.flush()
+            except IntegrityError:
+                usage = session.scalar(
+                    select(DailyUsage)
+                    .where(
+                        DailyUsage.installation_id == installation.id,
+                        DailyUsage.usage_date == today,
+                    )
+                    .with_for_update()
+                )
+                if usage is None:
+                    raise CloudServiceError("quota_unavailable", 503) from None
+            else:
+                usage = candidate
+        if (
+            usage.request_count >= self.settings.free_requests_per_day
+            or usage.input_chars + input_chars > self.settings.free_input_chars_per_day
+            or usage.output_chars >= self.settings.free_output_chars_per_day
+        ):
+            raise CloudServiceError("quota_exhausted", 429)
+        usage.request_count += 1
+        usage.input_chars += input_chars
+        return usage
 
     def reserve_ip_quota(self, session: Session, client_ip: str | None) -> None:
+        with self._quota_lock:
+            try:
+                self._reserve_ip_quota_locked(session, client_ip)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
+    def _reserve_ip_quota_locked(
+        self, session: Session, client_ip: str | None
+    ) -> None:
         if not client_ip:
             return
         window = utc_now().replace(minute=0, second=0, microsecond=0)
         ip_hash = token_hash(client_ip, self._pepper)
-        with self._quota_lock:
-            usage = session.scalar(
-                select(HourlyIpUsage)
-                .where(
-                    HourlyIpUsage.ip_hash == ip_hash,
-                    HourlyIpUsage.window_start == window,
-                )
-                .with_for_update()
+        usage = session.scalar(
+            select(HourlyIpUsage)
+            .where(
+                HourlyIpUsage.ip_hash == ip_hash,
+                HourlyIpUsage.window_start == window,
             )
-            if usage is None:
-                usage = HourlyIpUsage(ip_hash=ip_hash, window_start=window)
-                session.add(usage)
-                session.flush()
-            if usage.request_count >= self.settings.free_ip_requests_per_hour:
-                raise CloudServiceError("ip_rate_limited", 429)
-            usage.request_count += 1
-            session.commit()
+            .with_for_update()
+        )
+        if usage is None:
+            candidate = HourlyIpUsage(ip_hash=ip_hash, window_start=window)
+            try:
+                with session.begin_nested():
+                    session.add(candidate)
+                    session.flush()
+            except IntegrityError:
+                usage = session.scalar(
+                    select(HourlyIpUsage)
+                    .where(
+                        HourlyIpUsage.ip_hash == ip_hash,
+                        HourlyIpUsage.window_start == window,
+                    )
+                    .with_for_update()
+                )
+                if usage is None:
+                    raise CloudServiceError("ip_quota_unavailable", 503) from None
+            else:
+                usage = candidate
+        if usage.request_count >= self.settings.free_ip_requests_per_hour:
+            raise CloudServiceError("ip_rate_limited", 429)
+        usage.request_count += 1
 
     def record_output_usage(
         self, session: Session, installation_id: str, *, output_chars: int
@@ -202,6 +277,20 @@ class CloudService:
             session.commit()
 
     def reserve_budget(self, session: Session, *, input_chars: int) -> str | None:
+        with self._quota_lock:
+            try:
+                reservation_id = self._reserve_budget_locked(
+                    session, input_chars=input_chars
+                )
+                session.commit()
+                return reservation_id
+            except Exception:
+                session.rollback()
+                raise
+
+    def _reserve_budget_locked(
+        self, session: Session, *, input_chars: int
+    ) -> str | None:
         if not self._budget_enabled():
             return None
         if input_chars < 0:
@@ -215,35 +304,31 @@ class CloudService:
             input_chars=input_chars,
             output_chars=self.settings.budget_max_output_chars_per_request,
         )
-        with self._quota_lock:
-            ledger = self._get_or_create_budget_ledger(session, today)
-            self._expire_budget_reservations(session, ledger, now)
+        ledger = self._get_or_create_budget_ledger(session, today)
+        self._expire_budget_reservations(session, ledger, now)
 
-            request_limit = self.settings.global_daily_request_limit
-            if request_limit and ledger.admitted_requests + 1 > request_limit:
-                session.rollback()
-                raise CloudServiceError("global_request_budget_exhausted", 429)
+        request_limit = self.settings.global_daily_request_limit
+        if request_limit and ledger.admitted_requests + 1 > request_limit:
+            raise CloudServiceError("global_request_budget_exhausted", 429)
 
-            cost_budget = self.settings.global_daily_cost_budget_microusd
-            committed_cost = ledger.settled_cost_microusd + ledger.reserved_cost_microusd
-            if cost_budget and committed_cost + estimated_cost > cost_budget:
-                session.rollback()
-                raise CloudServiceError("global_cost_budget_exhausted", 429)
+        cost_budget = self.settings.global_daily_cost_budget_microusd
+        committed_cost = ledger.settled_cost_microusd + ledger.reserved_cost_microusd
+        if cost_budget and committed_cost + estimated_cost > cost_budget:
+            raise CloudServiceError("global_cost_budget_exhausted", 429)
 
-            reservation_id = str(uuid4())
-            ledger.admitted_requests += 1
-            ledger.reserved_cost_microusd += estimated_cost
-            session.add(
-                BudgetReservation(
-                    id=reservation_id,
-                    usage_date=today,
-                    estimated_cost_microusd=estimated_cost,
-                    expires_at=now
-                    + timedelta(seconds=self.settings.budget_reservation_ttl_seconds),
-                )
+        reservation_id = str(uuid4())
+        ledger.admitted_requests += 1
+        ledger.reserved_cost_microusd += estimated_cost
+        session.add(
+            BudgetReservation(
+                id=reservation_id,
+                usage_date=today,
+                estimated_cost_microusd=estimated_cost,
+                expires_at=now
+                + timedelta(seconds=self.settings.budget_reservation_ttl_seconds),
             )
-            session.commit()
-            return reservation_id
+        )
+        return reservation_id
 
     def release_budget(self, session: Session, reservation_id: str | None) -> bool:
         if not reservation_id:
