@@ -16,6 +16,10 @@ use crate::cloud_token_store::CloudTokenStore;
 const FEEDBACK_UNAVAILABLE: &str = "反馈服务暂不可用，请稍后重试。";
 const FEEDBACK_CAPTURE_FAILED: &str = "当前窗口截图失败，可以移除截图后继续反馈。";
 const FEEDBACK_SUBMIT_FAILED: &str = "反馈发送失败，请稍后重试。";
+const FEEDBACK_CONSENT_REQUIRED: &str = "请先在设置中开启对应的隐私授权。";
+const FEEDBACK_CONSENT_OUTDATED: &str = "隐私授权已更新，请刷新设置后重新提交。";
+const FEEDBACK_RATE_LIMITED: &str = "反馈提交过于频繁，请稍后再试。";
+const FEEDBACK_REQUEST_INVALID: &str = "反馈内容不完整，请检查后重试。";
 const CLOUD_UNAVAILABLE: &str = "云端服务暂不可用，请稍后重试。";
 const CLOUD_RATE_LIMITED: &str = "云端免费额度已用完或请求过于频繁。";
 const CLOUD_PROTOCOL_INVALID: &str = "云端服务返回了无效数据。";
@@ -118,6 +122,16 @@ struct CloudCancelResult {
     cancelled: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct CloudErrorEnvelope {
+    error: CloudErrorBody,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudErrorBody {
+    code: String,
+}
+
 pub struct FeedbackCloudState {
     client: Client,
     token_store: CloudTokenStore,
@@ -151,7 +165,7 @@ impl FeedbackCloudState {
             response = self.send_feedback(&token, payload).await?;
         }
         if !response.status().is_success() {
-            return Err(FEEDBACK_SUBMIT_FAILED);
+            return Err(feedback_error_from_response(response).await);
         }
         response
             .json::<FeedbackSubmitted>()
@@ -420,6 +434,27 @@ fn validate_cloud_status(status: StatusCode) -> Result<(), &'static str> {
     }
 }
 
+async fn feedback_error_from_response(response: reqwest::Response) -> &'static str {
+    let status = response.status();
+    let code = response
+        .json::<CloudErrorEnvelope>()
+        .await
+        .ok()
+        .map(|payload| payload.error.code);
+    feedback_error_for_status(status, code.as_deref())
+}
+
+fn feedback_error_for_status(status: StatusCode, code: Option<&str>) -> &'static str {
+    match code {
+        Some("consent_required") => FEEDBACK_CONSENT_REQUIRED,
+        Some("consent_outdated") => FEEDBACK_CONSENT_OUTDATED,
+        Some("feedback_rate_limited") => FEEDBACK_RATE_LIMITED,
+        Some("request_invalid") => FEEDBACK_REQUEST_INVALID,
+        _ if status == StatusCode::TOO_MANY_REQUESTS => FEEDBACK_RATE_LIMITED,
+        _ => FEEDBACK_SUBMIT_FAILED,
+    }
+}
+
 fn validate_request_id(request_id: &str) -> Result<(), &'static str> {
     if (8..=128).contains(&request_id.len())
         && request_id
@@ -667,9 +702,14 @@ fn capture_window_png(_: &WebviewWindow) -> Result<Vec<u8>, &'static str> {
 
 #[cfg(test)]
 mod tests {
+    use reqwest::StatusCode;
+
     use super::{
-        drain_sse_envelopes, feedback_base_url, validate_cloud_optimize_payload,
-        validate_feedback_payload, CloudOptimizePayload, FeedbackContext, FeedbackPayload,
+        drain_sse_envelopes, feedback_base_url, feedback_error_for_status,
+        validate_cloud_optimize_payload, validate_feedback_payload, CloudOptimizePayload,
+        FeedbackContext, FeedbackPayload, FEEDBACK_CONSENT_OUTDATED,
+        FEEDBACK_CONSENT_REQUIRED, FEEDBACK_RATE_LIMITED, FEEDBACK_REQUEST_INVALID,
+        FEEDBACK_SUBMIT_FAILED,
     };
 
     fn payload() -> FeedbackPayload {
@@ -709,6 +749,33 @@ mod tests {
 
         assert!(validate_feedback_payload(&invalid).is_err());
         assert!(validate_feedback_payload(&payload()).is_ok());
+    }
+
+    #[test]
+    fn feedback_errors_use_only_actionable_whitelisted_messages() {
+        assert_eq!(
+            feedback_error_for_status(StatusCode::FORBIDDEN, Some("consent_required")),
+            FEEDBACK_CONSENT_REQUIRED
+        );
+        assert_eq!(
+            feedback_error_for_status(StatusCode::CONFLICT, Some("consent_outdated")),
+            FEEDBACK_CONSENT_OUTDATED
+        );
+        assert_eq!(
+            feedback_error_for_status(
+                StatusCode::TOO_MANY_REQUESTS,
+                Some("feedback_rate_limited")
+            ),
+            FEEDBACK_RATE_LIMITED
+        );
+        assert_eq!(
+            feedback_error_for_status(StatusCode::UNPROCESSABLE_ENTITY, Some("request_invalid")),
+            FEEDBACK_REQUEST_INVALID
+        );
+        assert_eq!(
+            feedback_error_for_status(StatusCode::BAD_GATEWAY, Some("provider-internal-detail")),
+            FEEDBACK_SUBMIT_FAILED
+        );
     }
 
     #[test]
