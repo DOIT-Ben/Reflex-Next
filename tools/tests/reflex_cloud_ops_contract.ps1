@@ -35,6 +35,7 @@ $budgetCheck = Read-Utf8 $budgetCheckPath
 Assert-True ($compose -match 'profiles:\s*\["public"\]') "Compose must keep Caddy behind the public profile."
 Assert-True ($compose -match 'REFLEX_CLOUD_GLOBAL_DAILY_REQUEST_LIMIT') "Compose must pass the global request budget."
 Assert-True ($compose -match 'REFLEX_CLOUD_GLOBAL_DAILY_COST_BUDGET_MICROUSD') "Compose must pass the cost budget."
+Assert-True ($compose -match 'REFLEX_CLOUD_PRIVACY_POLICY_VERSION') "Compose must pass the server-owned privacy policy version."
 Assert-True ($compose -match 'read_only:\s*true') "Cloud services must retain a read-only root filesystem."
 Assert-True ($caddy -match 'request_body') "Caddy must enforce an upload request body limit."
 Assert-True ($caddy -match 'flush_interval\s+-1') "Caddy must stream SSE responses without buffering."
