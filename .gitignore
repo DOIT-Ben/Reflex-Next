@@ -16,7 +16,14 @@ src-tauri/target/
 apps/tauri-host/dist/
 apps/tauri-host/src-tauri/resources/runtime/
 tools/.runtime-sidecar-build/
-.superpowers/sdd/task-*-report.md
+/.superpowers/
+
+# Local reference assets and verification output
+/resources/
+/*.tar
+/workbench/*.log
+/workbench/*.png
+/workbench/runtime-soak-*.json
 
 # Local runtime data
 .env

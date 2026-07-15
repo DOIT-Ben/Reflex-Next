@@ -1,118 +1,109 @@
 # Reflex Next
 
-Reflex Next 是 Reflex 的轻量化重做项目。
-
-目标不是继续维护 PyQt 大工作台，而是把提示词优化能力抽成可嵌入、可插件化的本地运行时：
+Reflex Next 是一个本地优先、插件化的 AI 文本工具。它使用 Python Core 承载业务逻辑，
+通过 Python Runtime 和插件连接模型能力，并由 Tauri 2 提供轻量桌面宿主。
 
 ```text
-Python Core + Tauri 轻量桌面宿主 + Python 插件系统
+Python Core + Python Runtime/插件 + Tauri 2/Rust Host + Svelte UI
 ```
 
-## 当前定位
+## 当前状态
 
-- 旧版参考实现：`D:\Desktop\AI\11_Products\prod\Reflex`
-- 新版项目位置：`D:\Desktop\AI\11_Products\lab\Reflex-Next`
-- 当前能力：Core、Runtime Sidecar、MiniMax Provider、内置模板包和 Tauri 小宿主已打通；桌面端支持单实例、托盘、全局快捷键、窗口恢复和剪贴板策略
-- 当前产品切片：支持内容优化与提示词生成、四种主风格、42 个场景的自动或手动选择，以及中英文模板输出
-- 当前边界：离线主链、设置持久化和安全存储已验证；真实 MiniMax 网络请求仍需在应用中手动配置密钥后执行
+- 当前版本：`v0.7.0-alpha.8`；
+- 核心产品功能、桌面主链、增强插件和 Reflex Cloud 闭环已基本实现；
+- 真实 MiniMax 流式请求和取消已有脱敏实机证据；
+- Cloud 反馈、隐私授权、免费额度、质量发布、回滚和 PostgreSQL 多实例并发已有验证；
+- 正式 72 小时浸泡、当前提交的供应链证据、Windows 10 生命周期、真实旧版本升级、
+  代码签名和受控试用仍未完成。
 
-## 核心原则
+本版本适合开发和内部验收，不是可公开推广的正式稳定版。当前任务状态以
+[生产任务账本](workbench/backend-production-tasks.md)为准。
 
-- Core 不依赖 PyQt、Tauri、SQLite、torch 或 sentence-transformers。
-- 桌面宿主只负责托盘、快捷键、剪贴板、小浮窗和设置入口。
-- Provider、模板包、语义识别、历史、翻译、批处理全部插件化。
-- 语义场景自动识别进入核心体验，但重模型实现必须懒加载、可关闭、可替换。
-- 旧 Reflex 只作为行为基线和资产来源，不把旧工作台结构迁入新项目。
+## 主要能力
+
+- 内容优化与结构化提示词生成；
+- 自动或手动场景选择、模式、风格和语言控制；
+- MiniMax 与 OpenAI-compatible Provider 插件；
+- 流式输出、取消、超时、有限重试和稳定错误分类；
+- 历史、翻译、批处理、Markdown 预览和可选语义识别插件；
+- 托盘、全局快捷键、剪贴板、设置和 Windows Credential Manager；
+- 可选 Reflex Cloud：匿名安装身份、免费额度、反馈、截图、改进计划、数据删除和质量发布。
+
+## 架构边界
+
+- `reflex-core` 不依赖 PyQt、Tauri API、SQLite、剪贴板或本地语义模型；
+- Runtime 负责插件发现、配置、取消、并发和 Sidecar 协议；
+- Provider 只处理供应商协议，不决定场景、模板或产品模式；
+- 历史、翻译、批处理、Markdown 和语义模型保持插件化；
+- Tauri Host 只承载桌面能力和事件渲染，不承载业务内核；
+- 密钥、错误、日志、诊断和反馈数据遵守脱敏与分项授权边界。
 
 ## 目录结构
 
 ```text
 apps/
-  tauri-host/                 # Tauri 轻量桌面宿主
+  tauri-host/                    Tauri 2、Rust Host 和 Svelte 前端
 packages/
-  reflex-core/                # 无 UI Python 核心
-  reflex-runtime/             # Python Sidecar 与 Mock Runtime
+  reflex-core/                   无 UI Python 核心
+  reflex-runtime/                Python Sidecar 与插件运行时
 plugins/
-  provider-minimax/           # MiniMax Provider 插件
-  semantic-detector/          # 语义场景识别插件
+  provider-minimax/              MiniMax Provider
+  provider-openai-compatible/    OpenAI-compatible Provider
+  history-sqlite/                本地加密历史
+  translator/                    翻译
+  batch-runner/                  批处理
+  markdown-preview/              Markdown 预览
+  semantic-detector/             可选本地语义识别
 template-packs/
-  builtin/                    # 内置模板包
-docs/
-  ARCHITECTURE.md             # Reflex Next 架构设计
-  MIGRATION.md                # 功能迁移路线
-  CLASSIC-REFERENCE.md        # 旧 Reflex 可迁移资产映射
-  dev-records/                # 开发记录
-workbench/
-  readme.md                   # 当前状态
-  known-pitfalls.md           # 已知坑点
+  builtin/                       内置模板和场景
+services/
+  reflex-cloud/                  可独立部署的 Cloud 服务
+tools/                           验证、构建、浸泡、SBOM 和发布工具
+docs/                            架构、部署、发布和验证文档
+workbench/                       当前任务账本与项目内部状态
 ```
 
-## 先读文档
+## 文档入口
 
-1. [docs\ARCHITECTURE.md](docs/ARCHITECTURE.md)
-2. [docs\MIGRATION.md](docs/MIGRATION.md)
-3. [docs\CLASSIC-REFERENCE.md](docs/CLASSIC-REFERENCE.md)
-4. [workbench\readme.md](workbench/readme.md)
-
-## 用户文档
-
+- [统一文档导航](docs/INDEX.md)
+- [架构设计](docs/ARCHITECTURE.md)
+- [功能迁移](docs/MIGRATION.md)
+- [UI 实现规格](docs/UI-IMPLEMENTATION-SPEC.md)
+- [后端生产化路线图](docs/BACKEND-PRODUCTION-ROADMAP.md)
+- [Cloud Beta 部署说明](docs/CLOUD-BETA-RELEASE.md)
 - [隐私说明](docs/PRIVACY.md)
 - [支持范围](docs/SUPPORT.md)
 - [故障处理](docs/TROUBLESHOOTING.md)
-- [第三方软件声明](docs/THIRD-PARTY-NOTICES.md)
 - [发布恢复指南](docs/RELEASE-RECOVERY.md)
 
-## 最小开发目标
+## 开发与验证
 
-首版只做这条链：
-
-```text
-快捷键呼出 Tauri 小浮窗
-  -> 读取输入或剪贴板
-  -> Reflex Core 自动识别场景
-  -> 内置模板包生成模型请求
-  -> MiniMax Provider 流式返回
-  -> 一键复制结果
-```
-
-以下增强能力不回填主浮窗，将通过独立插件或工作视图接入：
-
-- 大工作台
-- 历史管理
-- 批处理
-- Markdown 预览
-- 按需加载的本地语义模型
-- 主题与国际化设置
-
-## 开发入口
-
-当前已有可验证的 Core、Runtime、MiniMax Provider、前端和 Rust Host。
+查看统一验证步骤：
 
 ```powershell
-cd packages\reflex-core
-uv run --python 3.12 --with pytest pytest -q
-
-cd ..\reflex-runtime
-uv run --python 3.12 --with pytest --with httpx pytest -q
-
-cd ..\..\plugins\provider-minimax
-uv run --python 3.12 --with pytest --with httpx pytest -q
-
-cd ..\..\apps\tauri-host
-$env:VITEST_MAX_WORKERS='2'
-npm test -- --maxWorkers=2
-npm run build
-
-cd src-tauri
-cargo test -- --test-threads=2
-cargo build
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify_backend.ps1 -ListSteps
 ```
 
-桌面开发入口：
+执行低资源验证：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify_backend.ps1 -SkipHeavy
+```
+
+启动桌面开发环境：
 
 ```powershell
 cd apps\tauri-host
 npm run tauri:dev
 ```
 
-密钥只通过应用设置页写入系统安全存储，不放入环境变量、配置文件、终端命令、日志或仓库。
+Reflex Cloud 默认本机地址为 `http://127.0.0.1:8787`。部署和生产环境变量要求见
+[Cloud Beta 部署说明](docs/CLOUD-BETA-RELEASE.md)。Cloud 未部署时，本地 Core 和桌面主链仍可独立运行。
+
+## 安全约束
+
+- 不把 API Key、Token 或账号写入仓库、日志、安装包和诊断包；
+- 客户端自备 Provider 密钥不上传到 Reflex Cloud；
+- 改进计划默认关闭，提示词、结果和截图按授权分别处理；
+- Release 构建拒绝开发 Mock Provider；
+- 正式发布前必须完成代码签名、安装生命周期、回滚和发布物审计。

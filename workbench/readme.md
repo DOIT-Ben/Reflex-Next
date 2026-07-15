@@ -1,98 +1,97 @@
 # Reflex Next 工作台
 
-## 当前状态
+更新时间：2026-07-15
 
-项目已完成架构契约冻结、`reflex-core` 基础主链、Figma Current 主浮窗重构、Tauri/Rust Host 真实 Sidecar 桥接、安全配置与 MiniMax Provider 离线主链、内置模板包和 42 场景接入，以及桌面宿主能力补齐。当前进入插件能力接入阶段。
+本文件提供项目内部交接入口。任务状态和完成证据以
+`workbench/backend-production-tasks.md` 为唯一账本；迁移计划、开发记录和早期阶段计划只用于追溯。
 
-当前主线基线：
+## 当前阶段
 
-- Figma `Current` 区域是唯一 UI 真值；
-- `docs/UI-IMPLEMENTATION-SPEC.md` 已冻结 Figma、Tauri、Sidecar 和 Core 的实现契约；
-- `docs/CODEX-DELIVERY-PLAN.md` 已冻结分阶段交付路线；
-- `packages/reflex-core` 已具备稳定事件协议、请求规范化、取消语义、覆盖 42 场景的 L0 规则、安全纯函数、模板包校验和无网络优化用例；
-- `packages/reflex-runtime` 已具备 NDJSON 命令循环、Provider 插件发现与注册、私有配置、显式开发 Mock、取消和多请求隔离；
-- `plugins/provider-minimax` 已具备 SSE/JSON 解析、取消、有限重试和稳定安全错误映射；
-- `template-packs/builtin` 已具备 42 个场景、5 个风格、系统模板、版本化 manifest 和加载失败回退；
-- `apps/tauri-host` 已具备 Svelte + Vite 小浮窗、`CoreBridge` 抽象、Tauri API 适配层、Figma Current 主状态机、42 场景手动选择、常驻 Python Runtime 管理、设置持久化、Windows 安全凭据、单实例、托盘、全局快捷键、窗口恢复和完整剪贴板策略；
-- Core 自动测试已覆盖导入边界、事件协议、优化用例、安全、场景和 sidecar；
+项目处于 `v0.7.0-alpha.8` 生产化收尾阶段，不是正式稳定版。
+
+- 阶段 0：13/13 完成；
+- 阶段 1：14/14 完成；
+- 阶段 2：10/11 完成，当前提交的构建物扫描和 SBOM Artifact 待复核；
+- 阶段 3：7/8 完成，正式 72 小时浸泡待重新运行；
+- 阶段 4：版本统一完成，Windows 10、真实升级、签名和发布候选仍在处理；
+- 阶段 5：用户文档完成，受控试用、最终回归、签名包和 `v1.0.0` 尚未开始。
+
+## 已实现范围
+
+### Core 与 Runtime
+
+- 稳定请求模型、事件信封、场景路由、模板渲染、安全校验和通用场景回退；
+- 固定并发和等待队列、请求 ID 生命周期、总时限、输出和分片上限；
+- Runtime NDJSON 命令循环、插件发现、取消、Sidecar 崩溃恢复和脱敏诊断；
 - Core 导入不引入 PyQt、PySide、sqlite3、pyperclip、torch、sentence-transformers 或 huggingface-hub。
 
-## 当前可交接资料
+### Provider 与插件
 
-- `README.md`
-- `AGENTS.md`
-- `docs/PRIVACY.md`
-- `docs/THIRD-PARTY-NOTICES.md`
-- `docs/SUPPORT.md`
-- `docs/TROUBLESHOOTING.md`
-- `docs/RELEASE-SIGNING.md`
-- `docs/ARCHITECTURE.md`
-- `docs/MIGRATION.md`
-- `docs/CLASSIC-REFERENCE.md`
-- `docs/UI-IMPLEMENTATION-SPEC.md`
-- `docs/CODEX-DELIVERY-PLAN.md`
-- `docs/dev-records/2026-07-10-core-and-host-bridge.md`
-- `docs/dev-records/2026-07-10-runtime-sidecar.md`
-- `docs/dev-records/2026-07-10-tauri-api-bridge.md`
-- `docs/dev-records/2026-07-10-figma-current-host-state.md`
-- `docs/verification/stage-a-verification.md`
-- `docs/verification/stage-b-verification.md`
-- `docs/verification/stage-c-verification.md`
-- `workbench/known-pitfalls.md`
+- MiniMax 和 OpenAI-compatible Provider 的流式、取消、重试、断流和错误分类；
+- 内置模板包、42 个场景和多风格渲染；
+- 加密历史、翻译、批处理、Markdown 预览和可选语义识别；
+- 历史恢复、轮换、大数据量性能和插件资源浸泡。
 
-## 最近变更摘要
+### 桌面宿主与前端
 
-- 合并 Figma 到 Tauri 的实现契约与 Codex 分阶段交付计划；
-- 完成 `OptimizeRequest` 规范化与稳定事件模型；
-- 完成 `PROTOCOL_VERSION`、`request_id` 和 `EventEnvelope`；
-- 完成可注入的 `OptimizeUseCase`、`CancellationToken` 和确定性测试假件；
-- 完成零依赖 L0 场景规则与 `general` 回退；
-- 完成输入校验、响应清洗、错误脱敏和禁止依赖测试；
-- 完成 Tauri Host 前端原型、事件流渲染、设置页和插件页；
-- 完成前端 `CoreBridge` 抽象和 sidecar NDJSON 解析；
-- 完成 `packages/reflex-runtime` 的 `optimize/cancel/ping/shutdown` 命令循环；
-- 完成 Runtime Mock Provider、进程级测试、多请求隔离和取消测试；
-- 完成前端 Runtime 命令信封创建与 `request_id` 过滤；
-- 完成前端 `TauriRuntimeBridge`、`tauriHostApi` 适配和 `runtime_cancel` 触发；
-- 完成 Figma Current 单浮窗主体验、Host 状态机、调整草稿和剪贴板确认弹窗；
-- 完成窗口内 `Ctrl + Enter` / `Esc` 快捷键解析、取消回到可执行态、Empty/Copied 专门截图验证；
-- 完成 Error Recovery UI、provider 不可用 Mock 错误链、诊断 ID 复制和错误态截图验证；
-- 完成 Settings 覆盖层、默认值保存、API Key 掩码呈现和移动端截图验证；
-- 完成显式读取剪贴板前端桥接、空内容/权限失败提示和桌面/移动端截图验证；
-- 完成 Tauri 2 Rust Host 初始化、命令权限声明和真实系统剪贴板读取；
-- 完成 `runtime_optimize/runtime_cancel` 命令校验、常驻 Sidecar 启动复用、stdout 事件转发和 stderr 排空；
-- 完成 Runtime 异常退出重启、未完成请求安全错误、取消和应用退出清理；
-- 完成 Runtime 启动失败到前端可恢复错误态的转换，不透传底层诊断；
-- 完成 760×540 与 680×480 布局溢出修复和可见状态复验；
-- 完成版本化配置迁移、原子替换、有效备份恢复和非法值回退；
-- 完成 Windows Credential Manager 安全存储，前端只读取配置状态；
-- 完成 Provider 插件白名单发现、失败隔离、注册与显式 Mock；
-- 完成 MiniMax SSE/JSON、取消、有限重试和安全错误分类；
-- 完成设置页持久配置、密钥保存/删除和 Tauri capability 权限闭环；
-- 完成内置模板包 manifest、安全加载、双模式、风格、场景和语言渲染；
-- 完成 48 份模板资产迁移与逐文件哈希核对，未使用或修改当前仓库的未跟踪 `resources\`；
-- 完成 L0 规则识别扩展到 42 个场景，并保持低置信 `general` 回退；
-- 完成 Runtime 固定内置模板包接线和端到端渲染契约测试；
-- 完成 Tauri 调整页 42 场景选择、自动/手动策略联动和语言元数据传递；
-- 完成 Windows 单实例、托盘入口、关闭到托盘、全局快捷键和窗口越界恢复；
-- 完成热键两阶段事务、并发串行化、冲突提示和配置保存失败回滚；
-- 完成启动读取、显式读取、复制、首次替换确认和确认后自动替换剪贴板策略；
-- 完成最近结果内存恢复、插件内置能力视图和桌面动作事件接线；
-- 完成结果原文对比、原文/结果独立复制和历史缺失原文时的安全禁用；
-- 完成批处理 CSV/TXT 文件导入、样例模板下载和导入源变更时的旧任务失效保护；
-- 完成历史结果复用时的原文快照传递，使主窗口可继续准确对比原文与结果；
-- 完成 Python Runtime 单文件 Sidecar、NSIS 安装包、安装启动与卸载生命周期验证，安装包不含密钥；
-- `tools\verify_windows_lifecycle.ps1` 已提供可重复的隔离安装、覆盖安装、卸载、重装和 Sidecar/Host 启动验证；
-- 完成开发端口冲突快速失败，避免 Tauri 静默加载错误本地页面；
-- 当前机器 Rust 工具链可用，Rust 测试和桌面开发构建已执行；
-- 基础主链已通过独立 QA 并合入 `main`。
+- Svelte/Vite 主界面、命令面板、设置、历史、结果对比和反馈面板；
+- Rust Host、常驻 Sidecar、托盘、全局快捷键、窗口恢复和剪贴板策略；
+- Windows Credential Manager、Tauri capability 白名单和外部导航限制；
+- 动态 Provider/模型目录由 Runtime 提供，前端不维护重复真值。
 
-## 下一阶段
+### Reflex Cloud
 
-进入真实 Provider 冒烟与持续体验优化阶段；真实 MiniMax 验证仍作为需要用户在设置页手动录入密钥的独立门禁保留。
+- 匿名安装身份、隐私授权、免费额度和全局预算；
+- 用户反馈、可选截图、提示词改进计划和数据删除；
+- 管理端反馈分析、质量草稿、发布、回滚和曝光归因；
+- PostgreSQL 多实例发布/回滚并发、唯一终态和 schema 清理验证；
+- Cloud 默认本机端口为 `8787`，其他项目的 `8020` 服务不属于 Reflex Cloud。
 
-必须完成：
+## 当前验证基线
 
-1. 由用户在设置页手动配置密钥，完成一次真实 MiniMax 流式请求和取消；
-2. 持续优化历史、结果增强、批处理、语义识别和后续 Provider 的体验；
-3. 每次正式发布前复跑自包含 Sidecar、安装启动与卸载生命周期验证。
+- Python：10 个项目按包隔离验证；Reflex Cloud 最近记录为 48 项通过；
+- Rust/Tauri Host：194 项通过，3 项 Credential Manager 实机测试单独通过；
+- 前端：26 个测试文件、168 项测试通过，Vite 生产构建 242 个模块；
+- Runtime：本机 10,000 次短门禁通过，完成和取消各 5,000 次；
+- Provider：真实 MiniMax 流式成功和取消通过，证据不保存正文或密钥；
+- Cloud：PostgreSQL 16 独立测试库的并发发布和回滚通过；
+- 安全：受版本控制文件敏感扫描、依赖审计、许可证和权限矩阵已有通过记录。
+
+以上证据不能替代仍未完成的正式发布门禁。远端 CI 或旧提交的 Artifact 也不能自动证明当前提交通过。
+
+## 未完成门禁
+
+1. 正式 72 小时且至少 10,000 次请求/取消浸泡；
+2. 当前提交对应的前端构建物扫描和 12 组件 SBOM Artifact 复核；
+3. Windows 10 干净构建、安装、覆盖安装、卸载和重装；
+4. 官方旧版包和真实旧数据的完整升级链路；
+5. 实际代码签名、更新和回滚演练；
+6. 受控试用、全量回归、签名安装包、回滚包和 `v1.0.0`。
+
+## 工作区约束
+
+- 根目录 `resources/` 是本地旧资产参考，不修改、不暂存；
+- 根目录前端设计归档不进入版本库；
+- `workbench` 下截图、日志和浸泡 JSON 是本地运行产物，不提交；
+- `.env`、`.env.local`、凭据和真实用户数据不得读取或提交；
+- 已有用户修改不得回滚、格式化或混入项目整理提交；
+- 不创建正式安装包或 Tag，除非全部门禁满足并获得明确批准。
+
+## 文档入口
+
+- `docs/INDEX.md`：统一文档导航；
+- `docs/ARCHITECTURE.md`：架构边界；
+- `docs/MIGRATION.md`：迁移设计基线；
+- `docs/BACKEND-PRODUCTION-GOAL.md`：长期完成标准；
+- `docs/BACKEND-PRODUCTION-ROADMAP.md`：阶段门禁；
+- `workbench/backend-production-tasks.md`：当前任务和证据；
+- `docs/verification/`：可复核验证记录。
+
+## 后续顺序
+
+1. 在资源条件满足时重新运行正式 72 小时浸泡；
+2. 为当前提交取得构建物扫描和 SBOM 证据；
+3. 在 Windows 10 环境完成构建与安装生命周期；
+4. 使用官方旧版本和脱敏真实数据完成升级验证；
+5. 准备证书并完成签名、更新、回滚和 RC 审计；
+6. 受控试用通过后再生成正式发布物和 `v1.0.0`。
