@@ -46,6 +46,27 @@
       </div>
       <small id="operations-status">输入管理令牌后加载近 7 天数据</small>
     </section>
+    <section class="release-panel" aria-label="质量发布" aria-live="polite">
+      <div class="release-panel-head">
+        <div>
+          <span>当前质量发布</span>
+          <strong id="current-release">未发布</strong>
+        </div>
+        <button id="refresh-releases" type="button">刷新发布</button>
+      </div>
+      <form id="release-form" class="release-form">
+        <label>发布版本<input id="release-version" required placeholder="例如 1.0.1" /></label>
+        <label>模板包版本<input id="template-pack-version" required value="1.0.0" /></label>
+        <label>标题<input id="release-title" required /></label>
+        <label class="release-wide">摘要<input id="release-summary" required /></label>
+        <label class="release-wide">质量指导<textarea id="release-guidance" placeholder="填写经过审核的通用规则；也可以只填写场景指导。"></textarea></label>
+        <label class="release-wide">场景指导（JSON，可选）<textarea id="release-scene-guidance" placeholder='{"general":"优先保留原文中的明确约束。"}'></textarea></label>
+        <label class="release-wide">来源反馈 ID<input id="release-sources" required placeholder="多个 ID 用逗号分隔"></label>
+        <button type="submit">创建发布草稿</button>
+      </form>
+      <div id="release-status" class="release-status">连接后加载质量发布</div>
+      <div id="release-list" class="release-list"></div>
+    </section>
     <main>
       <aside>
         <form id="filters">

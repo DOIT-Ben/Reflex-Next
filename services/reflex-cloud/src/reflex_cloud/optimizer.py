@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
+from typing import Any
 
 from reflex_core import CancellationToken, OptimizeRequest, OptimizeUseCase, TemplatePackResolver
 from reflex_core.scene import RuleSceneDetector
@@ -35,6 +36,40 @@ class _ActiveRequest:
     token: CancellationToken
 
 
+class _QualityReleaseTemplateResolver:
+    def __init__(self, base: TemplatePackResolver) -> None:
+        self._base = base
+
+    def render(self, request: OptimizeRequest, scene: Any) -> Any:
+        rendered = self._base.render(request, scene)
+        if not isinstance(rendered, dict):
+            return rendered
+        messages = rendered.get("messages")
+        if not isinstance(messages, list) or not messages or not isinstance(messages[0], dict):
+            return rendered
+
+        sections: list[str] = []
+        global_guidance = request.metadata.get("quality_global_guidance")
+        if isinstance(global_guidance, str) and 0 < len(global_guidance) <= 4_000:
+            sections.append(global_guidance)
+        scene_guidance = request.metadata.get("quality_scene_guidance")
+        if isinstance(scene_guidance, dict):
+            selected = scene_guidance.get(scene.scene)
+            if isinstance(selected, str) and 0 < len(selected) <= 4_000:
+                sections.append(selected)
+        if not sections:
+            return rendered
+
+        first = dict(messages[0])
+        content = first.get("content")
+        if not isinstance(content, str):
+            return rendered
+        first["content"] = content + "\n\n## 已发布质量改进\n" + "\n".join(sections)
+        updated = dict(rendered)
+        updated["messages"] = [first, *messages[1:]]
+        return updated
+
+
 class CloudOptimizer:
     def __init__(self, settings: CloudSettings, use_case: OptimizeUseCase | None = None) -> None:
         self._settings = settings
@@ -62,7 +97,9 @@ class CloudOptimizer:
         )
         return OptimizeUseCase(
             scene_detector=RuleSceneDetector(),
-            template_resolver=TemplatePackResolver.from_directory(template_root),
+            template_resolver=_QualityReleaseTemplateResolver(
+                TemplatePackResolver.from_directory(template_root)
+            ),
             provider=provider,
         )
 
@@ -95,11 +132,27 @@ class CloudOptimizer:
         active.token.cancel()
         return True
 
-    def stream(self, payload: CloudOptimizeRequest) -> Iterator[dict[str, object]]:
+    def stream(
+        self,
+        payload: CloudOptimizeRequest,
+        *,
+        quality_release_version: str = "",
+        quality_global_guidance: str = "",
+        quality_scene_guidance: dict[str, str] | None = None,
+    ) -> Iterator[dict[str, object]]:
         with self._lock:
             active = self._active.get(payload.request_id)
         if active is None or self._use_case is None:
             raise CloudOptimizerError("optimize_request_unavailable", 409)
+        metadata: dict[str, object] = {"language": payload.language}
+        if quality_release_version:
+            metadata.update(
+                {
+                    "quality_release_version": quality_release_version,
+                    "quality_global_guidance": quality_global_guidance,
+                    "quality_scene_guidance": dict(quality_scene_guidance or {}),
+                }
+            )
         request = OptimizeRequest(
             text=payload.text,
             mode=payload.mode,
@@ -109,7 +162,7 @@ class CloudOptimizer:
             provider="minimax",
             model=self._settings.provider_model,
             stream=True,
-            metadata={"language": payload.language},
+            metadata=metadata,
         )
         try:
             for envelope in self._use_case.optimize(

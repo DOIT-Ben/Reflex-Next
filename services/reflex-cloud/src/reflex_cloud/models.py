@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -130,6 +131,75 @@ class HourlyIpUsage(Base):
     ip_hash: Mapped[str] = mapped_column(String(64), index=True)
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     request_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class QualityRelease(Base):
+    __tablename__ = "quality_releases"
+    __table_args__ = (
+        Index("quality_release_created_idx", "created_at"),
+        Index(
+            "quality_release_one_published_uq",
+            "status",
+            unique=True,
+            sqlite_where=text("status = 'published'"),
+            postgresql_where=text("status = 'published'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    release_version: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    template_pack_version: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(160))
+    summary: Mapped[str] = mapped_column(Text)
+    global_guidance: Mapped[str] = mapped_column(Text, default="")
+    scene_guidance_json: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rolled_back_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class QualityReleaseSource(Base):
+    __tablename__ = "quality_release_sources"
+    __table_args__ = (Index("quality_release_source_feedback_idx", "feedback_id"),)
+
+    release_id: Mapped[str] = mapped_column(
+        ForeignKey("quality_releases.id", ondelete="CASCADE"), primary_key=True
+    )
+    feedback_id: Mapped[str] = mapped_column(
+        ForeignKey("feedback_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class QualityExposure(Base):
+    __tablename__ = "quality_exposures"
+    __table_args__ = (
+        UniqueConstraint(
+            "installation_id",
+            "request_id",
+            name="quality_exposure_installation_request_uq",
+        ),
+        Index("quality_exposure_release_created_idx", "release_version", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    installation_id: Mapped[str] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE"), index=True
+    )
+    quality_release_id: Mapped[str | None] = mapped_column(
+        ForeignKey("quality_releases.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    request_id: Mapped[str] = mapped_column(String(128))
+    release_version: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class ImprovementSample(Base):

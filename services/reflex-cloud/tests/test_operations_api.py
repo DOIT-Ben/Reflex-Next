@@ -44,11 +44,15 @@ def test_ready_health_requires_database_and_provider(tmp_path) -> None:
 
 
 def test_admin_static_assets_use_browser_safe_content_types(client: TestClient) -> None:
+    page = client.get("/admin")
     script = client.get("/admin-static/admin.js")
     stylesheet = client.get("/admin-static/admin.css")
     favicon = client.get("/admin-static/favicon.ico")
 
+    assert page.status_code == 200
+    assert 'id="release-form"' in page.text
     assert script.status_code == 200
     assert script.headers["content-type"].startswith("text/javascript")
+    assert "/v1/admin/quality-releases" in script.text
     assert stylesheet.headers["content-type"].startswith("text/css")
     assert favicon.status_code == 200

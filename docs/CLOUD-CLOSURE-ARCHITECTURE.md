@@ -59,10 +59,15 @@ new -> triaged -> reproduced -> planned -> fixed -> released
 | `POST` | `/v1/optimize` | 使用云端 Provider 代理并以 SSE 返回 Core 事件 |
 | `POST` | `/v1/optimize/cancel` | 取消当前安装身份拥有的生成请求 |
 | `POST` | `/v1/feedback` | 提交满意/不满意反馈 |
+| `GET` | `/v1/quality-release` | 查询当前已发布质量改进的安全元数据 |
 | `GET` | `/v1/admin/feedback` | 管理员查看脱敏反馈列表 |
 | `GET` | `/v1/admin/analytics/feedback` | 按分类和版本查看质量指标 |
 | `GET` | `/v1/admin/feedback/{id}` | 管理员查看单条授权详情 |
 | `PATCH` | `/v1/admin/feedback/{id}` | 更新分类和处理状态 |
+| `POST` | `/v1/admin/quality-releases` | 从已处理反馈创建质量发布草稿 |
+| `GET` | `/v1/admin/quality-releases` | 查询质量发布历史和状态 |
+| `POST` | `/v1/admin/quality-releases/{id}/publish` | 发布经过复核的质量指导 |
+| `POST` | `/v1/admin/quality-releases/{id}/rollback` | 回滚当前质量发布并恢复上一版 |
 
 客户端身份使用高熵安装令牌，服务器只保存带 pepper 的 HMAC。管理员接口使用
 独立 Bearer Token。生产环境必须通过 HTTPS，并由反向代理限制请求体和速率。
@@ -88,3 +93,24 @@ GET  /v1/quota
 提示词/结果才能进入质量数据集，并保留来源、授权版本和删除传播标识。模板或
 模型策略变更必须记录版本，通过同场景负反馈率、完成率、首包时间和重试率做
 前后对比，不能直接把原始用户数据写入测试或训练资产。
+
+## 8. 质量发布闭环
+
+质量改进以独立发布对象管理，状态为：
+
+```text
+draft -> published -> superseded
+                    `-> rolled_back
+```
+
+- 草稿必须关联至少一条来源反馈；发布时服务端再次确认全部来源已处于 `fixed` 或 `released`；
+- 标题、摘要、通用指导和场景指导在入库前执行长度、结构和敏感信息校验；
+- 同一时刻只允许一个 `published` 版本，发布和回滚使用事务、数据库行锁及唯一索引保护；
+- 发布后，Cloud 优化请求只注入人工整理的指导，不把来源反馈正文、截图或联系方式写入模型请求；
+- 客户端只能读取版本、标题、摘要、模板包版本、来源数量和发布时间，不能读取内部指导或来源反馈 ID；
+- 只有用户开启“匿名质量分析”后，服务端才记录安装身份、请求 ID 与质量发布版本的关联；记录不包含输入或输出正文；
+- 质量分析按反馈请求 ID 关联 `baseline` 或具体质量发布版本，未授权安装不进入该维度；
+- 删除云端数据会级联删除安装身份对应的质量曝光和来源关联；已人工整理并发布的非个人化质量规则不自动删除，但不再保留已删除反馈的来源关联。
+
+质量发布回滚只切换服务器端指导版本，不修改客户端安装包、模板包文件或历史数据。
+正式多实例部署仍需使用真实 PostgreSQL 完成并发发布、回滚和故障恢复演练。

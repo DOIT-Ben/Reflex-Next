@@ -1,4 +1,4 @@
-const state = { token: "", selectedId: "", items: [] };
+const state = { token: "", selectedId: "", items: [], releases: [] };
 const list = document.querySelector("#feedback-list");
 const detail = document.querySelector("#detail");
 const summary = document.querySelector("#summary");
@@ -12,17 +12,80 @@ const qualityNegative = document.querySelector("#quality-negative");
 const qualityVersion = document.querySelector("#quality-version");
 const usageBudget = document.querySelector("#usage-budget");
 const operationsStatus = document.querySelector("#operations-status");
+const currentRelease = document.querySelector("#current-release");
+const releaseList = document.querySelector("#release-list");
+const releaseStatus = document.querySelector("#release-status");
+const releaseForm = document.querySelector("#release-form");
+const releaseVersion = document.querySelector("#release-version");
+const templatePackVersion = document.querySelector("#template-pack-version");
+const releaseTitle = document.querySelector("#release-title");
+const releaseSummary = document.querySelector("#release-summary");
+const releaseGuidance = document.querySelector("#release-guidance");
+const releaseSceneGuidance = document.querySelector("#release-scene-guidance");
+const releaseSources = document.querySelector("#release-sources");
+const releaseSubmit = releaseForm.querySelector("button[type=submit]");
 
 document.querySelector("#auth-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   state.token = tokenInput.value;
   tokenInput.value = "";
-  await Promise.all([loadFeedback(), loadOperations()]);
+  await Promise.all([loadFeedback(), loadOperations(), loadReleases()]);
 });
 
 document.querySelector("#filters").addEventListener("submit", async (event) => {
   event.preventDefault();
   await loadFeedback();
+});
+
+document.querySelector("#refresh-releases").addEventListener("click", () => {
+  void loadReleases();
+});
+
+releaseForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.token) return;
+  const sourceIds = releaseSources.value
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  let sceneGuidance = {};
+  try {
+    const rawSceneGuidance = releaseSceneGuidance.value.trim();
+    if (rawSceneGuidance) {
+      const parsed = JSON.parse(rawSceneGuidance);
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+        throw new Error("场景指导必须是 JSON 对象。");
+      }
+      for (const [scene, guidance] of Object.entries(parsed)) {
+        if (!scene.trim() || typeof guidance !== "string" || !guidance.trim()) {
+          throw new Error("场景指导的键和值都必须是非空文本。");
+        }
+      }
+      sceneGuidance = parsed;
+    }
+    if (!releaseGuidance.value.trim() && !Object.keys(sceneGuidance).length) {
+      throw new Error("请至少填写通用质量指导或一条场景指导。");
+    }
+    releaseSubmit.disabled = true;
+    await request("/v1/admin/quality-releases", {
+      method: "POST",
+      body: JSON.stringify({
+        release_version: releaseVersion.value.trim(),
+        template_pack_version: templatePackVersion.value.trim(),
+        title: releaseTitle.value.trim(),
+        summary: releaseSummary.value.trim(),
+        global_guidance: releaseGuidance.value.trim(),
+        scene_guidance: sceneGuidance,
+        source_feedback_ids: sourceIds
+      })
+    });
+    releaseStatus.textContent = "发布草稿已创建，请确认来源反馈均已修复后再发布。";
+    await loadReleases();
+  } catch (error) {
+    releaseStatus.textContent = error.message;
+  } finally {
+    releaseSubmit.disabled = false;
+  }
 });
 
 async function request(path, options = {}) {
@@ -34,7 +97,17 @@ async function request(path, options = {}) {
       ...(options.headers || {})
     }
   });
-  if (!response.ok) throw new Error(`请求失败 (${response.status})`);
+  if (!response.ok) {
+    const raw = await response.text();
+    let message = "";
+    try {
+      const payload = JSON.parse(raw);
+      message = payload?.error?.message || "";
+    } catch {
+      // The server may return an HTML or empty error body.
+    }
+    throw new Error(message || `请求失败 (${response.status})`);
+  }
   return response;
 }
 
@@ -74,7 +147,7 @@ async function loadOperations() {
     qualityNegative.textContent = quality.total
       ? `${(quality.negative_rate * 100).toFixed(1)}%`
       : "-";
-    qualityVersion.textContent = versionQualityText(quality.by_version);
+    qualityVersion.textContent = versionQualityText(quality.by_quality_release, quality.by_version);
     usageBudget.textContent = formatBudget(usage);
     operationsStatus.textContent = `${usage.from_date} 至 ${usage.to_date} · 价格版本 ${usage.pricing_version}`;
   } catch (error) {
@@ -85,6 +158,72 @@ async function loadOperations() {
     qualityNegative.textContent = "-";
     qualityVersion.textContent = "加载失败";
     usageBudget.textContent = "加载失败";
+  }
+}
+
+async function loadReleases() {
+  if (!state.token) return;
+  try {
+    const response = await request("/v1/admin/quality-releases");
+    const payload = await response.json();
+    state.releases = payload.items || [];
+    const active = state.releases.find((item) => item.status === "published");
+    currentRelease.textContent = active
+      ? `${active.release_version} · ${active.title}`
+      : "未发布";
+    releaseStatus.textContent = `${payload.total} 个质量发布`;
+    renderReleases();
+  } catch (error) {
+    currentRelease.textContent = "加载失败";
+    releaseStatus.textContent = error.message;
+    releaseList.replaceChildren(messageElement(error.message, "error"));
+  }
+}
+
+function renderReleases() {
+  releaseList.replaceChildren();
+  if (!state.releases.length) {
+    releaseList.append(messageElement("暂无质量发布", "empty"));
+    return;
+  }
+  for (const release of state.releases) {
+    const row = document.createElement("div");
+    row.className = "release-row";
+    const info = document.createElement("div");
+    info.append(
+      text(`${release.release_version} · ${release.title}`, "strong"),
+      text(`${releaseStatusLabel(release.status)} · 来源 ${release.source_feedback_count} 条`, "small"),
+      text(release.summary, "p")
+    );
+    row.append(info);
+    if (release.status === "draft") {
+      const publish = document.createElement("button");
+      publish.type = "button";
+      publish.textContent = "发布";
+      publish.addEventListener("click", () => void changeReleaseState(release.id, "publish"));
+      row.append(publish);
+    } else if (release.status === "published") {
+      const rollback = document.createElement("button");
+      rollback.type = "button";
+      rollback.className = "danger";
+      rollback.textContent = "回滚";
+      rollback.addEventListener("click", () => void changeReleaseState(release.id, "rollback"));
+      row.append(rollback);
+    }
+    releaseList.append(row);
+  }
+}
+
+async function changeReleaseState(id, action) {
+  const question = action === "rollback"
+    ? "确定回滚这个质量发布吗？回滚后将恢复上一版（如有）。"
+    : "确定发布这个质量改进吗？发布后会影响云端请求。";
+  if (!window.confirm(question)) return;
+  try {
+    await request(`/v1/admin/quality-releases/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+    await Promise.all([loadReleases(), loadFeedback()]);
+  } catch (error) {
+    releaseStatus.textContent = error.message;
   }
 }
 
@@ -136,13 +275,29 @@ function renderDetail(item) {
     status.append(option);
   }
   status.addEventListener("change", () => updateStatus(item.id, status.value));
-  head.append(title, status);
+  const addSource = document.createElement("button");
+  addSource.type = "button";
+  addSource.className = "outline";
+  addSource.textContent = "加入当前发布";
+  addSource.addEventListener("click", () => addReleaseSource(item.id));
+  head.append(title, addSource, status);
   detail.append(head, metadata(item));
   appendSection("反馈描述", item.message || "未填写");
   appendSection("期望结果", item.expected_output || "未填写");
   if (item.prompt_text) appendSection("授权附加的提示词", item.prompt_text);
   if (item.result_text) appendSection("授权附加的结果", item.result_text);
   if (item.screenshot_url) void appendScreenshot(item.screenshot_url);
+}
+
+function addReleaseSource(id) {
+  const current = releaseSources.value
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!current.includes(id)) current.push(id);
+  releaseSources.value = current.join(", ");
+  releaseStatus.textContent = "已加入来源反馈输入框。";
+  releaseSources.focus();
 }
 
 async function updateStatus(id, status) {
@@ -239,7 +394,15 @@ function formatBudget(usage) {
   return `${requestText} · ${committed} / ${budget}${usage.budget_exceeded ? " · 已超限" : ""}`;
 }
 
-function versionQualityText(byVersion) {
+function versionQualityText(byRelease, byVersion) {
+  const releases = Object.entries(byRelease || {}).sort(([left], [right]) =>
+    right.localeCompare(left, "zh-CN", { numeric: true })
+  );
+  if (releases.length) {
+    return releases.map(([version, bucket]) =>
+      `${version} · ${(bucket.negative_rate * 100).toFixed(1)}% 负反馈 · ${bucket.total} 条`
+    ).join("；");
+  }
   const versions = Object.entries(byVersion || {}).sort(([left], [right]) =>
     right.localeCompare(left, "zh-CN", { numeric: true })
   );
@@ -258,6 +421,10 @@ function statusLabel(value) {
     released: "已发布",
     rejected: "已拒绝"
   })[value] || value;
+}
+
+function releaseStatusLabel(value) {
+  return ({ draft: "草稿", published: "已发布", superseded: "已替代", rolled_back: "已回滚" })[value] || value;
 }
 
 function categoryLabel(value) {

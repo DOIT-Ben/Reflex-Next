@@ -44,6 +44,13 @@ _ERROR_MESSAGES = {
     "feedback_rate_limited": "反馈提交过于频繁，请稍后再试。",
     "consent_required": "请先在隐私设置中开启对应的数据改进授权。",
     "consent_outdated": "隐私授权版本已更新，请刷新授权设置后再提交。",
+    "quality_release_sensitive_content": "质量发布内容包含敏感信息，请清理后重试。",
+    "quality_release_version_conflict": "该质量发布版本已存在，请使用新版本号。",
+    "quality_release_source_not_found": "部分来源反馈不存在或已删除。",
+    "quality_release_not_found": "质量发布不存在。",
+    "quality_release_sources_not_ready": "来源反馈尚未全部完成修复，暂不能发布。",
+    "quality_release_state_invalid": "当前质量发布状态不允许执行此操作。",
+    "quality_release_publish_conflict": "质量发布发生并发冲突，请刷新后重试。",
     "admin_unauthorized": "管理身份验证失败。",
 }
 

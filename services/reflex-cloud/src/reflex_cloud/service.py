@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from math import ceil
@@ -21,6 +22,9 @@ from .models import (
     HourlyIpUsage,
     ImprovementSample,
     Installation,
+    QualityExposure,
+    QualityRelease,
+    QualityReleaseSource,
     utc_now,
 )
 from .schemas import (
@@ -30,6 +34,7 @@ from .schemas import (
     FeedbackCreate,
     FeedbackUpdate,
     QualityBucket,
+    QualityReleaseCreate,
     QuotaView,
     UsageAnalytics,
     UsageBucket,
@@ -51,6 +56,7 @@ class CloudService:
         self.attachments = attachments
         self._pepper = settings.token_pepper.get_secret_value()
         self._quota_lock = Lock()
+        self._quality_release_lock = Lock()
 
     def create_installation(self, session: Session) -> tuple[Installation, str]:
         token = new_installation_token()
@@ -648,6 +654,256 @@ class CloudService:
         )
         return int(total.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
+    def create_quality_release(
+        self, session: Session, payload: QualityReleaseCreate
+    ) -> QualityRelease:
+        curated_values = (
+            payload.title,
+            payload.summary,
+            payload.global_guidance,
+            *payload.scene_guidance.values(),
+        )
+        if any(redact_text(value) != value for value in curated_values):
+            raise CloudServiceError("quality_release_sensitive_content", 422)
+        if session.scalar(
+            select(QualityRelease.id).where(
+                QualityRelease.release_version == payload.release_version
+            )
+        ):
+            raise CloudServiceError("quality_release_version_conflict", 409)
+
+        source_ids = list(payload.source_feedback_ids)
+        sources = list(
+            session.scalars(select(FeedbackItem).where(FeedbackItem.id.in_(source_ids)))
+        )
+        if {item.id for item in sources} != set(source_ids):
+            raise CloudServiceError("quality_release_source_not_found", 404)
+
+        release = QualityRelease(
+            id=str(uuid4()),
+            release_version=payload.release_version,
+            template_pack_version=payload.template_pack_version,
+            title=payload.title,
+            summary=payload.summary,
+            global_guidance=payload.global_guidance,
+            scene_guidance_json=json.dumps(
+                payload.scene_guidance,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            status="draft",
+        )
+        try:
+            session.add(release)
+            session.flush()
+            session.add_all(
+                QualityReleaseSource(release_id=release.id, feedback_id=feedback_id)
+                for feedback_id in source_ids
+            )
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            raise CloudServiceError("quality_release_version_conflict", 409) from None
+        return release
+
+    def quality_release_detail(
+        self, session: Session, release_id: str
+    ) -> QualityRelease:
+        release = session.get(QualityRelease, release_id)
+        if release is None:
+            raise CloudServiceError("quality_release_not_found", 404)
+        return release
+
+    def _quality_release_for_update(
+        self, session: Session, release_id: str
+    ) -> QualityRelease:
+        release = session.scalar(
+            select(QualityRelease)
+            .where(QualityRelease.id == release_id)
+            .with_for_update()
+        )
+        if release is None:
+            raise CloudServiceError("quality_release_not_found", 404)
+        return release
+
+    def list_quality_releases(
+        self, session: Session, *, limit: int, offset: int
+    ) -> tuple[list[QualityRelease], int]:
+        total = int(session.scalar(select(func.count(QualityRelease.id))) or 0)
+        releases = list(
+            session.scalars(
+                select(QualityRelease)
+                .order_by(QualityRelease.created_at.desc(), QualityRelease.id.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        )
+        return releases, total
+
+    def active_quality_release(self, session: Session) -> QualityRelease | None:
+        return session.scalar(
+            select(QualityRelease)
+            .where(QualityRelease.status == "published")
+            .order_by(QualityRelease.published_at.desc(), QualityRelease.id.desc())
+            .limit(1)
+        )
+
+    def quality_release_source_ids(
+        self, session: Session, release_id: str
+    ) -> list[str]:
+        return list(
+            session.scalars(
+                select(QualityReleaseSource.feedback_id)
+                .where(QualityReleaseSource.release_id == release_id)
+                .order_by(QualityReleaseSource.feedback_id.asc())
+            )
+        )
+
+    def quality_release_source_count(self, session: Session, release_id: str) -> int:
+        return int(
+            session.scalar(
+                select(func.count(QualityReleaseSource.feedback_id)).where(
+                    QualityReleaseSource.release_id == release_id
+                )
+            )
+            or 0
+        )
+
+    @staticmethod
+    def quality_release_scene_guidance(release: QualityRelease) -> dict[str, str]:
+        try:
+            value = json.loads(release.scene_guidance_json)
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(value, dict):
+            return {}
+        return {
+            key: guidance
+            for key, guidance in value.items()
+            if isinstance(key, str) and isinstance(guidance, str)
+        }
+
+    def publish_quality_release(
+        self, session: Session, release_id: str
+    ) -> QualityRelease:
+        try:
+            with self._quality_release_lock:
+                release = self._quality_release_for_update(session, release_id)
+                if release.status != "draft":
+                    raise CloudServiceError("quality_release_state_invalid", 409)
+                source_ids = self.quality_release_source_ids(session, release.id)
+                if not source_ids:
+                    raise CloudServiceError("quality_release_sources_not_ready", 409)
+                sources = list(
+                    session.scalars(
+                        select(FeedbackItem).where(FeedbackItem.id.in_(source_ids))
+                    )
+                )
+                if len(sources) != len(source_ids) or any(
+                    source.status not in {"fixed", "released"} for source in sources
+                ):
+                    raise CloudServiceError("quality_release_sources_not_ready", 409)
+
+                now = utc_now()
+                current = session.scalar(
+                    select(QualityRelease)
+                    .where(QualityRelease.status == "published")
+                    .order_by(
+                        QualityRelease.published_at.desc(), QualityRelease.id.desc()
+                    )
+                    .with_for_update()
+                    .limit(1)
+                )
+                if current is not None:
+                    current.status = "superseded"
+                    current.updated_at = now
+                    session.flush()
+                release.status = "published"
+                release.published_at = now
+                release.rolled_back_at = None
+                release.updated_at = now
+                for source in sources:
+                    source.status = "released"
+                    source.updated_at = now
+                session.commit()
+        except IntegrityError:
+            session.rollback()
+            raise CloudServiceError("quality_release_publish_conflict", 409) from None
+        except Exception:
+            session.rollback()
+            raise
+        return release
+
+    def rollback_quality_release(
+        self, session: Session, release_id: str
+    ) -> QualityRelease | None:
+        try:
+            with self._quality_release_lock:
+                release = self._quality_release_for_update(session, release_id)
+                if release.status != "published":
+                    raise CloudServiceError("quality_release_state_invalid", 409)
+                now = utc_now()
+                release.status = "rolled_back"
+                release.rolled_back_at = now
+                release.updated_at = now
+                session.flush()
+
+                previous = session.scalar(
+                    select(QualityRelease)
+                    .where(QualityRelease.status == "superseded")
+                    .order_by(
+                        QualityRelease.published_at.desc(), QualityRelease.id.desc()
+                    )
+                    .with_for_update()
+                    .limit(1)
+                )
+                if previous is not None:
+                    previous.status = "published"
+                    previous.updated_at = now
+                session.commit()
+        except IntegrityError:
+            session.rollback()
+            raise CloudServiceError("quality_release_publish_conflict", 409) from None
+        except Exception:
+            session.rollback()
+            raise
+        return previous
+
+    def record_quality_exposure(
+        self,
+        session: Session,
+        installation_id: str,
+        request_id: str,
+        release: QualityRelease | None,
+    ) -> bool:
+        try:
+            consent = self.latest_consent(session, installation_id)
+            if not consent.usage_metrics:
+                return False
+            release_version = release.release_version if release else "baseline"
+            existing = session.scalar(
+                select(QualityExposure).where(
+                    QualityExposure.installation_id == installation_id,
+                    QualityExposure.request_id == request_id,
+                )
+            )
+            if existing is not None:
+                return existing.release_version == release_version
+            exposure = QualityExposure(
+                id=str(uuid4()),
+                installation_id=installation_id,
+                quality_release_id=release.id if release else None,
+                request_id=request_id,
+                release_version=release_version,
+            )
+            session.add(exposure)
+            session.commit()
+        except Exception:
+            session.rollback()
+            return False
+        return True
+
     def store_improvement_sample(
         self,
         session: Session,
@@ -771,6 +1027,16 @@ class CloudService:
 
     def feedback_analytics(self, session: Session) -> FeedbackAnalytics:
         items = list(session.scalars(select(FeedbackItem)))
+        exposure_versions = {
+            (installation_id, request_id): release_version
+            for installation_id, request_id, release_version in session.execute(
+                select(
+                    QualityExposure.installation_id,
+                    QualityExposure.request_id,
+                    QualityExposure.release_version,
+                )
+            )
+        }
 
         def bucket(records: list[FeedbackItem]) -> QualityBucket:
             total = len(records)
@@ -786,9 +1052,15 @@ class CloudService:
         overall = bucket(items)
         categories: dict[str, list[FeedbackItem]] = {}
         versions: dict[str, list[FeedbackItem]] = {}
+        quality_releases: dict[str, list[FeedbackItem]] = {}
         for item in items:
             categories.setdefault(item.category, []).append(item)
             versions.setdefault(item.app_version, []).append(item)
+            quality_release = exposure_versions.get(
+                (item.installation_id, item.request_id)
+            )
+            if quality_release:
+                quality_releases.setdefault(quality_release, []).append(item)
         return FeedbackAnalytics(
             total=overall.total,
             negative=overall.negative,
@@ -796,6 +1068,9 @@ class CloudService:
             average_elapsed_ms=overall.average_elapsed_ms,
             by_category={key: bucket(value) for key, value in sorted(categories.items())},
             by_version={key: bucket(value) for key, value in sorted(versions.items())},
+            by_quality_release={
+                key: bucket(value) for key, value in sorted(quality_releases.items())
+            },
         )
 
     def feedback_detail(self, session: Session, feedback_id: str) -> FeedbackItem:

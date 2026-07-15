@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal
 
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 FeedbackSentiment = Literal["positive", "negative"]
 FeedbackCategory = Literal["quality", "bug", "performance", "feature", "other"]
 FeedbackStatus = Literal["new", "triaged", "reproduced", "planned", "fixed", "released", "rejected"]
+QualityReleaseStatus = Literal["draft", "published", "superseded", "rolled_back"]
 OptimizeMode = Literal["content", "prompt"]
 OptimizeStyle = Literal["concise", "balanced", "detailed", "creative", "precise"]
 ScenePolicy = Literal["auto", "manual", "ask"]
@@ -114,6 +116,92 @@ class FeedbackPage(BaseModel):
     total: int
 
 
+class QualityReleaseCreate(BaseModel):
+    release_version: str = Field(
+        min_length=5,
+        max_length=64,
+        pattern=r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$",
+    )
+    template_pack_version: str = Field(
+        min_length=5,
+        max_length=64,
+        pattern=r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$",
+    )
+    title: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=2000)
+    global_guidance: str = Field(default="", max_length=4000)
+    scene_guidance: dict[str, str] = Field(default_factory=dict)
+    source_feedback_ids: list[str] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def normalize_curated_release(self) -> "QualityReleaseCreate":
+        self.title = self.title.strip()
+        self.summary = self.summary.strip()
+        self.global_guidance = self.global_guidance.strip()
+        if not self.title or not self.summary:
+            raise ValueError("release title and summary must not be blank")
+        if len(self.source_feedback_ids) != len(set(self.source_feedback_ids)):
+            raise ValueError("source feedback ids must be unique")
+        if any(
+            not re.fullmatch(r"^[A-Za-z0-9-]{8,64}$", item)
+            for item in self.source_feedback_ids
+        ):
+            raise ValueError("invalid source feedback id")
+        if len(self.scene_guidance) > 32:
+            raise ValueError("too many scene guidance entries")
+        normalized: dict[str, str] = {}
+        total_chars = len(self.global_guidance)
+        for scene, guidance in self.scene_guidance.items():
+            if not re.fullmatch(r"^[a-z0-9][a-z0-9._-]{0,63}$", scene):
+                raise ValueError("invalid scene guidance id")
+            value = guidance.strip()
+            if not value or len(value) > 4000:
+                raise ValueError("invalid scene guidance")
+            total_chars += len(value)
+            normalized[scene] = value
+        if not self.global_guidance and not normalized:
+            raise ValueError("release guidance must not be empty")
+        if total_chars > 20_000:
+            raise ValueError("release guidance is too large")
+        self.scene_guidance = normalized
+        return self
+
+
+class QualityReleasePublic(BaseModel):
+    id: str
+    release_version: str
+    template_pack_version: str
+    title: str
+    summary: str
+    source_feedback_count: int
+    published_at: datetime
+
+
+class QualityReleaseSummary(BaseModel):
+    id: str
+    release_version: str
+    template_pack_version: str
+    title: str
+    summary: str
+    status: QualityReleaseStatus
+    source_feedback_count: int
+    created_at: datetime
+    updated_at: datetime
+    published_at: datetime | None
+    rolled_back_at: datetime | None
+
+
+class QualityReleaseDetail(QualityReleaseSummary):
+    global_guidance: str
+    scene_guidance: dict[str, str]
+    source_feedback_ids: list[str]
+
+
+class QualityReleasePage(BaseModel):
+    items: list[QualityReleaseSummary]
+    total: int
+
+
 class QualityBucket(BaseModel):
     total: int
     negative: int
@@ -128,6 +216,7 @@ class FeedbackAnalytics(BaseModel):
     average_elapsed_ms: float | None
     by_category: dict[str, QualityBucket]
     by_version: dict[str, QualityBucket]
+    by_quality_release: dict[str, QualityBucket]
 
 
 class UsageBucket(BaseModel):
