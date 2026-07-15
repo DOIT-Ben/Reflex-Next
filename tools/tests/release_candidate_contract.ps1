@@ -19,6 +19,7 @@ $version = [System.IO.File]::ReadAllText(
 $components = @(
   [PSCustomObject]@{ Id = "python-reflex-core"; Name = "reflex-core"; Lock = "packages/reflex-core/uv.lock" },
   [PSCustomObject]@{ Id = "python-reflex-runtime"; Name = "reflex-runtime"; Lock = "packages/reflex-runtime/uv.lock" },
+  [PSCustomObject]@{ Id = "python-reflex-cloud"; Name = "reflex-cloud"; Lock = "services/reflex-cloud/uv.lock" },
   [PSCustomObject]@{ Id = "python-batch-runner"; Name = "reflex-batch-runner"; Lock = "plugins/batch-runner/uv.lock" },
   [PSCustomObject]@{ Id = "python-history-sqlite"; Name = "reflex-history-sqlite"; Lock = "plugins/history-sqlite/uv.lock" },
   [PSCustomObject]@{ Id = "python-markdown-preview"; Name = "reflex-markdown-preview"; Lock = "plugins/markdown-preview/uv.lock" },
@@ -47,13 +48,25 @@ function Invoke-Captured {
 
   $stdoutPath = Join-Path $probeRoot ("stdout-" + [guid]::NewGuid().ToString("N") + ".txt")
   $stderrPath = Join-Path $probeRoot ("stderr-" + [guid]::NewGuid().ToString("N") + ".txt")
-  $previous = $ErrorActionPreference
   try {
-    $ErrorActionPreference = "Continue"
-    & $powershell -NoProfile -ExecutionPolicy Bypass -File $Script @Arguments `
-      1> $stdoutPath 2> $stderrPath
+    $processArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Script) + $Arguments
+    $quotedArguments = @($processArguments | ForEach-Object {
+        $value = [string]$_
+        if ($value.Contains('"')) {
+          throw "invalid_contract_process_argument"
+        }
+        if ($value -match '\s') { '"' + $value + '"' } else { $value }
+      })
+    $process = Start-Process `
+      -FilePath $powershell `
+      -ArgumentList ($quotedArguments -join ' ') `
+      -RedirectStandardOutput $stdoutPath `
+      -RedirectStandardError $stderrPath `
+      -WindowStyle Hidden `
+      -Wait `
+      -PassThru
     return [PSCustomObject]@{
-      ExitCode = $LASTEXITCODE
+      ExitCode = $process.ExitCode
       Stdout = if (Test-Path -LiteralPath $stdoutPath) {
         [System.IO.File]::ReadAllText($stdoutPath, [System.Text.Encoding]::UTF8)
       } else { "" }
@@ -63,7 +76,6 @@ function Invoke-Captured {
     }
   }
   finally {
-    $ErrorActionPreference = $previous
     Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
   }
 }
@@ -170,34 +182,34 @@ try {
   Assert-True (
     $created.ExitCode -eq 0
   ) ("A valid unsigned review candidate must be generated: " + $created.Stderr)
-  Assert-True ($created.Stdout -match 'artifacts=3; sbom=11; release_ready=false') "Generator output must report bounded material and readiness."
+  Assert-True ($created.Stdout -match 'artifacts=3; sbom=12; release_ready=false') "Generator output must report bounded material and readiness."
   $manifestPath = Join-Path $output "release-manifest.json"
   Assert-True (Test-Path -LiteralPath $manifestPath -PathType Leaf) "Release manifest must be emitted."
   $manifest = [System.IO.File]::ReadAllText($manifestPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
   Assert-True ([string]$manifest.version -ceq $version) "Manifest version must match VERSION."
   Assert-True (@($manifest.artifacts).Count -eq 3) "Manifest must contain exactly three executable artifacts."
-  Assert-True ([int]$manifest.sbom.component_count -eq 11) "Manifest must contain eleven component BOMs."
+  Assert-True ([int]$manifest.sbom.component_count -eq 12) "Manifest must contain twelve component BOMs."
   Assert-True (-not [bool]$manifest.gates.signatures_valid) "Unsigned fixture artifacts must not be marked signed."
   Assert-True (-not [bool]$manifest.gates.release_ready) "Unsigned review material must not be release-ready."
   Assert-True ((Get-Content -Raw -Encoding UTF8 $manifestPath) -notmatch [regex]::Escape($root)) "Manifest must not leak absolute workspace paths."
-  Assert-True (@(Get-ChildItem -LiteralPath $output -File -Recurse).Count -eq 19) "Candidate must have an exact bounded file set."
+  Assert-True (@(Get-ChildItem -LiteralPath $output -File -Recurse).Count -eq 20) "Candidate must have an exact bounded file set."
 
   $verified = Verify-Candidate -Directory $output
   Assert-True ($verified.ExitCode -eq 0) "Untampered review material must verify."
-  Assert-True ($verified.Stdout -match 'files=19; release_ready=false') "Verifier must report bounded files and readiness."
+  Assert-True ($verified.Stdout -match 'files=20; release_ready=false') "Verifier must report bounded files and readiness."
 
   $ready = Verify-Candidate -Directory $output -ExtraArguments @("-RequireReady")
   Assert-True ($ready.ExitCode -ne 0) "Unsigned material must fail the formal readiness gate."
-  Assert-True ($ready.Stderr -match 'release_not_ready') "Readiness failure must use a stable category."
+  Assert-True ($ready.Stderr.Trim() -ceq 'release_not_ready') "Readiness failure must use one stable stderr category."
 
   $existing = New-Candidate -Destination $output
   Assert-True ($existing.ExitCode -ne 0) "An existing output directory must not be overwritten."
-  Assert-True ($existing.Stderr -match 'output_directory_exists') "Existing-output failure must use a stable category."
+  Assert-True ($existing.Stderr.Trim() -ceq 'output_directory_exists') "Existing-output failure must use one stable stderr category."
 
   $signedOutput = Join-Path $probeRoot "signed-required"
   $signed = New-Candidate -Destination $signedOutput -ExtraArguments @("-RequireSigned")
   Assert-True ($signed.ExitCode -ne 0) "Unsigned artifacts must fail when signatures are required."
-  Assert-True ($signed.Stderr -match 'release_signature_required') "Signature failure must use a stable category."
+  Assert-True ($signed.Stderr.Trim() -ceq 'release_signature_required') "Signature failure must use one stable stderr category."
   Assert-True (-not (Test-Path -LiteralPath $signedOutput)) "Failed generation must not leave a candidate directory."
 
   $tampered = Join-Path $probeRoot "tampered"
@@ -209,7 +221,7 @@ try {
   )
   $tamperResult = Verify-Candidate -Directory $tampered
   Assert-True ($tamperResult.ExitCode -ne 0) "A modified artifact must fail verification."
-  Assert-True ($tamperResult.Stderr -match 'checksum_mismatch') "Tamper failure must use a stable category."
+  Assert-True ($tamperResult.Stderr.Trim() -ceq 'checksum_mismatch') "Tamper failure must use one stable stderr category."
 
   $traversal = Join-Path $probeRoot "traversal"
   Copy-Item -LiteralPath $output -Destination $traversal -Recurse
@@ -223,7 +235,7 @@ try {
   )
   $traversalResult = Verify-Candidate -Directory $traversal
   Assert-True ($traversalResult.ExitCode -ne 0) "A parent traversal path must fail verification."
-  Assert-True ($traversalResult.Stderr -match 'invalid_artifact_path') "Traversal failure must use a stable category."
+  Assert-True ($traversalResult.Stderr.Trim() -ceq 'invalid_artifact_path') "Traversal failure must use one stable stderr category."
 
   $secret = "gh" + "p_" + ("S" * 36)
   [System.IO.File]::WriteAllText(

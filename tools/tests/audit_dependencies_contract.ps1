@@ -58,6 +58,31 @@ Assert-True (@($policy.licenses.allowed_expressions.python).Count -gt 0) "Python
 Assert-True (@($policy.licenses.allowed_expressions.rust).Count -gt 0) "Rust licenses require an explicit allowlist."
 Assert-True (@($policy.licenses.allowed_expressions.npm).Count -gt 0) "npm licenses require an explicit allowlist."
 Assert-True (@($policy.rust_advisory_exceptions).Count -gt 0) "Rust advisory exceptions must be explicit and reviewable."
+Assert-True (@($policy.python_projects).Count -eq 10) "Dependency audit must cover every Python product and cloud project."
+Assert-True (@($policy.python_projects) -contains "services/reflex-cloud") "Dependency audit must include Reflex Cloud."
+$expectedPythonLicenseOverrides = @{
+  "annotated-doc@0.0.4" = "MIT"
+  "annotated-types@0.7.0" = "MIT"
+  "anyio@4.14.2" = "MIT"
+  "click@8.4.2" = "BSD-3-Clause"
+  "colorama@0.4.6" = "BSD-3-Clause"
+  "fastapi@0.139.0" = "MIT"
+  "greenlet@3.5.3" = "MIT AND PSF-2.0"
+  "httptools@0.8.0" = "MIT"
+  "pydantic@2.13.4" = "MIT"
+  "pydantic-settings@2.14.2" = "MIT"
+  "pydantic_core@2.46.4" = "MIT"
+  "starlette@1.3.1" = "BSD-3-Clause"
+  "typing-inspection@0.4.2" = "MIT"
+  "uvicorn@0.51.0" = "BSD-3-Clause"
+  "websockets@16.1" = "BSD-3-Clause"
+}
+foreach ($entry in $expectedPythonLicenseOverrides.GetEnumerator()) {
+  $override = @($policy.licenses.package_overrides.python.PSObject.Properties | Where-Object { $_.Name -eq $entry.Key }) | Select-Object -First 1
+  Assert-True ($null -ne $override) ("Missing reviewed Python license override: " + $entry.Key)
+  Assert-True ([string]$override.Value -eq $entry.Value) ("Python license override drifted: " + $entry.Key)
+  Assert-True (@($policy.licenses.allowed_expressions.python) -contains $entry.Value) ("Reviewed Python license must remain explicitly allowed: " + $entry.Key)
+}
 $expectedRustLicenseOverrides = @{
   "hyper-rustls@0.27.9" = "Apache-2.0 OR ISC OR MIT"
   "ring@0.17.14" = "Apache-2.0 AND ISC"

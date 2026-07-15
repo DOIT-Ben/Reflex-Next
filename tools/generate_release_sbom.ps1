@@ -31,6 +31,7 @@ $output = [System.IO.Path]::GetFullPath($OutputDirectory)
 $pythonComponents = @(
   @{ Id = "python-reflex-core"; Name = "reflex-core"; Project = "packages\reflex-core"; Lock = "packages\reflex-core\uv.lock" },
   @{ Id = "python-reflex-runtime"; Name = "reflex-runtime"; Project = "packages\reflex-runtime"; Lock = "packages\reflex-runtime\uv.lock" },
+  @{ Id = "python-reflex-cloud"; Name = "reflex-cloud"; Project = "services\reflex-cloud"; Lock = "services\reflex-cloud\uv.lock" },
   @{ Id = "python-batch-runner"; Name = "reflex-batch-runner"; Project = "plugins\batch-runner"; Lock = "plugins\batch-runner\uv.lock" },
   @{ Id = "python-history-sqlite"; Name = "reflex-history-sqlite"; Project = "plugins\history-sqlite"; Lock = "plugins\history-sqlite\uv.lock" },
   @{ Id = "python-markdown-preview"; Name = "reflex-markdown-preview"; Project = "plugins\markdown-preview"; Lock = "plugins\markdown-preview\uv.lock" },

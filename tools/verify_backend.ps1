@@ -9,6 +9,7 @@ param(
   [ValidateSet(
     "reflex-core",
     "reflex-runtime",
+    "reflex-cloud",
     "batch-runner",
     "history-sqlite",
     "markdown-preview",
@@ -20,6 +21,7 @@ param(
   [string[]]$PythonProject = @(
     "reflex-core",
     "reflex-runtime",
+    "reflex-cloud",
     "batch-runner",
     "history-sqlite",
     "markdown-preview",
@@ -113,6 +115,7 @@ function New-VerificationStep {
 $pythonProjects = @(
   @{ Name = "reflex-core"; Path = "packages\reflex-core" },
   @{ Name = "reflex-runtime"; Path = "packages\reflex-runtime" },
+  @{ Name = "reflex-cloud"; Path = "services\reflex-cloud" },
   @{ Name = "batch-runner"; Path = "plugins\batch-runner" },
   @{ Name = "history-sqlite"; Path = "plugins\history-sqlite" },
   @{ Name = "markdown-preview"; Path = "plugins\markdown-preview" },
