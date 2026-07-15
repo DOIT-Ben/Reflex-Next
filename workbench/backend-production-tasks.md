@@ -307,11 +307,11 @@
 
 ## 2026-07-15 云端隐私与准入事务加固记录
 
-- 反馈提交现在由服务端核对当前安装授权记录和政策版本；未授权的提示词、结果或截图会在写入附件和数据库前拒绝，客户端字段不能绕过授权；
+- 反馈提交现在由服务端核对当前安装授权记录和政策版本；提示词/结果必须具备改进计划授权，截图只有在本次反馈明确勾选后才会写入，客户端字段不能绕过正文授权；
 - 新增 `consent_required`、`consent_outdated`、`quota_unavailable` 和 `ip_quota_unavailable` 用户可见错误分类；
 - 一次云端优化的安装额度、IP 小时限流和全局预算预占改为同一数据库事务，任一准入失败都会回滚其余准入变更，并处理多实例首次建行竞争；
-- 云服务测试：`35 passed`；Python 编译检查通过；运维契约 `reflex_cloud_ops_contract.ps1` 通过；`verify_cloud.ps1 -DryRun -SkipDocker` 通过；
-- 修复提交 `ec110f6`、`c215822` 已推送到 `origin/codex/full-feature-parity`；本记录不关闭 P3-002、P4-002、P4-003、P4-004、P4-005 或 P4-006。
+- 云服务测试：`36 passed`；Python 编译检查通过；运维契约 `reflex_cloud_ops_contract.ps1` 通过；`verify_cloud.ps1 -DryRun -SkipDocker` 通过；前端 `163 passed`、生产构建和 Rust Host `192 passed/3 ignored` 通过；
+- 修复提交 `ec110f6`、`c215822`、`050fc33`、`59e5464`、`4909e64`、`7593ead`、`924d35d` 已推送到 `origin/codex/full-feature-parity`；本记录不关闭 P3-002、P4-002、P4-003、P4-004、P4-005 或 P4-006。
 
 ## 集成约定
 
