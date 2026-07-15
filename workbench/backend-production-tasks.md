@@ -36,7 +36,7 @@
 |---|---|---|---|---|
 | P1-001 | Runtime 输出 Provider/模型可信目录 | 完成 | P0-010 | `provider_catalog` 契约、插件隔离和脱敏测试通过 |
 | P1-002 | Rust Host 暴露只读 Provider 目录命令 | 完成 | P1-001 | 主窗口只读命令、严格解析、有界 stdout/stderr 和重启测试通过 |
-| P1-003 | 前端 Domain Bridge 消费动态目录 | 待办 | P1-002 | TypeScript 测试，交给前端负责人集成 |
+| P1-003 | 前端 Domain Bridge 消费动态目录 | 完成 | P1-002 | Runtime 请求 ID 关联、严格目录解析、错误脱敏、设置页接入；前端 163 项与 Rust 191 项通过，见 `docs/verification/provider-catalog-frontend.md` |
 | P1-004 | 冻结重试、超时、取消和错误分类 | 完成 | P0-003 | MiniMax/OpenAI-compatible 负向夹具、主动取消和安全错误测试通过 |
 | P1-005 | 增强 SSE/JSON 断流与超大响应防护 | 完成 | P1-004 | 两类 Provider 均完成 2 MiB/50,000 上限、截断和非法 UTF-8 测试 |
 | P1-006 | Sidecar 崩溃和并发恢复验证 | 完成 | P1-004 | 唯一安全终态、路由清理、进程终止和下一请求重启测试通过 |
@@ -102,7 +102,8 @@
 - Runtime 浸泡：工具契约 14 项、CI 100 次短门禁通过；本机 10,000 次中 5,000 完成、5,000 取消、65,002 个协议事件、迟到事件 0、安全退出；
 - 72 小时 Runtime 门禁已启动：PID `23848`，受控速率每分钟 3 次，报告为 `workbench\runtime-soak-72h-alpha8-20260715-045742.json`；当前仍在运行，未计入完成证据；
 - 插件/历史浸泡：三轮各 1,000 次均通过，Private Bytes 最大增量 454,656 B，三轮句柄/线程增量均为 0，SQLite 最终活动连接 0、峰值 1；统一门禁保留 100 次短烟测；
-- TypeScript Domain Bridge 与前端架构契约：25 个文件、158 项测试通过，最大 2 workers；
+- TypeScript Domain Bridge 与前端架构契约：26 个文件、163 项测试通过，最大 2 workers；
+- Provider/模型目录：Tauri Host 先订阅 `reflex://provider-catalog`，再调用 `runtime_list_providers`，按 Rust 返回的请求 ID关联结果；设置页和调整页使用 Runtime 目录，目录异常只显示固定用户提示并保留浏览器安全回退；
 - 前端生产构建：Vite 构建通过，193 个模块，主包约 230.58 kB、gzip 约 73.31 kB；
 - 前端视觉与交互：680x480、760x540、920x720 无页面溢出或控件裁切，Demo Core 生成、命令面板、设置导航和悬浮反馈实跑通过；
 - 发布前敏感扫描：契约测试与当前受版本控制文件实扫通过；
@@ -270,6 +271,15 @@
 - Windows 10 干净构建和生命周期尚无同等级实机证据，因此 P4-002/P4-003 保持待验证；
 - 未验证跨版本升级、配置/历史迁移、代码签名、更新和回滚；这些仍按 P4-004/P4-005 处理。
 - 配置与历史数据层迁移契约已验证，真实跨版本覆盖安装仍按 P4-004 处理；
+
+## 2026-07-15 Provider 动态目录接入记录
+
+- 新增前端 `ProviderCatalogBridge`，在发送目录命令前订阅固定事件，使用 Rust 返回的请求 ID过滤旧事件；
+- 前端镜像 Runtime 的 Provider 目录边界：版本、请求 ID、字段集合、Provider/模型数量、排序、默认模型、发布状态和会话配置状态；
+- `provider_catalog_error`、监听失败、命令失败和超时均转换为固定的“模型目录暂不可用，请稍后重试。”，不向用户透传底层错误或任何凭据内容；
+- 设置页 Provider 列表、模型列表和默认模型均来自 Runtime 目录；浏览器 Demo 保留静态目录，Tauri 目录暂不可用时保留安全回退并显示状态提示；
+- `npm test -- --maxWorkers=2`：26 个测试文件、163 项通过；`npm run build`：242 个模块构建通过；`cargo test --locked --lib -- --test-threads=2`：191 项通过、3 项 Credential Manager 测试按平台条件忽略；
+- 本项不改变 Provider 密钥存储、Runtime 配置或真实请求正文边界。
 
 ## 集成约定
 

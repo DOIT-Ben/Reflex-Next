@@ -368,12 +368,15 @@ pub async fn runtime_cancel(
 pub async fn runtime_list_providers(
     window: tauri::WebviewWindow,
     state: State<'_, TauriRuntimeState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     require_main_window(window.label())?;
+    let command = list_providers_command();
+    let request_id = command.request_id.clone();
     state
         .runtime()
-        .send_to(list_providers_command(), window.label())
-        .map_err(str::to_string)
+        .send_to(command, window.label())
+        .map_err(str::to_string)?;
+    Ok(request_id)
 }
 
 #[tauri::command]

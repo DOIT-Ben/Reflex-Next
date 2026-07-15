@@ -59,7 +59,6 @@
     createRequestDraft,
     openAdjust,
     openSettings,
-    providerDisplayName,
     resolveHostShortcut,
     retryAfterError,
     settingsDraftFromConfig,
@@ -94,6 +93,11 @@
     type HostAction
   } from "./domain/desktopBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
+  import {
+    createProviderCatalogBridge,
+    PROVIDER_CATALOG_UNAVAILABLE_MESSAGE,
+    type ProviderCatalogBridge
+  } from "./domain/providerCatalogBridge";
   import {
     normalizeViewScale,
     stepViewScale,
@@ -166,8 +170,13 @@
     type TemplateDraft
   } from "./domain/templateLibrary";
   import {
+    fallbackProviderCatalog,
+    providerDefaultModel,
+    providerName,
+    providerOptionsFromRuntime,
     providerModels,
     resolveProviderAvailability,
+    type ProviderOption,
     type ProviderAvailability
   } from "./domain/providerCatalog";
   import {
@@ -200,6 +209,7 @@
   let capabilityBridge: CapabilityBridge | null = null;
   let diagnosticBundleBridge: DiagnosticBundleBridge | null = null;
   let feedbackBridge: FeedbackBridge | null = null;
+  let providerCatalogBridge: ProviderCatalogBridge | null = null;
   let hostApi: TauriHostApi | null = null;
   let settingsApi: SettingsApi | null = null;
   let desktopBridge: DesktopBridge | null = null;
@@ -240,6 +250,8 @@
   let settingsBusy = false;
   let secretBusy = false;
   let providerStatusError = false;
+  let providerCatalogNotice: string | null = null;
+  let providerOptions: ProviderOption[] = [...fallbackProviderCatalog];
   let providerStatus: ProviderAvailability = "checking";
   let activeProviderId = "minimax";
   let providerStatusText = "";
@@ -310,6 +322,7 @@
 
       hostApi = host;
       capabilityBridge = new CapabilityBridge(host);
+      providerCatalogBridge = createProviderCatalogBridge(host);
       diagnosticBundleBridge = createDiagnosticBundleBridge(host);
       feedbackBridge = createFeedbackBridge(host);
       void hydrateCloudPrivacy();
@@ -355,7 +368,7 @@
         if (!disposed) coreBridge = bridge;
       });
 
-      await Promise.all([hydrateSettings(), refreshDesktopStatus()]);
+      await Promise.all([hydrateSettings(), refreshDesktopStatus(), refreshProviderCatalog()]);
       if (disposed) return;
       await readStartupClipboard();
     });
@@ -384,8 +397,8 @@
   $: tr = (source, values = {}) => translate(uiLanguage, source, values);
   $: templateCategories = [...new Set(customTemplates.map((template) => template.category))].sort((left, right) => left.localeCompare(right, "zh-CN"));
   $: visibleTemplates = filterTemplates(customTemplates, templateQuery, templateCategory);
-  $: settingsProviderModels = providerModels(settingsDraft.default_provider);
-  $: draftProviderModels = providerModels(draft.provider);
+  $: settingsProviderModels = providerModels(settingsDraft.default_provider, providerOptions);
+  $: draftProviderModels = providerModels(draft.provider, providerOptions);
   $: activeProviderId = (state.requestDraft.provider ?? "minimax").trim().toLowerCase();
   $: providerStatus = resolveProviderAvailability(
     activeProviderId,
@@ -476,7 +489,7 @@
     {
       id: "model",
       label: tr("模型"),
-      value: state.requestDraft.model ?? tr(providerDisplayName(state.requestDraft.provider))
+      value: state.requestDraft.model ?? tr(providerName(state.requestDraft.provider, providerOptions))
     }
   ];
   $: resultMetaItems = [
@@ -485,7 +498,7 @@
     {
       id: "provider",
       label: "Provider",
-      value: tr(providerDisplayName(state.currentResult?.provider ?? state.requestDraft.provider))
+      value: tr(providerName(state.currentResult?.provider ?? state.requestDraft.provider, providerOptions))
     }
   ];
 
@@ -590,6 +603,7 @@
     settingsNotice = null;
     secretNotice = null;
     void hydrateSettings();
+    void refreshProviderCatalog();
     void hydrateCloudPrivacy();
   }
 
@@ -769,6 +783,19 @@
     settingsBusy = false;
   }
 
+  async function refreshProviderCatalog() {
+    const bridge = providerCatalogBridge;
+    if (!bridge) return;
+    try {
+      const descriptors = await bridge.listProviders();
+      providerOptions = providerOptionsFromRuntime(descriptors);
+      providerCatalogNotice = null;
+    } catch {
+      // Keep the browser-safe catalog visible while the Runtime recovers.
+      providerCatalogNotice = PROVIDER_CATALOG_UNAVAILABLE_MESSAGE;
+    }
+  }
+
   async function refreshDesktopStatus() {
     if (!desktopBridge) return;
     try {
@@ -865,8 +892,12 @@
   }
 
   async function selectSettingsProvider(provider: string) {
-    const models = providerModels(provider);
-    settingsDraft = { ...settingsDraft, default_provider: provider, default_model: models[0].id };
+    const models = providerModels(provider, providerOptions);
+    settingsDraft = {
+      ...settingsDraft,
+      default_provider: provider,
+      default_model: providerDefaultModel(provider, providerOptions) ?? models[0]?.id ?? null
+    };
     secretInput = "";
     secretNotice = null;
     await refreshProviderSecretStatus(provider);
@@ -1851,7 +1882,7 @@
 
   function providerStatusAriaLabel(): string {
     return tr("Provider：{provider}，{status}", {
-      provider: tr(providerDisplayName(state.requestDraft.provider)),
+      provider: tr(providerName(state.requestDraft.provider, providerOptions)),
       status: providerStatusText
     });
   }
@@ -1882,7 +1913,7 @@
 <main class="app-shell" data-phase={state.phase} data-theme={settingsDraft.theme} style={`--view-scale: ${viewScale}`}>
   <section class="window" aria-label="Reflex quick window">
     <ReflexTitleBar
-      providerName={tr(providerDisplayName(state.requestDraft.provider))}
+      providerName={tr(providerName(state.requestDraft.provider, providerOptions))}
       modelName={state.requestDraft.model ?? ""}
       availability={providerStatus}
       availabilityLabel={providerStatusText}
@@ -2114,6 +2145,8 @@
         {secretStatus}
         {secretNotice}
         notice={settingsNotice}
+        {providerCatalogNotice}
+        providers={providerOptions}
         models={settingsProviderModels}
         {modes}
         {styles}

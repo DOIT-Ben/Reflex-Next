@@ -8,7 +8,7 @@
     type HostSettingsDraft,
     type SettingsPluginId
   } from "../../domain/hostState";
-  import { providerCatalog, type ProviderOption } from "../../domain/providerCatalog";
+  import type { ProviderOption } from "../../domain/providerCatalog";
   import type { OptimizeMode, OptimizeStyle } from "../../domain/reflexSession";
   import type { SecretStatus } from "../../domain/settingsApi";
   import type { SemanticModelState } from "../../domain/semanticModelState";
@@ -23,6 +23,8 @@
     secretStatus: SecretStatus;
     secretNotice: string | null;
     notice: string | null;
+    providerCatalogNotice: string | null;
+    providers: ProviderOption[];
     models: ProviderOption["models"];
     modes: Array<{ id: OptimizeMode; label: string }>;
     styles: Array<{ id: OptimizeStyle; label: string }>;
@@ -67,6 +69,8 @@
     secretStatus,
     secretNotice,
     notice,
+    providerCatalogNotice,
+    providers,
     models,
     modes,
     styles,
@@ -184,7 +188,7 @@
             <label>
               <span>{translate("默认 Provider")}</span>
               <select value={draft.default_provider ?? "minimax"} disabled={busy} onchange={(event) => onProviderChange(event.currentTarget.value)}>
-                {#each providerCatalog as provider}<option value={provider.id}>{translate(provider.label)}</option>{/each}
+                {#each providers as provider}<option value={provider.id}>{translate(provider.label)}</option>{/each}
               </select>
             </label>
             <label>
@@ -194,6 +198,9 @@
               </select>
             </label>
           </div>
+          {#if providerCatalogNotice}
+            <p class="settings-feedback" role="status" aria-live="polite">{translate(providerCatalogNotice)}</p>
+          {/if}
 
           {#if draft.default_provider === "reflex-cloud"}
             <div class="credential-status configured">
