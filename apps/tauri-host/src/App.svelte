@@ -637,7 +637,7 @@
       cloudConsent = await bridge.updateConsent({
         ...cloudConsent,
         improvement_data: cloudImprovementDraft,
-        policy_version: "2026-07-14"
+        policy_version: cloudConsent.policy_version
       });
       cloudImprovementDraft = cloudConsent.improvement_data;
       cloudPrivacyNotice = cloudConsent.improvement_data
@@ -1532,6 +1532,8 @@
     feedbackSubmitNotice = null;
     const sourceText = result.sourceText ?? state.inputText;
     try {
+      const latestConsent = await feedbackBridge.getConsent();
+      cloudConsent = latestConsent;
       await feedbackBridge.submit({
         sentiment: feedbackSentiment,
         category: form.category,
@@ -1557,7 +1559,7 @@
         prompt_text: form.includePrompt ? sourceText : null,
         result_text: form.includeResult ? result.output : null,
         screenshot: form.includeScreenshot ? feedbackScreenshot : null,
-        consent_version: "2026-07-14"
+        consent_version: latestConsent.policy_version
       });
       feedbackOpen = false;
       feedbackScreenshot = null;

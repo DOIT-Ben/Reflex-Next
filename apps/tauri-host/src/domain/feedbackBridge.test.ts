@@ -32,7 +32,7 @@ const payload: FeedbackPayload = {
   prompt_text: null,
   result_text: null,
   screenshot: null,
-  consent_version: "2026-07-14"
+  consent_version: "2026-07-15"
 };
 
 describe("feedback bridge", () => {

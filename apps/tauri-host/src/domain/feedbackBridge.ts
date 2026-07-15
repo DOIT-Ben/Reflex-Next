@@ -35,7 +35,7 @@ export type FeedbackPayload = {
   prompt_text: string | null;
   result_text: string | null;
   screenshot: FeedbackScreenshot | null;
-  consent_version: "2026-07-14";
+  consent_version: string;
 };
 
 export type FeedbackSubmitted = {
