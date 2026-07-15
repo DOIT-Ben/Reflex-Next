@@ -153,7 +153,7 @@ try {
     throw "release_source_tag_mismatch"
   }
   if (
-    [int]$manifest.schema_version -ne 1 -or
+    [int]$manifest.schema_version -ne 2 -or
     [string]$manifest.product -cne "Reflex" -or
     [string]$manifest.version -cnotmatch '^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$' -or
     [string]$manifest.channel -notin @("alpha", "beta", "rc", "stable") -or
@@ -213,23 +213,43 @@ try {
     }
   }
 
-  $releaseNotesRelative = [string]$manifest.documents.release_notes
-  $recoveryGuideRelative = [string]$manifest.documents.recovery_guide
-  foreach ($document in @($releaseNotesRelative, $recoveryGuideRelative)) {
-    if (-not $checksumMap.ContainsKey($document)) {
+  $documents = [ordered]@{
+    release_notes = [string]$manifest.documents.release_notes
+    recovery_guide = [string]$manifest.documents.recovery_guide
+    privacy_notice = [string]$manifest.documents.privacy_notice
+    third_party_notices = [string]$manifest.documents.third_party_notices
+    support_guide = [string]$manifest.documents.support_guide
+    troubleshooting_guide = [string]$manifest.documents.troubleshooting_guide
+  }
+  if (
+    @($manifest.documents.PSObject.Properties).Count -ne $documents.Count -or
+    @($documents.Values | Sort-Object -Unique).Count -ne $documents.Count
+  ) {
+    throw "document_manifest_mismatch"
+  }
+  foreach ($document in @($documents.Values)) {
+    if ([string]::IsNullOrWhiteSpace($document) -or -not $checksumMap.ContainsKey($document)) {
       throw "document_manifest_mismatch"
     }
     Resolve-PackagePath -Root $package -Relative $document -Code "document_missing" | Out-Null
   }
-  $sourceReleaseNotes = Join-Path $repository ("docs\releases\v" + $sourceVersion + ".md")
-  $sourceRecoveryGuide = Join-Path $repository "docs\RELEASE-RECOVERY.md"
-  if (
-    -not (Test-Path -LiteralPath $sourceReleaseNotes -PathType Leaf) -or
-    -not (Test-Path -LiteralPath $sourceRecoveryGuide -PathType Leaf) -or
-    (Get-Sha256 -Path $sourceReleaseNotes) -cne $checksumMap[$releaseNotesRelative] -or
-    (Get-Sha256 -Path $sourceRecoveryGuide) -cne $checksumMap[$recoveryGuideRelative]
-  ) {
-    throw "release_document_source_mismatch"
+  $sourceDocuments = [ordered]@{
+    release_notes = Join-Path $repository ("docs\releases\v" + $sourceVersion + ".md")
+    recovery_guide = Join-Path $repository "docs\RELEASE-RECOVERY.md"
+    privacy_notice = Join-Path $repository "docs\PRIVACY.md"
+    third_party_notices = Join-Path $repository "docs\THIRD-PARTY-NOTICES.md"
+    support_guide = Join-Path $repository "docs\SUPPORT.md"
+    troubleshooting_guide = Join-Path $repository "docs\TROUBLESHOOTING.md"
+  }
+  foreach ($key in @($sourceDocuments.Keys)) {
+    $source = [string]$sourceDocuments[$key]
+    $relative = [string]$documents[$key]
+    if (
+      -not (Test-Path -LiteralPath $source -PathType Leaf) -or
+      (Get-Sha256 -Path $source) -cne $checksumMap[$relative]
+    ) {
+      throw "release_document_source_mismatch"
+    }
   }
 
   $sbomRelative = [string]$manifest.sbom.manifest_path

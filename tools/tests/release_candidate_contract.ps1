@@ -91,6 +91,10 @@ function New-Candidate {
     "-SbomDirectory", $sbom,
     "-ReleaseNotesPath", (Join-Path $root "docs\releases\v0.7.0-alpha.8.md"),
     "-RecoveryGuidePath", (Join-Path $root "docs\RELEASE-RECOVERY.md"),
+    "-PrivacyNoticePath", (Join-Path $root "docs\PRIVACY.md"),
+    "-ThirdPartyNoticesPath", (Join-Path $root "docs\THIRD-PARTY-NOTICES.md"),
+    "-SupportGuidePath", (Join-Path $root "docs\SUPPORT.md"),
+    "-TroubleshootingGuidePath", (Join-Path $root "docs\TROUBLESHOOTING.md"),
     "-OutputDirectory", $Destination
   )
   $arguments += $ExtraArguments
@@ -186,17 +190,60 @@ try {
   $manifestPath = Join-Path $output "release-manifest.json"
   Assert-True (Test-Path -LiteralPath $manifestPath -PathType Leaf) "Release manifest must be emitted."
   $manifest = [System.IO.File]::ReadAllText($manifestPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  Assert-True ([int]$manifest.schema_version -eq 2) "Release manifest must use schema version 2."
   Assert-True ([string]$manifest.version -ceq $version) "Manifest version must match VERSION."
   Assert-True (@($manifest.artifacts).Count -eq 3) "Manifest must contain exactly three executable artifacts."
   Assert-True ([int]$manifest.sbom.component_count -eq 12) "Manifest must contain twelve component BOMs."
+  $expectedDocuments = [ordered]@{
+    release_notes = "RELEASE_NOTES.md"
+    recovery_guide = "RECOVERY.md"
+    privacy_notice = "PRIVACY.md"
+    third_party_notices = "THIRD-PARTY-NOTICES.md"
+    support_guide = "SUPPORT.md"
+    troubleshooting_guide = "TROUBLESHOOTING.md"
+  }
+  Assert-True (@($manifest.documents.PSObject.Properties).Count -eq $expectedDocuments.Count) "Manifest must contain exactly the public release documents."
+  foreach ($entry in $expectedDocuments.GetEnumerator()) {
+    Assert-True ([string]$manifest.documents.($entry.Key) -ceq $entry.Value) ("Release document mapping drifted: " + $entry.Key)
+    Assert-True (Test-Path -LiteralPath (Join-Path $output $entry.Value) -PathType Leaf) ("Release document is missing: " + $entry.Value)
+  }
+  Assert-True ([int]$manifest.checksums.file_count -eq 22) "Manifest must checksum every artifact, SBOM and public document."
   Assert-True (-not [bool]$manifest.gates.signatures_valid) "Unsigned fixture artifacts must not be marked signed."
   Assert-True (-not [bool]$manifest.gates.release_ready) "Unsigned review material must not be release-ready."
   Assert-True ((Get-Content -Raw -Encoding UTF8 $manifestPath) -notmatch [regex]::Escape($root)) "Manifest must not leak absolute workspace paths."
-  Assert-True (@(Get-ChildItem -LiteralPath $output -File -Recurse).Count -eq 20) "Candidate must have an exact bounded file set."
+  Assert-True (@(Get-ChildItem -LiteralPath $output -File -Recurse).Count -eq 24) "Candidate must have an exact bounded file set."
 
   $verified = Verify-Candidate -Directory $output
   Assert-True ($verified.ExitCode -eq 0) "Untampered review material must verify."
-  Assert-True ($verified.Stdout -match 'files=20; release_ready=false') "Verifier must report bounded files and readiness."
+  Assert-True ($verified.Stdout -match 'files=24; release_ready=false') "Verifier must report bounded files and readiness."
+
+  $legacySchema = Join-Path $probeRoot "legacy-schema"
+  Copy-Item -LiteralPath $output -Destination $legacySchema -Recurse
+  $legacyManifestPath = Join-Path $legacySchema "release-manifest.json"
+  $legacyManifest = [System.IO.File]::ReadAllText($legacyManifestPath) | ConvertFrom-Json
+  $legacyManifest.schema_version = 1
+  [System.IO.File]::WriteAllText(
+    $legacyManifestPath,
+    (($legacyManifest | ConvertTo-Json -Depth 10) + "`n"),
+    $utf8NoBom
+  )
+  $legacyResult = Verify-Candidate -Directory $legacySchema
+  Assert-True ($legacyResult.ExitCode -ne 0) "A legacy release manifest schema must fail verification."
+  Assert-True ($legacyResult.Stderr.Trim() -ceq 'invalid_release_manifest') "Legacy schema rejection must use one stable stderr category."
+
+  $duplicateDocuments = Join-Path $probeRoot "duplicate-documents"
+  Copy-Item -LiteralPath $output -Destination $duplicateDocuments -Recurse
+  $duplicateManifestPath = Join-Path $duplicateDocuments "release-manifest.json"
+  $duplicateManifest = [System.IO.File]::ReadAllText($duplicateManifestPath) | ConvertFrom-Json
+  $duplicateManifest.documents.support_guide = $duplicateManifest.documents.privacy_notice
+  [System.IO.File]::WriteAllText(
+    $duplicateManifestPath,
+    (($duplicateManifest | ConvertTo-Json -Depth 10) + "`n"),
+    $utf8NoBom
+  )
+  $duplicateResult = Verify-Candidate -Directory $duplicateDocuments
+  Assert-True ($duplicateResult.ExitCode -ne 0) "Duplicate public document mappings must fail verification."
+  Assert-True ($duplicateResult.Stderr.Trim() -ceq 'document_manifest_mismatch') "Duplicate document rejection must use one stable stderr category."
 
   $ready = Verify-Candidate -Directory $output -ExtraArguments @("-RequireReady")
   Assert-True ($ready.ExitCode -ne 0) "Unsigned material must fail the formal readiness gate."
@@ -236,6 +283,40 @@ try {
   $traversalResult = Verify-Candidate -Directory $traversal
   Assert-True ($traversalResult.ExitCode -ne 0) "A parent traversal path must fail verification."
   Assert-True ($traversalResult.Stderr.Trim() -ceq 'invalid_artifact_path') "Traversal failure must use one stable stderr category."
+
+  $documentDrift = Join-Path $probeRoot "document-drift"
+  Copy-Item -LiteralPath $output -Destination $documentDrift -Recurse
+  $supportPath = Join-Path $documentDrift "SUPPORT.md"
+  [System.IO.File]::AppendAllText($supportPath, "`nsource drift`n", $utf8NoBom)
+  $documentChecksumsPath = Join-Path $documentDrift "SHA256SUMS.txt"
+  $supportHash = Get-Sha256 -Path $supportPath
+  $replacedSupport = 0
+  $documentChecksums = @([System.IO.File]::ReadAllLines($documentChecksumsPath) | ForEach-Object {
+      if ($_ -match '^[a-f0-9]{64} \*SUPPORT\.md$') {
+        $replacedSupport += 1
+        "$supportHash *SUPPORT.md"
+      }
+      else {
+        $_
+      }
+    })
+  Assert-True ($replacedSupport -eq 1) "Support document must have exactly one checksum entry."
+  [System.IO.File]::WriteAllText(
+    $documentChecksumsPath,
+    (($documentChecksums -join "`n") + "`n"),
+    $utf8NoBom
+  )
+  $documentManifestPath = Join-Path $documentDrift "release-manifest.json"
+  $documentManifest = [System.IO.File]::ReadAllText($documentManifestPath) | ConvertFrom-Json
+  $documentManifest.checksums.sha256 = Get-Sha256 -Path $documentChecksumsPath
+  [System.IO.File]::WriteAllText(
+    $documentManifestPath,
+    (($documentManifest | ConvertTo-Json -Depth 10) + "`n"),
+    $utf8NoBom
+  )
+  $documentDriftResult = Verify-Candidate -Directory $documentDrift
+  Assert-True ($documentDriftResult.ExitCode -ne 0) "A rewritten public document must fail source binding."
+  Assert-True ($documentDriftResult.Stderr.Trim() -ceq 'release_document_source_mismatch') "Document source drift must use one stable stderr category."
 
   $secret = "gh" + "p_" + ("S" * 36)
   [System.IO.File]::WriteAllText(

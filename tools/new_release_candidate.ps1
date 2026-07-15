@@ -13,6 +13,14 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$RecoveryGuidePath,
   [Parameter(Mandatory = $true)]
+  [string]$PrivacyNoticePath,
+  [Parameter(Mandatory = $true)]
+  [string]$ThirdPartyNoticesPath,
+  [Parameter(Mandatory = $true)]
+  [string]$SupportGuidePath,
+  [Parameter(Mandatory = $true)]
+  [string]$TroubleshootingGuidePath,
+  [Parameter(Mandatory = $true)]
   [string]$OutputDirectory,
   [string]$RepositoryRoot = "",
   [switch]$RequireSigned,
@@ -223,6 +231,22 @@ try {
   $sbom = Resolve-RequiredDirectory -Path $SbomDirectory -Code "sbom_directory_missing"
   $releaseNotes = Resolve-RequiredFile -Path $ReleaseNotesPath -Code "release_notes_missing"
   $recoveryGuide = Resolve-RequiredFile -Path $RecoveryGuidePath -Code "recovery_guide_missing"
+  $privacyNotice = Resolve-RequiredFile -Path $PrivacyNoticePath -Code "privacy_notice_missing"
+  $thirdPartyNotices = Resolve-RequiredFile -Path $ThirdPartyNoticesPath -Code "third_party_notices_missing"
+  $supportGuide = Resolve-RequiredFile -Path $SupportGuidePath -Code "support_guide_missing"
+  $troubleshootingGuide = Resolve-RequiredFile -Path $TroubleshootingGuidePath -Code "troubleshooting_guide_missing"
+
+  $documentPaths = @(
+    $releaseNotes,
+    $recoveryGuide,
+    $privacyNotice,
+    $thirdPartyNotices,
+    $supportGuide,
+    $troubleshootingGuide
+  )
+  if (@($documentPaths | Sort-Object -Unique).Count -ne $documentPaths.Count) {
+    throw "release_document_paths_not_unique"
+  }
 
   $inputPaths = @($installer, $hostExecutable, $runtimeExecutable)
   if (@($inputPaths | Sort-Object -Unique).Count -ne 3) {
@@ -253,6 +277,10 @@ try {
 
   Read-ReleaseDocument -Path $releaseNotes -Code "invalid_release_notes"
   Read-ReleaseDocument -Path $recoveryGuide -Code "invalid_recovery_guide"
+  Read-ReleaseDocument -Path $privacyNotice -Code "invalid_privacy_notice"
+  Read-ReleaseDocument -Path $thirdPartyNotices -Code "invalid_third_party_notices"
+  Read-ReleaseDocument -Path $supportGuide -Code "invalid_support_guide"
+  Read-ReleaseDocument -Path $troubleshootingGuide -Code "invalid_troubleshooting_guide"
   $sbomState = Read-SbomManifest -Directory $sbom -Repository $repository
 
   $versionChecker = Join-Path $repository "tools\check_version_consistency.ps1"
@@ -334,6 +362,10 @@ try {
   }
   Copy-Item -LiteralPath $releaseNotes -Destination (Join-Path $staging "RELEASE_NOTES.md")
   Copy-Item -LiteralPath $recoveryGuide -Destination (Join-Path $staging "RECOVERY.md")
+  Copy-Item -LiteralPath $privacyNotice -Destination (Join-Path $staging "PRIVACY.md")
+  Copy-Item -LiteralPath $thirdPartyNotices -Destination (Join-Path $staging "THIRD-PARTY-NOTICES.md")
+  Copy-Item -LiteralPath $supportGuide -Destination (Join-Path $staging "SUPPORT.md")
+  Copy-Item -LiteralPath $troubleshootingGuide -Destination (Join-Path $staging "TROUBLESHOOTING.md")
 
   $checksumEntries = @()
   foreach ($file in @(Get-ChildItem -LiteralPath $staging -File -Recurse | Sort-Object FullName)) {
@@ -353,7 +385,7 @@ try {
   }
   $releaseReady = $signaturesValid -and $tagMatches -and $trackedClean
   $manifest = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     product = "Reflex"
     version = $version
     channel = $channel
@@ -381,6 +413,10 @@ try {
     documents = [ordered]@{
       release_notes = "RELEASE_NOTES.md"
       recovery_guide = "RECOVERY.md"
+      privacy_notice = "PRIVACY.md"
+      third_party_notices = "THIRD-PARTY-NOTICES.md"
+      support_guide = "SUPPORT.md"
+      troubleshooting_guide = "TROUBLESHOOTING.md"
     }
     checksums = [ordered]@{
       path = "SHA256SUMS.txt"
