@@ -58,7 +58,7 @@
 | P2-003 | 历史损坏、恢复和轮换中断演练 | 完成 | P0-002 | 7 项灾难恢复夹具、索引/AEAD/记录一致性和幂等恢复通过 |
 | P2-004 | Markdown/CSV/路径/协议攻击性夹具 | 完成 | P0-002 | Markdown、CSV、WebView、历史路径、自定义 CA 路径与私有字段负向夹具通过 |
 | P2-005 | Python/Rust/npm 依赖漏洞和许可证门禁 | 完成 | P0-007 | 全 lockfile 漏洞、许可证 allowlist、稳定退出码和真实审计通过 |
-| P2-006 | 构建产物敏感信息扫描和 SBOM | 阻塞 | P0-009 | `cf45530` 干净工作树的前端构建、敏感扫描、12 组件 SBOM 和哈希复核通过；Run `29422634887` 因 GitHub Billing 在 Runner 分配前失败，Artifact 为 0 |
+| P2-006 | 构建产物敏感信息扫描和 SBOM | 完成 | P0-009 | `cf45530` 干净工作树的前端构建、敏感扫描、12 组件 SBOM 和哈希复核通过；本地证据为合并门禁，远端 workflow 仅手动触发 |
 
 ## 阶段 2.5：云端反馈闭环与质量发布
 
@@ -117,7 +117,7 @@
 - Provider/模型目录：Tauri Host 先订阅 `reflex://provider-catalog`，再调用 `runtime_list_providers`，按 Rust 返回的请求 ID关联结果；设置页和调整页使用 Runtime 目录，目录异常只显示固定用户提示并保留浏览器安全回退；
 - 前端生产构建：本轮 Vite 构建通过，242 个模块，主包约 270.39 kB、gzip 约 84.29 kB；
 - `cf45530` 本机供应链复验：干净安装 0 个 npm 漏洞，26 个测试文件、168 项测试通过（最多 2 workers），Vite 242 个模块构建和 `dist` 敏感扫描通过；12 个 CycloneDX 1.5 BOM、源锁文件和清单哈希独立复核错误为 0；
-- `cf45530` 远端供应链状态：Run `29422634887` 因 GitHub Billing 在 Runner 分配前失败，执行步骤和 Artifact 均为 0；该失败不是代码门禁失败，`P2-006` 保持阻塞；
+- `cf45530` 远端历史状态：Run `29422634887` 因 GitHub Billing 在 Runner 分配前失败，执行步骤和 Artifact 均为 0；该失败不是代码门禁失败，也不再作为合并门禁；
 - 前端视觉与交互：680x480、760x540、920x720 无页面溢出或控件裁切，Demo Core 生成、命令面板、设置导航和悬浮反馈实跑通过；
 - 发布前敏感扫描：契约测试与当前受版本控制文件实扫通过；
 - 依赖门禁：10 个 Python 环境（含 Reflex Cloud）、RustSec、Rust/npm 许可证和 npm 全 lockfile 真实审计通过；`cryptography` 已升至 `48.0.1`；
@@ -367,7 +367,7 @@
 - `dist` 和受版本控制文件敏感扫描、敏感扫描契约、SBOM 契约及统一验证脚本契约全部通过；
 - 生成 12 份 CycloneDX 1.5 BOM 和 1 份清单；独立复算 BOM、源锁文件和清单哈希，错误为 0；清单 SHA-256 为 `e97b72303c594066c343c32197db54ba3ba6d65dad8ec4d5bfea1a86d5c360fe`；
 - Windows CI Run `29422634887` 精确绑定 `cf45530`，但 GitHub 因账户付款失败或 spending limit 在分配 Runner 前拒绝启动；Job 步骤和 Artifact 均为 0；
-- 本机供应链符合，远端 Artifact 门禁受外部计费阻塞；`P2-006` 改为“阻塞”，不得提前关闭。完整证据见 `docs/verification/build-artifact-sbom-alpha8-20260715.md`。
+- 本机供应链符合；按用户确认的本地测试后提交、推送和直接合并策略，远端 Artifact 不再作为门禁，`P2-006` 关闭。完整证据见 `docs/verification/build-artifact-sbom-alpha8-20260715.md`。
 
 ## 2026-07-15 P3-002 正式浸泡启动与 Cloud 回归
 

@@ -13,7 +13,7 @@ Python Core + Python Runtime/插件 + Tauri 2/Rust Host + Svelte UI
 - 核心产品功能、桌面主链、增强插件和 Reflex Cloud 闭环已基本实现；
 - 真实 MiniMax 流式请求和取消已有脱敏实机证据；
 - Cloud 反馈、隐私授权、免费额度、质量发布、回滚和 PostgreSQL 多实例并发已有验证；
-- 正式 72 小时浸泡、当前提交的供应链证据、Windows 10 生命周期、真实旧版本升级、
+- 正式 72 小时浸泡、Windows 10 生命周期、真实旧版本升级、
   代码签名和受控试用仍未完成。
 
 本版本适合开发和内部验收，不是可公开推广的正式稳定版。当前任务状态以

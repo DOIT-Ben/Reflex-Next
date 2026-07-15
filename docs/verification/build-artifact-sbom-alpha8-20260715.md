@@ -38,7 +38,7 @@ e97b72303c594066c343c32197db54ba3ba6d65dad8ec4d5bfea1a86d5c360fe
 CycloneDX schema；错误数为 0。SBOM 生成器同时对 SBOM 目录和前端 `dist` 执行了
 二次敏感信息扫描。
 
-## 远端 CI
+## 远端历史记录
 
 手动触发 Windows CI Run `29422634887`，Run 精确绑定上述 `cf45530`：
 
@@ -48,13 +48,14 @@ CycloneDX schema；错误数为 0。SBOM 生成器同时对 SBOM 目录和前端
 - Artifact：`0`；
 - GitHub 注解：账户近期付款失败或 Actions spending limit 需要提高。
 
-该失败发生在代码检出和任何项目命令之前，不是测试、构建、扫描或 SBOM 失败。由于
-GitHub 没有启动 Runner，当前提交仍无法取得 CI 上传的 SBOM Artifact。
+该失败发生在代码检出和任何项目命令之前，不是测试、构建、扫描或 SBOM 失败。项目
+后续采用本地隔离验证后提交、推送和直接合并的流程；远端 workflow 仅手动触发，本记录
+不再作为合并或发布门禁。
 
 ## 门禁判断
 
-`cf45530` 的本机供应链复核全部通过，但 `P2-006` 仍保持“阻塞”，不能在缺少远端
-Artifact 时标记完成。恢复 GitHub Actions 计费后，应重新运行同一 workflow，并下载
-核对 `reflex-next-sbom-<commit>` Artifact 后关闭任务。
+`cf45530` 的本机供应链复核全部通过。按本地验证优先的交付策略，该证据足以关闭
+`P2-006`；远端 Artifact 不再是完成条件。后续每次提交仍必须先在本地完成对应范围的
+隔离验证，验证失败时不得推送或合并。
 
 本记录不替代正式发布候选物料验证，也不改变签名、标签、Windows 10、更新和回滚门禁。
