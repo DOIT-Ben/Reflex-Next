@@ -108,6 +108,19 @@ Compose 默认只信任回环地址和 Docker 私有 `172.16.0.0/12` 网段传�
 10. 回滚当前质量发布，确认恢复上一版或回到无质量指导的基线状态。
 11. 用测试安装执行删除，确认旧令牌失效、质量曝光删除、新安装重新默认为关闭授权。
 12. 做一次 Postgres 备份和恢复演练，记录恢复耗时和数据完整性结果。
+13. 在独立测试数据库执行 PostgreSQL 多实例质量发布烟测，确认同一版本并发发布/回滚只产生一个安全终态。
+
+PostgreSQL 并发烟测只从环境变量读取连接地址，拒绝 SQLite、生产库名和未明确允许的
+远程地址，并在随机 schema 中运行后自动删除该 schema。不要把生产连接地址用于烟测：
+
+```powershell
+$env:REFLEX_CLOUD_POSTGRES_TEST_URL = "<独立本地测试库连接地址>"
+uv run --frozen --project services\reflex-cloud --extra postgres `
+  python tools\reflex_cloud_postgres_quality_release_smoke.py
+```
+
+工具只输出固定字段的 JSON 结果，不输出数据库地址、schema、反馈 ID 或异常正文；退出码
+为 `0` 才表示真实数据库门禁通过。
 
 备份与隔离恢复脚本：
 

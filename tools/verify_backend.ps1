@@ -191,6 +191,14 @@ $steps += New-VerificationStep `
   -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_provider_smoke.py", "-q")
 
 $steps += New-VerificationStep `
+  -Id "tools:cloud-postgres-quality-contract" `
+  -Category "tools" `
+  -WorkDir "." `
+  -LockFile "services\reflex-cloud\uv.lock" `
+  -Executable "uv" `
+  -Arguments @("run", "--frozen", "--project", "services\reflex-cloud", "--extra", "dev", "pytest", "tools\tests\test_reflex_cloud_postgres_quality_release_smoke.py", "-q")
+
+$steps += New-VerificationStep `
   -Id "tools:history-upgrade-contract" `
   -Category "tools" `
   -WorkDir "." `
