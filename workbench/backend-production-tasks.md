@@ -58,7 +58,7 @@
 | P2-003 | 历史损坏、恢复和轮换中断演练 | 完成 | P0-002 | 7 项灾难恢复夹具、索引/AEAD/记录一致性和幂等恢复通过 |
 | P2-004 | Markdown/CSV/路径/协议攻击性夹具 | 完成 | P0-002 | Markdown、CSV、WebView、历史路径、自定义 CA 路径与私有字段负向夹具通过 |
 | P2-005 | Python/Rust/npm 依赖漏洞和许可证门禁 | 完成 | P0-007 | 全 lockfile 漏洞、许可证 allowlist、稳定退出码和真实审计通过 |
-| P2-006 | 构建产物敏感信息扫描和 SBOM | 待验证 | P0-009 | 本机 12 个 CycloneDX 1.5 组件 SBOM 和汇总摘要通过；新提交后的前端构建物扫描与 CI Artifact 待复核 |
+| P2-006 | 构建产物敏感信息扫描和 SBOM | 阻塞 | P0-009 | `cf45530` 干净工作树的前端构建、敏感扫描、12 组件 SBOM 和哈希复核通过；Run `29422634887` 因 GitHub Billing 在 Runner 分配前失败，Artifact 为 0 |
 
 ## 阶段 2.5：云端反馈闭环与质量发布
 
@@ -116,7 +116,8 @@
 - TypeScript Domain Bridge 与前端架构契约：26 个文件、168 项测试通过，最大 2 workers；
 - Provider/模型目录：Tauri Host 先订阅 `reflex://provider-catalog`，再调用 `runtime_list_providers`，按 Rust 返回的请求 ID关联结果；设置页和调整页使用 Runtime 目录，目录异常只显示固定用户提示并保留浏览器安全回退；
 - 前端生产构建：本轮 Vite 构建通过，242 个模块，主包约 270.39 kB、gzip 约 84.29 kB；
-- 本轮本机前端复验：26 个测试文件、163 项测试通过（最多 2 workers），`apps\tauri-host\dist` 构建物敏感扫描通过；远端 CI 因账户计费限制尚未启动实际步骤；
+- `cf45530` 本机供应链复验：干净安装 0 个 npm 漏洞，26 个测试文件、168 项测试通过（最多 2 workers），Vite 242 个模块构建和 `dist` 敏感扫描通过；12 个 CycloneDX 1.5 BOM、源锁文件和清单哈希独立复核错误为 0；
+- `cf45530` 远端供应链状态：Run `29422634887` 因 GitHub Billing 在 Runner 分配前失败，执行步骤和 Artifact 均为 0；该失败不是代码门禁失败，`P2-006` 保持阻塞；
 - 前端视觉与交互：680x480、760x540、920x720 无页面溢出或控件裁切，Demo Core 生成、命令面板、设置导航和悬浮反馈实跑通过；
 - 发布前敏感扫描：契约测试与当前受版本控制文件实扫通过；
 - 依赖门禁：10 个 Python 环境（含 Reflex Cloud）、RustSec、Rust/npm 许可证和 npm 全 lockfile 真实审计通过；`cryptography` 已升至 `48.0.1`；
@@ -360,11 +361,13 @@
 - 前端验证：26 个测试文件、167 项通过；Vite 生产构建 242 个模块通过；
 - 本轮仅完成反馈链路收尾，不关闭 P3-002、P2-006、Windows 10 验证、签名/更新/回滚或正式 RC 门禁。
 
-## 2026-07-15 当前提交构建物与 SBOM 本机复核
+## 2026-07-15 `cf45530` 当前提交供应链复核
 
-- 提交 `4576e5f` 上重新生成并校验 12 个 CycloneDX 1.5 组件 SBOM，生成器返回成功；
-- 当前前端 `apps\tauri-host\dist` 敏感信息扫描通过；敏感扫描契约、SBOM 契约和统一验证脚本契约均通过；
-- `.github\workflows\backend-ci.yml` 已覆盖前端构建、构建物扫描和 SBOM Artifact 上传，但当前提交的远端 Artifact 尚未取得可复核证据；`P2-006` 继续保持“待验证”。
+- 在 detached 干净工作树完成 `npm ci`、168 项前端测试和 242 模块生产构建；构建物共 6 个文件、357,528 B；
+- `dist` 和受版本控制文件敏感扫描、敏感扫描契约、SBOM 契约及统一验证脚本契约全部通过；
+- 生成 12 份 CycloneDX 1.5 BOM 和 1 份清单；独立复算 BOM、源锁文件和清单哈希，错误为 0；清单 SHA-256 为 `e97b72303c594066c343c32197db54ba3ba6d65dad8ec4d5bfea1a86d5c360fe`；
+- Windows CI Run `29422634887` 精确绑定 `cf45530`，但 GitHub 因账户付款失败或 spending limit 在分配 Runner 前拒绝启动；Job 步骤和 Artifact 均为 0；
+- 本机供应链符合，远端 Artifact 门禁受外部计费阻塞；`P2-006` 改为“阻塞”，不得提前关闭。完整证据见 `docs/verification/build-artifact-sbom-alpha8-20260715.md`。
 
 ## 2026-07-15 P3-002 正式浸泡启动与 Cloud 回归
 
