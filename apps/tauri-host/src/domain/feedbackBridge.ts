@@ -80,13 +80,29 @@ export type FeedbackBridge = {
   deleteCloudData(): Promise<boolean>;
 };
 
+const SAFE_FEEDBACK_SUBMIT_MESSAGES = new Set([
+  "反馈发送失败，请稍后重试。",
+  "反馈服务暂不可用，请稍后重试。",
+  "反馈服务返回了无效结果。",
+  "请先在设置中开启对应的隐私授权。",
+  "隐私授权已更新，请刷新设置后重新提交。",
+  "反馈提交过于频繁，请稍后再试。",
+  "反馈内容不完整，请检查后重试。",
+  "云端服务暂不可用，请稍后重试。",
+  "云端隐私设置暂不可用。"
+]);
+
 export function createFeedbackBridge(host: TauriHostApi): FeedbackBridge {
   return {
     async captureWindow() {
       return normalizeScreenshot(await host.invoke("capture_feedback_screenshot"));
     },
     async submit(payload) {
-      return normalizeSubmitted(await host.invoke("submit_feedback", { payload }));
+      try {
+        return normalizeSubmitted(await host.invoke("submit_feedback", { payload }));
+      } catch (error) {
+        throw new Error(feedbackSubmitErrorMessage(error));
+      }
     },
     async getConsent() {
       return normalizeConsent(await host.invoke("cloud_get_consent"));
@@ -101,6 +117,20 @@ export function createFeedbackBridge(host: TauriHostApi): FeedbackBridge {
       return (await host.invoke("cloud_delete_data")) === true;
     }
   };
+}
+
+export function feedbackSubmitErrorMessage(error: unknown): string {
+  const message =
+    typeof error === "string"
+      ? error
+      : error instanceof Error
+        ? error.message
+        : isRecord(error) && typeof error.message === "string"
+          ? error.message
+          : "";
+  return SAFE_FEEDBACK_SUBMIT_MESSAGES.has(message)
+    ? message
+    : "反馈发送失败，请稍后重试。";
 }
 
 function normalizeScreenshot(value: unknown): FeedbackScreenshot {

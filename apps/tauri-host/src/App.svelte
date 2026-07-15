@@ -31,6 +31,7 @@
   import { createDiagnosticBundleBridge, type DiagnosticBundleBridge } from "./domain/diagnosticBundleBridge";
   import {
     createFeedbackBridge,
+    feedbackSubmitErrorMessage,
     type CloudConsent,
     type CloudQuota,
     type FeedbackBridge,
@@ -1522,6 +1523,10 @@
     feedbackSubmitNotice = null;
   }
 
+  function removeFeedbackScreenshot() {
+    feedbackScreenshot = null;
+  }
+
   async function submitFeedback(form: FeedbackFormValue) {
     const result = state.currentResult;
     if (!result || !feedbackBridge || feedbackSubmitBusy) {
@@ -1565,7 +1570,7 @@
       feedbackScreenshot = null;
       showToast("反馈已发送，谢谢。", "success");
     } catch (error) {
-      feedbackSubmitNotice = error instanceof Error ? error.message : "反馈发送失败，请稍后重试。";
+      feedbackSubmitNotice = feedbackSubmitErrorMessage(error);
     } finally {
       feedbackSubmitBusy = false;
     }
@@ -2028,6 +2033,7 @@
         busy={feedbackSubmitBusy}
         notice={feedbackSubmitNotice}
         onClose={closeFeedback}
+        onRemoveScreenshot={removeFeedbackScreenshot}
         onSubmit={submitFeedback}
       />
     {/if}

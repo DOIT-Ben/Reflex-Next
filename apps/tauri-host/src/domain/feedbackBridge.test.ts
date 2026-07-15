@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { TauriHostApi } from "./coreBridge";
-import { createFeedbackBridge, type FeedbackPayload } from "./feedbackBridge";
+import {
+  createFeedbackBridge,
+  feedbackSubmitErrorMessage,
+  type FeedbackPayload
+} from "./feedbackBridge";
 
 function hostWithInvoke(invoke: TauriHostApi["invoke"]): TauriHostApi {
   return { invoke, listen: vi.fn() };
@@ -64,6 +68,17 @@ describe("feedback bridge", () => {
 
     await expect(malformedCapture.captureWindow()).rejects.toThrow("反馈截图暂不可用");
     await expect(malformedSubmit.submit(payload)).rejects.toThrow("反馈服务返回了无效结果");
+  });
+
+  it("keeps actionable feedback errors and redacts unknown host failures", async () => {
+    expect(feedbackSubmitErrorMessage("请先在设置中开启对应的隐私授权。"))
+      .toBe("请先在设置中开启对应的隐私授权。");
+    expect(feedbackSubmitErrorMessage(new Error("api_key=private-value")))
+      .toBe("反馈发送失败，请稍后重试。");
+
+    const invoke = vi.fn().mockRejectedValue("请先在设置中开启对应的隐私授权。");
+    const bridge = createFeedbackBridge(hostWithInvoke(invoke));
+    await expect(bridge.submit(payload)).rejects.toThrow("请先在设置中开启对应的隐私授权");
   });
 
   it("reads and updates cloud privacy and quota without exposing the installation token", async () => {

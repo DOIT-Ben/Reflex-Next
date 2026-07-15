@@ -17,6 +17,7 @@
   export let busy = false;
   export let notice: string | null = null;
   export let onClose: () => void;
+  export let onRemoveScreenshot: () => void;
   export let onSubmit: (value: FeedbackFormValue) => void | Promise<void>;
 
   let category: FeedbackCategory = "quality";
@@ -93,7 +94,7 @@
         <div class="evidence-head">
           <strong>应用截图预览</strong>
           {#if screenshot}
-            <button type="button" title="移除截图" aria-label="移除截图" disabled={busy} onclick={() => (includeScreenshot = false)}>
+            <button type="button" title="移除截图" aria-label="移除截图" disabled={busy} onclick={() => { includeScreenshot = false; onRemoveScreenshot(); }}>
               <ImageOff size={15} strokeWidth={2} />
             </button>
           {/if}
