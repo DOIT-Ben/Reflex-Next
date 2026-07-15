@@ -85,9 +85,26 @@ C:\Users\DOIT\AppData\Local\Temp\reflex-lifecycle-alpha8-20260715043146\install
 - 使用 alpha.8 安装目录中的 Runtime 完成旧历史库首次写入迁移，证据见 `docs/verification/backend-upgrade-compatibility.md`；
 - 卸载清理改为最多 10 秒的有界轮询，覆盖安装和卸载的异步文件清理不会被过早断言误判。
 
+### 4.1 当前修复后的发布包复验
+
+本阶段提交：`9805641`。重新执行 Runtime 单文件和 Tauri/NSIS 构建后，当前安装包为：
+
+```text
+Reflex_0.7.0-alpha.8_x64-setup.exe
+SHA-256: 439ADC75D284B7170D7A17E970238BC5FA504E6A9D96679297E5088F13456DB4
+```
+
+使用该包重新执行 `tools\verify_windows_lifecycle.ps1`，8 个阶段全部通过：安装、Sidecar
+协议、Host 隔离启动、旧配置启动、覆盖安装、卸载、重装和最终清理。
+
+同时使用从 beta.11 源码重建的旧 Runtime 实际生成历史库，再由当前 Runtime 读取和续写，
+结果为旧 schema `1`、当前布局 `3`、`migration-v1` 备份保留。该旧 Runtime 是源码重建夹具，
+不是历史官方签名安装包。
+
 ## 5. 尚未覆盖
 
-- 本记录覆盖首次安装、同版本覆盖安装、卸载和重装，不等同于跨版本升级兼容验证；
+- 本记录覆盖首次安装、同版本覆盖安装、卸载和重装；Runtime 层跨版本历史读写已有源码夹具证据，
+  但不等同于官方安装包驱动的 Host 全链路升级兼容验证；
 - 配置/历史迁移夹具仍属于 P4-004；
 - 代码签名、更新包和真实回滚演练仍属于 P4-005；
 - 真实 Provider 流式请求与取消仍需要新凭据门禁，不在本次离线发布包验证中完成。

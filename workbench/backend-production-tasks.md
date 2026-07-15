@@ -80,7 +80,7 @@
 | P4-001 | 统一版本号和构建元数据 | 完成 | P0-008 | `VERSION`、产品清单、锁文件、界面和云服务元数据一致 |
 | P4-002 | 干净 Windows 10/11 构建验证 | 待验证 | P2、P3 完成 | Windows 11 已通过，Windows 10 待验证；见 `docs/verification/release-alpha8-windows-lifecycle.md` |
 | P4-003 | 安装、覆盖安装、卸载和重装生命周期 | 待验证 | P4-002 | Windows 11 已通过，Windows 10 待验证；见 `docs/verification/release-alpha8-windows-lifecycle.md` |
-| P4-004 | 配置和历史升级兼容 | 进行中 | P4-002 | 配置 11 项、History 158 项、v0 Host 启动、beta.11 到 alpha.8 安装目录覆盖和 alpha.8 Runtime 旧库首次写入通过；官方旧版包/真实旧数据全链路待验证 |
+| P4-004 | 配置和历史升级兼容 | 进行中 | P4-002 | 配置 11 项、History 迁移回归、v0 Host 启动、beta.11 到 alpha.8 安装目录覆盖，以及旧 Runtime 实际历史库到当前 Runtime 的读写/备份迁移通过；官方旧版包/真实旧数据 Host 全链路待验证 |
 | P4-005 | 签名、更新与回滚方案 | 待办 | 用户采购决策 | 签名验证、回滚演练 |
 | P4-006 | 发布清单、校验和、SBOM 和恢复手册 | 待办 | P4-003、P4-005 | RC 交付包审计 |
 
@@ -100,7 +100,7 @@
 - Rust/Tauri Host：191 项通过，3 项 Windows Credential Manager 实机测试默认忽略且已单独实跑通过；
 - 生产工具：Provider 冒烟 8 项加 2 个子用例、性能基准 9 项、History 基准 38 项、插件/历史资源工具 40 项通过；
 - Runtime 浸泡：工具契约 14 项、CI 100 次短门禁通过；本机 10,000 次中 5,000 完成、5,000 取消、65,002 个协议事件、迟到事件 0、安全退出；
-- 72 小时 Runtime 门禁已启动：PID `23848`，受控速率每分钟 3 次，报告为 `workbench\runtime-soak-72h-alpha8-20260715-045742.json`；当前仍在运行，未计入完成证据；
+- 72 小时 Runtime 门禁最近一轮已提前结束：报告 `workbench\runtime-soak-72h-alpha8-20260715-045742.json` 记录 824 次（完成 412、取消 412），因 `completed_instead_of_cancelled` 失败，未达到 10,000 次/72 小时门槛；P3-002 继续保持进行中；
 - 插件/历史浸泡：三轮各 1,000 次均通过，Private Bytes 最大增量 454,656 B，三轮句柄/线程增量均为 0，SQLite 最终活动连接 0、峰值 1；统一门禁保留 100 次短烟测；
 - TypeScript Domain Bridge 与前端架构契约：26 个文件、163 项测试通过，最大 2 workers；
 - Provider/模型目录：Tauri Host 先订阅 `reflex://provider-catalog`，再调用 `runtime_list_providers`，按 Rust 返回的请求 ID关联结果；设置页和调整页使用 Runtime 目录，目录异常只显示固定用户提示并保留浏览器安全回退；
@@ -115,7 +115,7 @@
 - alpha.8 隔离生命周期：首次安装、Sidecar ping/shutdown、同版本覆盖安装、卸载、重装和最终清理通过；详见 `docs/verification/release-alpha8-windows-lifecycle.md`；
 - 生命周期工具：`tools\verify_windows_lifecycle.ps1` 已固化隔离安装、覆盖、卸载、重装、Sidecar 协议和 Host 启动检查，契约测试与 alpha.8 实跑均通过；
 - 真实 Provider：MiniMax 目录、流式成功和定时取消实机通过，结果只保留分类和时延；详见 `docs/verification/provider-smoke-2026-07-15.md`；
-- 配置与历史升级契约：Rust 配置迁移 11 项、History 旧库夹具与全套 158 项、v0 Host 启动、beta.11 到 alpha.8 安装目录覆盖以及 alpha.8 安装副本旧库首次写入迁移通过；官方旧版包/真实旧数据全链路仍由 P4-004 继续验证；
+- 配置与历史升级契约：Rust 配置迁移 11 项、History 旧库夹具与全套回归、v0 Host 启动、beta.11 到 alpha.8 安装目录覆盖，以及旧 Runtime 实际生成库到当前 Runtime 的详情/列表/新写入/`migration-v1` 备份迁移通过；官方旧版包/真实旧数据 Host 全链路仍由 P4-004 继续验证；
 - 统一验证脚本契约：步骤、锁文件、失败码、Rust/Vitest 并发上限通过；
 - 当前已知测试工程缺口：根目录一次性收集全部 pytest 会因同名测试模块冲突，必须按包隔离或改用 importlib 模式；
 - 当前工作区原有未跟踪内容：`resources/` 与用户提供的前端重做归档，任何任务不得修改或暂存。
@@ -280,6 +280,19 @@
 - 设置页 Provider 列表、模型列表和默认模型均来自 Runtime 目录；浏览器 Demo 保留静态目录，Tauri 目录暂不可用时保留安全回退并显示状态提示；
 - `npm test -- --maxWorkers=2`：26 个测试文件、163 项通过；`npm run build`：242 个模块构建通过；`cargo test --locked --lib -- --test-threads=2`：191 项通过、3 项 Credential Manager 测试按平台条件忽略；
 - 本项不改变 Provider 密钥存储、Runtime 配置或真实请求正文边界。
+
+## 2026-07-15 跨版本历史迁移加固记录
+
+- 修复相同 `user_version`、旧索引布局历史库迁移前不创建备份的问题；布局迁移现在与 schema 迁移一样先执行在线备份；
+- 新增 `tools\cross_version_history_upgrade_smoke.py`，使用显式离线 Mock 让旧 Runtime 生成真实加密历史，再由当前 Runtime 读取、列表、新写入和校验迁移备份；
+- 旧 Runtime 实际库为 schema `1`/旧布局，当前库为 schema `1`/布局 `3`，`history.sqlite3.migration-v1.bak` 保留旧快照；
+- 当前修复后的 alpha.8 NSIS 包重新执行 8 阶段 Windows 隔离生命周期，全部通过；
+- 该证据使用源码重建 beta.11 夹具，不等同于历史官方签名包或真实用户数据，P4-004 保持进行中。
+
+## 2026-07-15 长期浸泡复盘记录
+
+- 72 小时 Runtime 浸泡报告已落盘，但在约 4.58 小时、824 次迭代时因一次取消请求收到完成终态而提前停止；
+- 该报告明确标记 `passed=false`，因此不能把这轮当作 P3-002 完成证据；下一轮需要先定位取消竞态，再重新满足 10,000 次和 72 小时双门槛。
 
 ## 集成约定
 

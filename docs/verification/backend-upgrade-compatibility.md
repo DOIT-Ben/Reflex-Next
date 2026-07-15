@@ -2,7 +2,7 @@
 
 验证日期：2026-07-15
 验证分支：`codex/full-feature-parity`
-验证提交：`a518e78`
+验证提交：`9805641`
 
 ## 已验证
 
@@ -34,7 +34,7 @@ uv run --frozen --project plugins\history-sqlite --extra dev pytest plugins\hist
 uv run --frozen --project plugins\history-sqlite --extra dev pytest plugins\history-sqlite\tests -q
 ```
 
-结果：目标文件 26 项通过，插件全套 158 项通过。
+结果：目标文件 27 项通过，插件全套 159 项通过。
 
 新增旧版本夹具会创建：
 
@@ -49,6 +49,27 @@ uv run --frozen --project plugins\history-sqlite --extra dev pytest plugins\hist
 - 当前库升级到 `user_version=1` 和最新索引布局；
 - 旧记录仍可被当前 Runtime 解密读取；
 - 既有恢复和损坏处理测试不回归。
+
+### 旧 Runtime 实际生成库到当前 Runtime
+
+为避免只验证人工构造的 SQLite 夹具，本阶段使用从 `v0.6.0-beta.11` 源码重建的旧 Runtime
+实际生成一条加密历史记录，再交给重新构建的当前 alpha.8 Runtime：
+
+```powershell
+uv run --frozen --project packages\reflex-runtime --extra dev --extra builtins python `
+  tools\cross_version_history_upgrade_smoke.py `
+  --legacy-runtime <beta11-夹具>\apps\tauri-host\src-tauri\resources\runtime\reflex-runtime.exe `
+  --current-runtime <alpha8-资源>\apps\tauri-host\src-tauri\resources\runtime\reflex-runtime.exe `
+  --keep-work-root
+```
+
+结果：`success`。旧 Runtime 生成的库为 `user_version=1`、旧索引布局，当前 Runtime 成功读取
+旧记录详情和列表，写入新记录并升级到索引布局 `3`；迁移前备份为
+`history.sqlite3.migration-v1.bak`，备份仍含 1 条旧记录和旧布局，当前库含 2 条记录。
+数据库原始字节中未出现测试正文，工具输出只包含固定 schema/状态字段。
+
+这次验证同时暴露并修复了一个真实缺口：旧版可以保持相同的 schema version、只改变索引布局；
+布局迁移现在也会先创建在线备份。
 
 ### 跨版本安装目录覆盖
 
@@ -77,10 +98,10 @@ packages\reflex-runtime\.venv\Scripts\python.exe tools\history_upgrade_smoke.py 
 
 ## 尚缺验证
 
-当前证据已覆盖数据层、宿主配置层、beta.11 到 alpha.8 的安装目录覆盖，以及 alpha.8 发布副本对旧历史库的首次写入迁移；但尚未使用历史官方 beta.11 安装包和真实旧用户数据完成同一条升级流程。P4-004 仍保持进行中，下一步需要：
+当前证据已覆盖数据层、宿主配置层、从 beta.11 源码重建夹具到 alpha.8 Runtime 的真实跨版本历史读写，以及 beta.11 到 alpha.8 的安装目录覆盖；但尚未使用历史官方 beta.11 安装包和真实旧用户数据完成同一条升级流程。P4-004 仍保持进行中，下一步需要：
 
 1. 准备来自上一发布版本的隔离配置和历史目录夹具；
 2. 在可隔离的上一发布版环境中生成配置和历史，再由发布版安装/覆盖安装后启动 Host，验证配置加载、历史列表、详情和新写入；
 3. 记录迁移前后文件、版本、备份和脱敏诊断结果。
 
-结论：配置与历史迁移契约、旧配置 Host 启动、跨版本安装目录覆盖和 alpha.8 发布 Runtime 的旧库首次写入迁移均已通过；官方旧版包与真实旧数据的全链路升级仍未完成，不能据此宣布正式升级兼容。
+结论：配置与历史迁移契约、旧配置 Host 启动、跨版本安装目录覆盖、旧 Runtime 实际历史库到当前 Runtime 的读写迁移均已通过；官方旧版包与真实旧数据的 Host 全链路升级仍未完成，不能据此宣布正式升级兼容。
