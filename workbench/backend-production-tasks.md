@@ -361,3 +361,8 @@
 - 已启动正式 Runtime 请求/取消浸泡：至少 10,000 次、最低 72 小时、批量 4、每分钟 3 次、每 2 次请求取消；报告路径为 `workbench\runtime-soak-72h-alpha8-20260715-130930.json`；报告生成前不视为通过；
 - `verify_cloud.ps1 -SkipDocker` 的运营契约通过；因已运行的 `reflex-cloud.exe` 锁定虚拟环境入口，官方 `uv run` 测试包装器未能执行安装步骤；使用同一 `.venv` 的 `python -m pytest -q` 完成 Cloud 全量测试，结果 `39 passed`、1 个上游弃用警告；
 - 本记录不提前关闭 P3-002，也不改变 P2-006、P4-002、P4-003、P4-004、P4-005 或 P4-006 状态。
+
+## 2026-07-15 Cloud 本机验证器锁定兼容
+
+- `tools\verify_cloud.ps1` 增加显式 `-NoSync` 选项；CI 默认行为仍保持冻结依赖同步，本机已有服务运行时可避免替换被占用的入口文件；
+- `powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify_cloud.ps1 -SkipDocker -NoSync` 通过：运营契约通过、Cloud 测试 `39 passed`、Docker 按参数跳过。

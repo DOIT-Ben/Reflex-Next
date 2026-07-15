@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [switch]$DryRun,
-  [switch]$SkipDocker
+  [switch]$SkipDocker,
+  [switch]$NoSync
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,9 +47,12 @@ function Invoke-Step {
 Invoke-Step -Name "cloud:operations-contract" -WorkDir $root -Executable "powershell" -Arguments @(
   "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $contract
 )
-Invoke-Step -Name "cloud:tests" -WorkDir $cloudProject -Executable "uv" -Arguments @(
-  "run", "--frozen", "--extra", "dev", "pytest", "-q"
-)
+$cloudTestArguments = @("run", "--frozen")
+if ($NoSync) {
+  $cloudTestArguments += "--no-sync"
+}
+$cloudTestArguments += @("--extra", "dev", "pytest", "-q")
+Invoke-Step -Name "cloud:tests" -WorkDir $cloudProject -Executable "uv" -Arguments $cloudTestArguments
 
 $composeArguments = @("compose", "--profile", "public", "-f", "services/reflex-cloud/docker-compose.yml", "config", "--quiet")
 if ($SkipDocker) {
