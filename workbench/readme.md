@@ -21,6 +21,10 @@
 
 - `README.md`
 - `AGENTS.md`
+- `docs/PRIVACY.md`
+- `docs/THIRD-PARTY-NOTICES.md`
+- `docs/SUPPORT.md`
+- `docs/TROUBLESHOOTING.md`
 - `docs/ARCHITECTURE.md`
 - `docs/MIGRATION.md`
 - `docs/CLASSIC-REFERENCE.md`

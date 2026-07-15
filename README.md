@@ -54,6 +54,14 @@ workbench/
 3. [docs\CLASSIC-REFERENCE.md](docs/CLASSIC-REFERENCE.md)
 4. [workbench\readme.md](workbench/readme.md)
 
+## 用户文档
+
+- [隐私说明](docs/PRIVACY.md)
+- [支持范围](docs/SUPPORT.md)
+- [故障处理](docs/TROUBLESHOOTING.md)
+- [第三方软件声明](docs/THIRD-PARTY-NOTICES.md)
+- [发布恢复指南](docs/RELEASE-RECOVERY.md)
+
 ## 最小开发目标
 
 首版只做这条链：

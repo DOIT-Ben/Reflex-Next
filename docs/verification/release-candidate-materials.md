@@ -1,13 +1,16 @@
 # alpha.8 发布候选物料验证
 
-> **历史证据提示**：本文记录的是旧的 11 组件、19 文件审查物料，不能作为当前 RC。2026-07-15 纳入 `services\reflex-cloud` 后，当前生成器固定要求 12 个 SBOM 组件和 20 个候选文件；必须重新生成并验证物料。
+> **历史证据提示**：本文记录的是旧的 11 组件、19 文件审查物料，不能作为当前 RC。2026-07-15 纳入 `services\reflex-cloud` 和四份用户文档后，当前生成器固定要求 release manifest schema 2、12 个 SBOM 组件和 24 个候选文件；必须重新生成并验证物料。
+
+当前候选还必须包含 `PRIVACY.md`、`THIRD-PARTY-NOTICES.md`、`SUPPORT.md` 和
+`TROUBLESHOOTING.md`。这些文档会和可执行物、SBOM 一起做来源绑定、哈希校验和敏感信息扫描。
 
 验证日期：2026-07-15
 验证基线：`2682432`
 版本：`0.7.0-alpha.8`
 平台：Windows 11 x64
 
-## 物料组成
+## 当时的物料组成
 
 `tools\new_release_candidate.ps1` 将以下内容组装为一个可复验目录：
 
