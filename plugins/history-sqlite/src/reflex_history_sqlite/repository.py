@@ -1462,7 +1462,14 @@ class HistoryRepository:
                 layout = None
             if layout is not None and layout[0] == str(INDEX_LAYOUT_VERSION):
                 return
-        if current < SCHEMA_VERSION and has_tables:
+        # A released database can keep the current schema number while still
+        # using an older index layout. Preserve that database before changing
+        # its physical layout just like a schema-version migration.
+        if has_tables and (
+            current < SCHEMA_VERSION
+            or current == SCHEMA_VERSION
+            and (layout is None or layout[0] != str(INDEX_LAYOUT_VERSION))
+        ):
             self._migration_backup(connection, current)
         try:
             connection.executescript("BEGIN IMMEDIATE;" + SCHEMA_SQL)

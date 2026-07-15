@@ -144,8 +144,13 @@ def test_schema_v1_pragmas_tables_and_indexes_are_created_on_first_save(
     assert not any("input" in sql or "output" in sql or "fts" in sql.casefold() for sql in index_sql)
 
 
-def test_legacy_schema_uses_online_backup_before_migration(
-    history_plugin, history_services, make_snapshot, cancellation
+@pytest.mark.parametrize("legacy_user_version", [0, 1])
+def test_legacy_schema_or_index_layout_uses_online_backup_before_migration(
+    history_plugin,
+    history_services,
+    make_snapshot,
+    cancellation,
+    legacy_user_version,
 ):
     database_path = history_services["history"]["database_path"]
     database_path.parent.mkdir(parents=True)
@@ -203,21 +208,23 @@ def test_legacy_schema_uses_online_backup_before_migration(
                 json.dumps(legacy["tags"], separators=(",", ":")),
             ),
         )
-        connection.execute("PRAGMA user_version = 0")
+        connection.execute(f"PRAGMA user_version = {legacy_user_version}")
         connection.commit()
     finally:
         connection.close()
 
     save(history_plugin, make_snapshot(), history_services, cancellation)
 
-    backup_path = database_path.with_name(f"{database_path.name}.migration-v0.bak")
+    backup_path = database_path.with_name(
+        f"{database_path.name}.migration-v{legacy_user_version}.bak"
+    )
     backup = sqlite3.connect(backup_path)
     try:
         assert backup.execute("SELECT value FROM legacy_marker").fetchone()[0] == "preserved"
         assert backup.execute(
             "SELECT id FROM history_records WHERE id = ?", (legacy["id"],)
         ).fetchone()[0] == legacy["id"]
-        assert backup.execute("PRAGMA user_version").fetchone()[0] == 0
+        assert backup.execute("PRAGMA user_version").fetchone()[0] == legacy_user_version
     finally:
         backup.close()
     migrated = sqlite3.connect(database_path)

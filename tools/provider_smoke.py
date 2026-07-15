@@ -90,12 +90,23 @@ def _emit(record: dict[str, Any]) -> None:
 
 
 class RuntimeProcess:
-    def __init__(self, command: list[str], *, cwd: Path) -> None:
+    def __init__(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        development_fixture: bool = False,
+    ) -> None:
         self._events: queue.Queue[dict[str, Any] | SmokeFailure] = queue.Queue()
+        environment = _safe_process_environment()
+        if development_fixture:
+            # Only explicit offline verification tools may opt into the built-in
+            # Mock provider; normal smoke runs never inherit this switch.
+            environment["REFLEX_RUNTIME_DEVELOPMENT"] = "1"
         self._process = subprocess.Popen(
             command,
             cwd=cwd,
-            env=_safe_process_environment(),
+            env=environment,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
