@@ -81,7 +81,7 @@
 | P4-002 | 干净 Windows 10/11 构建验证 | 待验证 | P2、P3 完成 | Windows 11 已通过，Windows 10 待验证；见 `docs/verification/release-alpha8-windows-lifecycle.md` |
 | P4-003 | 安装、覆盖安装、卸载和重装生命周期 | 待验证 | P4-002 | Windows 11 已通过，Windows 10 待验证；见 `docs/verification/release-alpha8-windows-lifecycle.md` |
 | P4-004 | 配置和历史升级兼容 | 进行中 | P4-002 | 配置 11 项、History 迁移回归、v0 Host 启动、beta.11 到 alpha.8 安装目录覆盖，以及旧 Runtime 实际历史库到当前 Runtime 的读写/备份迁移通过；官方旧版包/真实旧数据 Host 全链路待验证 |
-| P4-005 | 签名、更新与回滚方案 | 待办 | 用户采购决策 | 签名验证、回滚演练 |
+| P4-005 | 签名、更新与回滚方案 | 进行中 | 用户采购决策 | `docs/RELEASE-SIGNING.md` 已冻结签名、时间戳、更新和回滚流程；实际证书、签名实跑和回滚演练待完成 |
 | P4-006 | 发布清单、校验和、SBOM 和恢复手册 | 进行中 | P4-003、P4-005 | 当前门禁要求 schema 2、24 文件哈希、12 项 SBOM 和 6 份用户文档；正式签名、标签、回滚包和最终 RC 审计待完成 |
 
 ## 阶段 5：受控试用与正式发布

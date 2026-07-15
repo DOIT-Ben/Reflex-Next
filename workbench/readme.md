@@ -25,6 +25,7 @@
 - `docs/THIRD-PARTY-NOTICES.md`
 - `docs/SUPPORT.md`
 - `docs/TROUBLESHOOTING.md`
+- `docs/RELEASE-SIGNING.md`
 - `docs/ARCHITECTURE.md`
 - `docs/MIGRATION.md`
 - `docs/CLASSIC-REFERENCE.md`
