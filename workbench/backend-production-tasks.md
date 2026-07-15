@@ -355,3 +355,9 @@
 - 提交 `4576e5f` 上重新生成并校验 12 个 CycloneDX 1.5 组件 SBOM，生成器返回成功；
 - 当前前端 `apps\tauri-host\dist` 敏感信息扫描通过；敏感扫描契约、SBOM 契约和统一验证脚本契约均通过；
 - `.github\workflows\backend-ci.yml` 已覆盖前端构建、构建物扫描和 SBOM Artifact 上传，但当前提交的远端 Artifact 尚未取得可复核证据；`P2-006` 继续保持“待验证”。
+
+## 2026-07-15 P3-002 正式浸泡启动与 Cloud 回归
+
+- 已启动正式 Runtime 请求/取消浸泡：至少 10,000 次、最低 72 小时、批量 4、每分钟 3 次、每 2 次请求取消；报告路径为 `workbench\runtime-soak-72h-alpha8-20260715-130930.json`；报告生成前不视为通过；
+- `verify_cloud.ps1 -SkipDocker` 的运营契约通过；因已运行的 `reflex-cloud.exe` 锁定虚拟环境入口，官方 `uv run` 测试包装器未能执行安装步骤；使用同一 `.venv` 的 `python -m pytest -q` 完成 Cloud 全量测试，结果 `39 passed`、1 个上游弃用警告；
+- 本记录不提前关闭 P3-002，也不改变 P2-006、P4-002、P4-003、P4-004、P4-005 或 P4-006 状态。
