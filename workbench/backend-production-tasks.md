@@ -108,7 +108,7 @@
 - 发布前敏感扫描：契约测试与当前受版本控制文件实扫通过；
 - 依赖门禁：九个 Python 环境、RustSec、Rust/npm 许可证和 npm 全 lockfile 真实审计通过；`cryptography` 已升至 `48.0.1`；
 - RustSec 临时例外：`quick-xml 0.39.4` 两项公告仅存在于非 Windows Wayland 依赖图，例外在 2026-10-01 到期，进入 Windows 依赖图会立即失败；
-- Windows CI：Run `29375217256` 完成安全扫描、干净依赖安装、全量测试、100 次 Runtime 浸泡、生产构建、构建物扫描和 SBOM 上传，结论为 `success`；
+- Windows CI：Run `29377826885` 完成安全扫描、干净依赖安装、全量测试、100 次 Runtime 浸泡、生产构建、构建物扫描和 SBOM 上传，结论为 `success`；
 - 版本一致性检查：14 个产品版本来源统一为 `0.7.0-alpha.8`；Python/uv 的 PEP 440 规范化形式 `0.7.0a8` 经过等价校验；
 - alpha.8 干净 Windows 构建：从提交 `8310736` 的干净副本完成冻结依赖、Runtime 单文件、Rust release 和 NSIS 构建；三件发布物敏感扫描与 11 项 SBOM 验证通过；
 - alpha.8 隔离生命周期：首次安装、Sidecar ping/shutdown、同版本覆盖安装、卸载、重装和最终清理通过；详见 `docs/verification/release-alpha8-windows-lifecycle.md`；
