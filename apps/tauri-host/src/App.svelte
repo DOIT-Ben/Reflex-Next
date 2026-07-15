@@ -2023,6 +2023,7 @@
         sentiment={feedbackSentiment}
         screenshot={feedbackScreenshot}
         captureNotice={feedbackCaptureNotice}
+        improvementConsent={cloudConsent.improvement_data}
         busy={feedbackSubmitBusy}
         notice={feedbackSubmitNotice}
         onClose={closeFeedback}

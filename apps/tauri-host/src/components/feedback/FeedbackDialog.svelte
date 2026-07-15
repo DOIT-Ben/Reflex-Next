@@ -13,6 +13,7 @@
   export let sentiment: FeedbackSentiment;
   export let screenshot: FeedbackScreenshot | null = null;
   export let captureNotice: string | null = null;
+  export let improvementConsent = false;
   export let busy = false;
   export let notice: string | null = null;
   export let onClose: () => void;
@@ -24,7 +25,12 @@
   let contact = "";
   let includePrompt = false;
   let includeResult = false;
-  let includeScreenshot = screenshot !== null;
+  let includeScreenshot = false;
+
+  $: if (!improvementConsent) {
+    includePrompt = false;
+    includeResult = false;
+  }
 
   $: screenshotUrl = screenshot
     ? `data:${screenshot.media_type};base64,${screenshot.data_base64}`
@@ -85,27 +91,30 @@
 
       <div class="feedback-evidence">
         <div class="evidence-head">
-          <strong>应用截图</strong>
+          <strong>应用截图预览</strong>
           {#if screenshot}
             <button type="button" title="移除截图" aria-label="移除截图" disabled={busy} onclick={() => (includeScreenshot = false)}>
               <ImageOff size={15} strokeWidth={2} />
             </button>
           {/if}
         </div>
-        {#if screenshot && includeScreenshot}
+        {#if screenshot}
           <img src={screenshotUrl} alt="即将随反馈提交的 Reflex 应用截图" />
         {:else}
           <div class="screenshot-empty">未附加截图</div>
         {/if}
         {#if captureNotice}<p class="notice">{captureNotice}</p>{/if}
         <div class="privacy-options">
-          <label><input type="checkbox" bind:checked={includePrompt} disabled={busy} />附加本次输入</label>
-          <label><input type="checkbox" bind:checked={includeResult} disabled={busy} />附加本次结果</label>
+          <label><input type="checkbox" bind:checked={includePrompt} disabled={busy || !improvementConsent} />附加本次输入</label>
+          <label><input type="checkbox" bind:checked={includeResult} disabled={busy || !improvementConsent} />附加本次结果</label>
           {#if screenshot}
             <label><input type="checkbox" bind:checked={includeScreenshot} disabled={busy} />附加应用截图</label>
           {/if}
         </div>
-        <p class="privacy-note">API Key 和无关剪贴板内容不会上传。</p>
+        <p class="privacy-note">
+          {!improvementConsent ? "附加输入和结果前，请先在设置的安全与隐私中开启产品改进计划。" : "仅勾选的内容会随反馈发送。"}
+          API Key 和无关剪贴板内容不会上传。
+        </p>
       </div>
     </div>
 
