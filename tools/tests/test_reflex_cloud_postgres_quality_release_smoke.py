@@ -15,6 +15,7 @@ import reflex_cloud_postgres_quality_release_smoke as smoke
 
 
 TOOL = ROOT / "tools" / "reflex_cloud_postgres_quality_release_smoke.py"
+WRAPPER = ROOT / "tools" / "verify_cloud_postgres_quality_release.ps1"
 
 
 class ReflexCloudPostgresQualityReleaseSmokeContractTests(unittest.TestCase):
@@ -99,6 +100,22 @@ class ReflexCloudPostgresQualityReleaseSmokeContractTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn(private_value, result.stdout + result.stderr)
         self.assertEqual(json.loads(result.stdout)["error_code"], "invalid_arguments")
+
+    def test_windows_wrapper_enforces_resource_and_cleanup_guards(self):
+        source = WRAPPER.read_text(encoding="utf-8")
+        for required in (
+            '$minimumFreePhysicalMB = 2048',
+            '$minimumFreeVirtualMB = 4096',
+            'insufficient_memory_for_postgres_smoke',
+            '--memory=128m',
+            '--cpus=0.5',
+            '127.0.0.1:${postgresPort}:5432',
+            '--isolated',
+            '--frozen',
+            'docker stop --time 10',
+            'existing_container_interrupted',
+        ):
+            self.assertIn(required, source)
 
 
 if __name__ == "__main__":
