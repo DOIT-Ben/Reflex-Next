@@ -105,7 +105,8 @@
 - 插件/历史浸泡：三轮各 1,000 次均通过，Private Bytes 最大增量 454,656 B，三轮句柄/线程增量均为 0，SQLite 最终活动连接 0、峰值 1；统一门禁保留 100 次短烟测；
 - TypeScript Domain Bridge 与前端架构契约：26 个文件、163 项测试通过，最大 2 workers；
 - Provider/模型目录：Tauri Host 先订阅 `reflex://provider-catalog`，再调用 `runtime_list_providers`，按 Rust 返回的请求 ID关联结果；设置页和调整页使用 Runtime 目录，目录异常只显示固定用户提示并保留浏览器安全回退；
-- 前端生产构建：Vite 构建通过，193 个模块，主包约 230.58 kB、gzip 约 73.31 kB；
+- 前端生产构建：本轮 Vite 构建通过，242 个模块，主包约 270.39 kB、gzip 约 84.29 kB；
+- 本轮本机前端复验：26 个测试文件、163 项测试通过（最多 2 workers），`apps\tauri-host\dist` 构建物敏感扫描通过；远端 CI 因账户计费限制尚未启动实际步骤；
 - 前端视觉与交互：680x480、760x540、920x720 无页面溢出或控件裁切，Demo Core 生成、命令面板、设置导航和悬浮反馈实跑通过；
 - 发布前敏感扫描：契约测试与当前受版本控制文件实扫通过；
 - 依赖门禁：10 个 Python 环境（含 Reflex Cloud）、RustSec、Rust/npm 许可证和 npm 全 lockfile 真实审计通过；`cryptography` 已升至 `48.0.1`；
