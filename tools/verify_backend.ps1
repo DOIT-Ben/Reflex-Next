@@ -156,6 +156,14 @@ $steps += New-VerificationStep `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\check_version_consistency.ps1", "-IgnoreTag")
 
 $steps += New-VerificationStep `
+  -Id "release:candidate-contract" `
+  -Category "release" `
+  -WorkDir "." `
+  -LockFile "" `
+  -Executable "powershell" `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\release_candidate_contract.ps1")
+
+$steps += New-VerificationStep `
   -Id "security:dependency-contract" `
   -Category "security" `
   -WorkDir "." `
