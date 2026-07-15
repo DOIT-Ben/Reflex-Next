@@ -40,6 +40,7 @@ MAX_TERMINAL_HISTORY = 100_000
 FINAL_OBSERVATION_SECONDS = 0.5
 
 FIXTURE_INPUT = "reflex runtime soak fixture"
+CANCEL_FIXTURE_DELAY_MS = 100
 
 
 class SoakFailure(RuntimeError):
@@ -381,7 +382,7 @@ class RuntimeSoakSession:
 
     @staticmethod
     def _optimize_command(state: _RequestState) -> dict[str, Any]:
-        delay_ms = 10 if state.should_cancel else 0
+        delay_ms = CANCEL_FIXTURE_DELAY_MS if state.should_cancel else 0
         return {
             "version": 1,
             "request_id": state.request_id,

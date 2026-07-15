@@ -163,6 +163,18 @@ def test_runtime_environment_does_not_inherit_provider_credentials(monkeypatch):
     assert "OPENAI_API_KEY" not in child_environment
 
 
+def test_cancel_fixture_leaves_a_bounded_window_after_first_chunk():
+    state = soak_backend._RequestState(
+        request_id="soak-000000002",
+        expected_chunk="soak-chunk-000000002",
+        should_cancel=True,
+    )
+    command = soak_backend.RuntimeSoakSession._optimize_command(state)
+
+    assert command["payload"]["metadata"]["delay_ms"] == soak_backend.CANCEL_FIXTURE_DELAY_MS
+    assert soak_backend.CANCEL_FIXTURE_DELAY_MS >= 100
+
+
 def test_summary_contains_counts_but_not_failure_or_fixture_content():
     report = make_runner().run(
         iterations=4,
