@@ -85,7 +85,7 @@ def test_optimize_passes_scene_and_mode_fields(client):
         json={
             "text": "hello",
             "mode": "prompt",
-            "scene": "sales",
+            "scene": "marketing:headline",
             "scene_policy": "manual",
             "stream": False,
             "style": "creative",
@@ -94,7 +94,7 @@ def test_optimize_passes_scene_and_mode_fields(client):
         pass
     optimize = [command for command in fake_session.sent if command["type"] == "optimize"][-1]
     assert optimize["payload"]["mode"] == "prompt"
-    assert optimize["payload"]["scene"] == "sales"
+    assert optimize["payload"]["scene"] == "marketing:headline"
     assert optimize["payload"]["scene_policy"] == "manual"
     assert optimize["payload"]["stream"] is False
     assert optimize["payload"]["style"] == "creative"
@@ -156,6 +156,46 @@ def test_scene_catalog_returns_grouped_library(client):
     assert body["unclassified"] == ["general"]
 
 
+def test_optimize_rejects_unknown_manual_scene(client):
+    test_client, _ = client
+    response = test_client.post(
+        "/v1/optimize",
+        json={
+            "text": "hello",
+            "scene": "no_such_scene_xyz",
+            "scene_policy": "manual",
+        },
+    )
+    assert response.status_code == 422
+    assert "GET /v1/scenes" in response.json()["detail"]
+
+
+def test_optimize_accepts_known_category_and_subscene(client):
+    test_client, _ = client
+    for scene_value in ("business:email", "business", "email", "marketing:headline"):
+        with test_client.stream(
+            "POST",
+            "/v1/optimize",
+            json={
+                "text": "hello",
+                "scene": scene_value,
+                "scene_policy": "manual",
+            },
+        ) as response:
+            assert response.status_code == 200, scene_value
+
+
+def test_optimize_ignores_scene_under_auto_policy(client):
+    """scene is ignored under the default auto policy (no 422, no rejection)."""
+    test_client, _ = client
+    with test_client.stream(
+        "POST",
+        "/v1/optimize",
+        json={"text": "hello", "scene": "no_such_scene_xyz"},
+    ) as response:
+        assert response.status_code == 200
+
+
 def test_live_ping_returns_pong(live_client):
     response = live_client.post("/v1/ping")
     assert response.status_code == 200
@@ -208,7 +248,7 @@ def test_live_optimize_manual_scene_returns_scene_event(live_client):
             "text": "hello",
             "provider": "mock",
             "model": "mock-stream",
-            "scene": "sales",
+            "scene": "marketing:headline",
             "scene_policy": "manual",
         },
     ) as response:
@@ -220,7 +260,8 @@ def test_live_optimize_manual_scene_returns_scene_event(live_client):
         if envelope.get("event", {}).get("type") == "scene"
     ]
     assert len(scene_envelopes) == 1
-    assert scene_envelopes[0]["event"]["data"]["scene"] == "sales"
+    assert scene_envelopes[0]["event"]["data"]["scene"] == "headline"
+    assert scene_envelopes[0]["event"]["data"]["category"] == "marketing"
     assert scene_envelopes[0]["event"]["data"]["method"] == "manual"
 
 

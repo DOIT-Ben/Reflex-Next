@@ -49,8 +49,24 @@ class OptimizeRequest(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_OPTIMIZE_TEXT)
     style: str | None = None
     mode: str | None = None
-    scene: str | None = None
-    scene_policy: str | None = None
+    scene: str | None = Field(
+        default=None,
+        description=(
+            "Scene id; only used when scene_policy is \"manual\" or \"ask\" "
+            "(default policy is \"auto\", which ignores this field). Three forms: "
+            "\"category:scene\" (e.g. \"business:email\"), \"category\" (uses the "
+            "category default template, e.g. \"marketing\"), or a bare scene id "
+            "(e.g. \"email\"). Query GET /v1/scenes for the catalog of valid "
+            "categories and scenes; unknown values are rejected with 422."
+        ),
+    )
+    scene_policy: str | None = Field(
+        default=None,
+        description=(
+            "Scene routing policy: \"auto\" (default, detect from text), "
+            "\"manual\" (use the provided scene), \"ask\" (use the provided scene)."
+        ),
+    )
     stream: bool | None = None
     provider: str | None = None
     model: str | None = None
@@ -77,6 +93,20 @@ def _authorize(request: Request) -> None:
     header = request.headers.get("Authorization", "")
     if header != f"Bearer {token}":
         raise HTTPException(status_code=401, detail="unauthorized")
+
+
+def _valid_scene_value(pack: FileTemplatePack | None, value: str) -> bool:
+    """Validate a user-supplied scene value against the template catalog.
+
+    ``category:scene`` only requires the category to exist (unknown sub-scenes
+    resolve to the category template); bare values must be a scene or category.
+    """
+    if pack is None:
+        return True
+    category, _, scene = value.partition(":")
+    if category and scene:
+        return category in pack.category_ids
+    return value in pack.scene_ids or value in pack.category_ids
 
 
 def _stream_events(gateway: SidecarGateway, request_id: str):
@@ -236,6 +266,15 @@ def create_app(gateway: SidecarGateway | None = None) -> FastAPI:
             command_payload["metadata"] = payload.metadata
         if payload.request_id is not None and not _safe_request_id(payload.request_id):
             raise HTTPException(status_code=422, detail="invalid request_id")
+        if payload.scene is not None and payload.scene_policy in {"manual", "ask"}:
+            if not _valid_scene_value(getattr(app.state, "template_pack", None), payload.scene):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"unknown scene '{payload.scene}'; "
+                        "query GET /v1/scenes for valid categories and scenes"
+                    ),
+                )
         try:
             request_id = gateway.send_command(
                 "optimize",

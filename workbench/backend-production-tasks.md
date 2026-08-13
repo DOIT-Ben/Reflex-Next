@@ -449,3 +449,9 @@
 - 新增 `GET /v1/scenes` 场景库目录端点：返回 10 个一级分类分组 + 49 个场景 + 未分类项，模板包路径可配（REFLEX_TEMPLATE_PACK_ROOT），客户端可构建场景选择 UI；
 - 检测规则收敛过宽 marker：headline 去掉 "title"（技术文本常见误判）、speech 去掉 "开场白" 与单独 "演讲"，保留明确意图词；
 - 全量 Python 门禁通过：reflex-core 109、reflex-http-host 27（新增 scene_catalog 用例）。
+
+## 2026-08-14 场景接口可发现性完善
+
+- `scene` 字段 OpenAPI 描述明确三种合法形式与生效条件（仅 `scene_policy: manual/ask` 时生效，默认 auto 会忽略 scene）；
+- 手动指定未知场景改为 **422 明确报错**（`unknown scene 'xxx'; query GET /v1/scenes for valid categories and scenes`），替代静默回退；`category:unknown` 形式仍容错（回退分类模板）；检测路径（auto）的回退 general 语义不变；
+- 新增 4 项契约测试（422 拒绝、合法值放行、auto 忽略 scene）；reflex-http-host 28 项全过。
