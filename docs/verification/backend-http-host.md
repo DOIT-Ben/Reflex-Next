@@ -28,6 +28,8 @@
 - `scene` 事件新增 `category` 字段（附加字段，旧客户端可忽略）；未知场景回退 `general`。
 - `POST /v1/requests/{request_id}/cancel`：发送取消命令。
 - `POST /v1/ping`、`GET /v1/providers`、`GET /v1/health`。
+- `GET /v1/scenes`：场景库目录（10 个一级分类分组 + 49 个场景清单 + 未分类项），
+  客户端可据此构建场景选择 UI；模板包路径可用 `REFLEX_TEMPLATE_PACK_ROOT` 覆盖。
 - 默认绑定 `127.0.0.1:8790`；`REFLEX_HTTP_TOKEN` 非空时所有端点要求 `Authorization: Bearer <token>`。
 - 子进程环境为白名单（不继承 Provider 凭据），默认启用开发 Mock（`REFLEX_RUNTIME_DEVELOPMENT=1`，
   设 `0` 关闭）。

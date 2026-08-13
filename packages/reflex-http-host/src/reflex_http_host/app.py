@@ -8,10 +8,13 @@ import queue
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
+from reflex_core.template import FileTemplatePack
 
 from .gateway import GatewayError, SidecarGateway, is_terminal_event
 
@@ -19,6 +22,20 @@ REQUEST_TIMEOUT_SECONDS = float(
     os.environ.get("REFLEX_HTTP_REQUEST_TIMEOUT", "120")
 )
 MAX_OPTIMIZE_TEXT = 1_000_000
+
+_TEMPLATE_PACK_ROOT = Path(
+    os.environ.get(
+        "REFLEX_TEMPLATE_PACK_ROOT",
+        str(Path(__file__).resolve().parents[4] / "template-packs" / "builtin"),
+    )
+)
+
+
+def _load_template_pack() -> FileTemplatePack | None:
+    try:
+        return FileTemplatePack.load(_TEMPLATE_PACK_ROOT)
+    except Exception:
+        return None
 
 _ALLOWED_MODES = frozenset({"content", "prompt"})
 _SSE_HEADERS = {
@@ -108,6 +125,7 @@ def create_app(gateway: SidecarGateway | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         gateway.start()
+        _app.state.template_pack = _load_template_pack()
         yield
         gateway.close()
 
@@ -116,6 +134,34 @@ def create_app(gateway: SidecarGateway | None = None) -> FastAPI:
     @app.get("/v1/health")
     def health(_: Request = Depends(_authorize)) -> dict[str, object]:
         return {"ok": gateway.is_alive()}
+
+    @app.get("/v1/scenes")
+    def scene_catalog(_: Request = Depends(_authorize)) -> dict[str, object]:
+        """Scene library catalog grouped by first-level category."""
+        pack = getattr(app.state, "template_pack", None)
+        if pack is None:
+            raise HTTPException(status_code=503, detail="template pack unavailable")
+        categories = []
+        for category_id in pack.category_ids:
+            scenes = sorted(
+                scene_id
+                for scene_id, category in pack.scene_categories.items()
+                if category == category_id
+            )
+            categories.append({"id": category_id, "scenes": scenes})
+        unclassified = sorted(
+            scene_id
+            for scene_id in pack.scene_ids
+            if scene_id not in pack.scene_categories
+        )
+        return {
+            "categories": categories,
+            "scenes": [
+                {"id": scene_id, "category": pack.scene_categories.get(scene_id)}
+                for scene_id in pack.scene_ids
+            ],
+            "unclassified": unclassified,
+        }
 
     @app.post("/v1/ping")
     def ping(_: Request = Depends(_authorize)) -> dict[str, object]:

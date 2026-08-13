@@ -49,9 +49,9 @@ _SCENE_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("business", "resume", ("简历", "履历", "优化简历", "resume", "cv")),
     ("business", "cover_letter", ("求职信", "自荐信", "cover letter", "求职申请")),
     ("business", "interview", ("面试", "面试准备", "面试问题", "面试话术", "interview")),
-    ("marketing", "headline", ("标题", "起标题", "标题生成", "headline", "title")),
+    ("marketing", "headline", ("标题", "起标题", "标题生成", "标题创作", "headline")),
     ("marketing", "sales_script", ("销售话术", "推销", "销售脚本", "销售开场白", "sales pitch")),
-    ("creative", "speech", ("演讲", "致辞", "演讲稿", "开场白", "speech")),
+    ("creative", "speech", ("演讲稿", "写演讲", "致辞", "年会发言", "speech")),
     ("business", "prd", ("产品需求", "prd", "需求文档", "用户故事", "product requirements")),
     ("business", "email", ("商务邮件", "邮件", "收件人：", "发件人：", "email reply")),
 )

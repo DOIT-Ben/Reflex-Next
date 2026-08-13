@@ -137,6 +137,25 @@ def test_auth_optional_without_token(client):
     assert test_client.get("/v1/health").status_code == 200
 
 
+def test_scene_catalog_returns_grouped_library(client):
+    test_client, _ = client
+    response = test_client.get("/v1/scenes")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert len(body["categories"]) == 10
+    business = next(category for category in body["categories"] if category["id"] == "business")
+    assert "email" in business["scenes"]
+    assert "resume" in business["scenes"]
+    marketing = next(category for category in body["categories"] if category["id"] == "marketing")
+    assert "headline" in marketing["scenes"]
+
+    scene_ids = {scene["id"] for scene in body["scenes"]}
+    assert len(scene_ids) >= 49
+    assert {"email", "resume", "prd", "general"}.issubset(scene_ids)
+    assert body["unclassified"] == ["general"]
+
+
 def test_live_ping_returns_pong(live_client):
     response = live_client.post("/v1/ping")
     assert response.status_code == 200

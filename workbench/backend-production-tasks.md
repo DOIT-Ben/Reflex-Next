@@ -443,3 +443,9 @@
 - 第一批吸收 7 个二级场景（模板 + 检测规则 + manifest 注册）：resume 简历、cover_letter 求职信、interview 面试、headline 标题、sales_script 销售话术、speech 演讲、prd 产品需求文档（归 business/marketing/creative 三类）；
 - 场景库从 42 增至 49 个场景模板；email 规则移除"求职信"marker（归 cover_letter）；
 - 全量 Python 门禁通过：reflex-core 109、reflex-runtime 326、reflex-http-host 26。
+
+## 2026-08-14 场景功能完善：目录接口与检测规则收敛
+
+- 新增 `GET /v1/scenes` 场景库目录端点：返回 10 个一级分类分组 + 49 个场景 + 未分类项，模板包路径可配（REFLEX_TEMPLATE_PACK_ROOT），客户端可构建场景选择 UI；
+- 检测规则收敛过宽 marker：headline 去掉 "title"（技术文本常见误判）、speech 去掉 "开场白" 与单独 "演讲"，保留明确意图词；
+- 全量 Python 门禁通过：reflex-core 109、reflex-http-host 27（新增 scene_catalog 用例）。
