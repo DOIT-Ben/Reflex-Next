@@ -18,8 +18,9 @@
   },
   "scenes": [
     {
-      "id": "general",
-      "path": "content/general/scene.md"
+      "id": "ad_creative",
+      "path": "content/ad_creative/scene.md",
+      "category": "marketing"
     },
     {
       "id": "article_writing",
@@ -27,43 +28,13 @@
       "category": "marketing"
     },
     {
-      "id": "social_media",
-      "path": "content/social_media/scene.md",
-      "category": "marketing"
-    },
-    {
-      "id": "email",
-      "path": "content/email/scene.md",
-      "category": "business"
-    },
-    {
-      "id": "ad_creative",
-      "path": "content/ad_creative/scene.md",
-      "category": "marketing"
-    },
-    {
-      "id": "product_desc",
-      "path": "content/product_desc/scene.md",
-      "category": "marketing"
-    },
-    {
-      "id": "paper_writing",
-      "path": "content/paper_writing/scene.md",
-      "category": "academic"
+      "id": "bug_fix",
+      "path": "content/bug_fix/scene.md",
+      "category": "code"
     },
     {
       "id": "code_generation",
       "path": "content/code_generation/scene.md",
-      "category": "code"
-    },
-    {
-      "id": "code_review",
-      "path": "content/code_review/scene.md",
-      "category": "code"
-    },
-    {
-      "id": "bug_fix",
-      "path": "content/bug_fix/scene.md",
       "category": "code"
     },
     {
@@ -72,19 +43,9 @@
       "category": "code"
     },
     {
-      "id": "tech_doc",
-      "path": "content/tech_doc/scene.md",
-      "category": "tech_doc"
-    },
-    {
-      "id": "data_analysis",
-      "path": "content/data_analysis/scene.md",
-      "category": "market_analysis"
-    },
-    {
-      "id": "market_research",
-      "path": "content/market_research/scene.md",
-      "category": "market_analysis"
+      "id": "code_review",
+      "path": "content/code_review/scene.md",
+      "category": "code"
     },
     {
       "id": "competitor_analysis",
@@ -92,44 +53,19 @@
       "category": "market_analysis"
     },
     {
-      "id": "literature_review",
-      "path": "content/literature_review/scene.md",
-      "category": "academic"
-    },
-    {
-      "id": "trend_prediction",
-      "path": "content/trend_prediction/scene.md",
-      "category": "market_analysis"
-    },
-    {
-      "id": "knowledge_explain",
-      "path": "content/knowledge_explain/scene.md",
-      "category": "academic"
-    },
-    {
-      "id": "study_plan",
-      "path": "content/study_plan/scene.md",
-      "category": "education"
-    },
-    {
-      "id": "exam_prep",
-      "path": "content/exam_prep/scene.md",
-      "category": "education"
-    },
-    {
       "id": "course_design",
       "path": "content/course_design/scene.md",
       "category": "education"
     },
     {
-      "id": "homework_help",
-      "path": "content/homework_help/scene.md",
-      "category": "education"
+      "id": "cover_letter",
+      "path": "content/cover_letter/scene.md",
+      "category": "business"
     },
     {
-      "id": "report_writing",
-      "path": "content/report_writing/scene.md",
-      "category": "business"
+      "id": "data_analysis",
+      "path": "content/data_analysis/scene.md",
+      "category": "market_analysis"
     },
     {
       "id": "decision_analysis",
@@ -137,34 +73,24 @@
       "category": "business"
     },
     {
-      "id": "project_planning",
-      "path": "content/project_planning/scene.md",
+      "id": "doc_translation",
+      "path": "content/doc_translation/scene.md",
+      "category": "translation"
+    },
+    {
+      "id": "email",
+      "path": "content/email/scene.md",
       "category": "business"
     },
     {
-      "id": "process_optimization",
-      "path": "content/process_optimization/scene.md",
-      "category": "business"
+      "id": "emergency_plan",
+      "path": "content/emergency_plan/scene.md",
+      "category": "diagnosis"
     },
     {
-      "id": "meeting_summary",
-      "path": "content/meeting_summary/scene.md",
-      "category": "business"
-    },
-    {
-      "id": "story_writing",
-      "path": "content/story_writing/scene.md",
-      "category": "creative"
-    },
-    {
-      "id": "script_writing",
-      "path": "content/script_writing/scene.md",
-      "category": "creative"
-    },
-    {
-      "id": "poetry_creation",
-      "path": "content/poetry_creation/scene.md",
-      "category": "creative"
+      "id": "exam_prep",
+      "path": "content/exam_prep/scene.md",
+      "category": "education"
     },
     {
       "id": "game_plot",
@@ -172,29 +98,18 @@
       "category": "creative"
     },
     {
-      "id": "world_building",
-      "path": "content/world_building/scene.md",
-      "category": "creative"
+      "id": "general",
+      "path": "content/general/scene.md"
     },
     {
-      "id": "doc_translation",
-      "path": "content/doc_translation/scene.md",
-      "category": "translation"
+      "id": "headline",
+      "path": "content/headline/scene.md",
+      "category": "marketing"
     },
     {
-      "id": "localization",
-      "path": "content/localization/scene.md",
-      "category": "translation"
-    },
-    {
-      "id": "literary_translation",
-      "path": "content/literary_translation/scene.md",
-      "category": "translation"
-    },
-    {
-      "id": "term_unification",
-      "path": "content/term_unification/scene.md",
-      "category": "translation"
+      "id": "homework_help",
+      "path": "content/homework_help/scene.md",
+      "category": "education"
     },
     {
       "id": "interpreting_notes",
@@ -202,13 +117,88 @@
       "category": "translation"
     },
     {
+      "id": "interview",
+      "path": "content/interview/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "knowledge_explain",
+      "path": "content/knowledge_explain/scene.md",
+      "category": "academic"
+    },
+    {
+      "id": "literary_translation",
+      "path": "content/literary_translation/scene.md",
+      "category": "translation"
+    },
+    {
+      "id": "literature_review",
+      "path": "content/literature_review/scene.md",
+      "category": "academic"
+    },
+    {
+      "id": "localization",
+      "path": "content/localization/scene.md",
+      "category": "translation"
+    },
+    {
+      "id": "market_research",
+      "path": "content/market_research/scene.md",
+      "category": "market_analysis"
+    },
+    {
+      "id": "meeting_summary",
+      "path": "content/meeting_summary/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "paper_writing",
+      "path": "content/paper_writing/scene.md",
+      "category": "academic"
+    },
+    {
+      "id": "poetry_creation",
+      "path": "content/poetry_creation/scene.md",
+      "category": "creative"
+    },
+    {
+      "id": "prd",
+      "path": "content/prd/scene.md",
+      "category": "business"
+    },
+    {
       "id": "problem_diagnosis",
       "path": "content/problem_diagnosis/scene.md",
       "category": "diagnosis"
     },
     {
-      "id": "solution_generation",
-      "path": "content/solution_generation/scene.md",
+      "id": "process_optimization",
+      "path": "content/process_optimization/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "product_desc",
+      "path": "content/product_desc/scene.md",
+      "category": "marketing"
+    },
+    {
+      "id": "project_planning",
+      "path": "content/project_planning/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "report_writing",
+      "path": "content/report_writing/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "resume",
+      "path": "content/resume/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "risk_assessment",
+      "path": "content/risk_assessment/scene.md",
       "category": "diagnosis"
     },
     {
@@ -217,14 +207,59 @@
       "category": "diagnosis"
     },
     {
-      "id": "risk_assessment",
-      "path": "content/risk_assessment/scene.md",
+      "id": "sales_script",
+      "path": "content/sales_script/scene.md",
+      "category": "marketing"
+    },
+    {
+      "id": "script_writing",
+      "path": "content/script_writing/scene.md",
+      "category": "creative"
+    },
+    {
+      "id": "social_media",
+      "path": "content/social_media/scene.md",
+      "category": "marketing"
+    },
+    {
+      "id": "solution_generation",
+      "path": "content/solution_generation/scene.md",
       "category": "diagnosis"
     },
     {
-      "id": "emergency_plan",
-      "path": "content/emergency_plan/scene.md",
-      "category": "diagnosis"
+      "id": "speech",
+      "path": "content/speech/scene.md",
+      "category": "creative"
+    },
+    {
+      "id": "story_writing",
+      "path": "content/story_writing/scene.md",
+      "category": "creative"
+    },
+    {
+      "id": "study_plan",
+      "path": "content/study_plan/scene.md",
+      "category": "education"
+    },
+    {
+      "id": "tech_doc",
+      "path": "content/tech_doc/scene.md",
+      "category": "tech_doc"
+    },
+    {
+      "id": "term_unification",
+      "path": "content/term_unification/scene.md",
+      "category": "translation"
+    },
+    {
+      "id": "trend_prediction",
+      "path": "content/trend_prediction/scene.md",
+      "category": "market_analysis"
+    },
+    {
+      "id": "world_building",
+      "path": "content/world_building/scene.md",
+      "category": "creative"
     }
   ],
   "styles": [

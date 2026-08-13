@@ -436,3 +436,10 @@
 - 检测器 40 条规则升级为 `(category, scene_id, markers)` 三元组，`SceneDetectionResult` 与 `scene` 事件新增 `category` 字段（附加字段，旧消费方不受影响）；手动指定场景（`scene_policy: manual`）支持冒号拆分；
 - HTTP 宿主零改动透传 `scene`（自由字符串）；新增全链路契约测试：`scene="business:email"` → scene 事件 `scene=email, category=business, method=manual`；
 - 全量 Python 门禁通过：reflex-core 102、reflex-runtime 326、reflex-http-host + 工具契约 43；分类模板内容为产品资产（每类含场景描述/重点/优化指导/4 风格指导），可逐类审核调整。
+
+## 2026-08-14 场景库开源吸收（第一批 7 场景）
+
+- 建立长期吸收机制 `template-packs/SOURCES.md`：登记开源来源（awesome-chatgpt-prompts-zh MIT / awesome-chatgpt-prompts CC0 / anthropics-skills Apache-2.0 / agency-swarm MIT）、许可、筛选标准（只吸收方法论不复制原文、跳过医疗法律金融高风险与娱乐角色）与扩展场景流程；
+- 第一批吸收 7 个二级场景（模板 + 检测规则 + manifest 注册）：resume 简历、cover_letter 求职信、interview 面试、headline 标题、sales_script 销售话术、speech 演讲、prd 产品需求文档（归 business/marketing/creative 三类）；
+- 场景库从 42 增至 49 个场景模板；email 规则移除"求职信"marker（归 cover_letter）；
+- 全量 Python 门禁通过：reflex-core 109、reflex-runtime 326、reflex-http-host 26。
