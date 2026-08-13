@@ -249,12 +249,16 @@ $sources = @(
   [PSCustomObject]@{ Label = "npm"; Path = "apps\tauri-host\package.json"; Kind = "json"; Version = $null },
   [PSCustomObject]@{ Label = "Python reflex-core"; Path = "packages\reflex-core\pyproject.toml"; Kind = "toml"; Section = "project"; Version = $null },
   [PSCustomObject]@{ Label = "Python reflex-runtime"; Path = "packages\reflex-runtime\pyproject.toml"; Kind = "toml"; Section = "project"; Version = $null },
+  [PSCustomObject]@{ Label = "Python reflex-http-host"; Path = "packages\reflex-http-host\pyproject.toml"; Kind = "toml"; Section = "project"; Version = $null },
   [PSCustomObject]@{ Label = "Python reflex-cloud"; Path = "services\reflex-cloud\pyproject.toml"; Kind = "toml"; Section = "project"; Version = $null },
   [PSCustomObject]@{ Label = "npm lockfile"; Path = "apps\tauri-host\package-lock.json"; Kind = "npm-lock"; Version = $null },
   [PSCustomObject]@{ Label = "Cargo lockfile"; Path = "apps\tauri-host\src-tauri\Cargo.lock"; Kind = "lock"; Package = "reflex-next-tauri-host"; Version = $null },
   [PSCustomObject]@{ Label = "Python reflex-core lockfile"; Path = "packages\reflex-core\uv.lock"; Kind = "lock"; Package = "reflex-core"; Version = $null },
   [PSCustomObject]@{ Label = "Python reflex-runtime lockfile"; Path = "packages\reflex-runtime\uv.lock"; Kind = "lock"; Package = "reflex-runtime"; Version = $null },
   [PSCustomObject]@{ Label = "Python reflex-runtime core dependency lock"; Path = "packages\reflex-runtime\uv.lock"; Kind = "lock"; Package = "reflex-core"; Version = $null },
+  [PSCustomObject]@{ Label = "Python reflex-http-host lockfile"; Path = "packages\reflex-http-host\uv.lock"; Kind = "lock"; Package = "reflex-http-host"; Version = $null },
+  [PSCustomObject]@{ Label = "Python reflex-http-host core dependency lock"; Path = "packages\reflex-http-host\uv.lock"; Kind = "lock"; Package = "reflex-core"; Version = $null },
+  [PSCustomObject]@{ Label = "Python reflex-http-host runtime dependency lock"; Path = "packages\reflex-http-host\uv.lock"; Kind = "lock"; Package = "reflex-runtime"; Version = $null },
   [PSCustomObject]@{ Label = "Python reflex-cloud lockfile"; Path = "services\reflex-cloud\uv.lock"; Kind = "lock"; Package = "reflex-cloud"; Version = $null },
   [PSCustomObject]@{ Label = "Python reflex-cloud core dependency lock"; Path = "services\reflex-cloud\uv.lock"; Kind = "lock"; Package = "reflex-core"; Version = $null }
 )

@@ -420,3 +420,11 @@
 - 高速复现 600/min×10,000 次通过：`runtime-soak-repro-fast-20260813-2022.json`，5,000 完成/5,000 取消、65,000 协议事件、`passed=true`；独立 12×80s 长 sleep 微实验全部精确返回，确认非确定性复现；
 - 修复：`tools\soak_backend.py` 限速等待改为 1s 粒度切片循环（`_sliced_sleep`，默认 sleeper，注入契约不变），新增契约测试 1 项；`16 passed`，有界限速验证 `passed=true`；
 - P3-002 保持进行中，正式浸泡在修复后重新启动。
+
+## 2026-08-14 本地 HTTP 宿主（SSE）形态建立
+
+- 新增 `packages/reflex-http-host`：本地 HTTP 宿主，网关进程消费同一套 NDJSON sidecar 协议（与 Tauri 宿主同构），零侵入 Core/Runtime；
+- 端点：`POST /v1/optimize`（SSE 流式，客户端可自选 request_id，断开自动 cancel）、`POST /v1/requests/{id}/cancel`、`POST /v1/ping`、`GET /v1/providers`、`GET /v1/health`；默认绑定 127.0.0.1:8790，可选 Bearer 鉴权（REFLEX_HTTP_TOKEN），单请求 120s 超时，子进程环境白名单不继承凭据；
+- 契约测试 40 项通过（包内 23 + 工具契约 17），`verify_backend.ps1 -PythonProject reflex-http-host` 与 `check_version_consistency.ps1` 通过；
+- 分级并发压力证据 `workbench/http-soak-graded-20260814-0400.json`：并发 1/4/16/32 × 20 次全通过，取消每 4 次全部命中 cancelled 终态，零串线零缺终态；P95 884-1488ms；连接级偶发抖动经单次重试消化；Runtime 4 活跃+32 排队容量为并发硬边界，超限以 runtime_busy 稳定语义表达；
+- 验证记录 `docs/verification/backend-http-host.md`；P3-002 等现有门禁状态不变。

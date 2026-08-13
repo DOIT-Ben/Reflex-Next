@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reflex-http-host"
+version = "0.7.0-alpha.8"
+description = "Local HTTP host (SSE) for the Reflex Next runtime sidecar."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "reflex-core",
+  "reflex-runtime",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<0.29",
+  "pytest>=9,<10",
+]
+
+[project.scripts]
+reflex-http-host = "reflex_http_host.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.uv.sources]
+reflex-core = { path = "../../packages/reflex-core", editable = true }
+reflex-runtime = { path = "../../packages/reflex-runtime", editable = true }

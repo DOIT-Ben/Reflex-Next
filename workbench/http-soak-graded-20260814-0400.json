@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "fixture": "http_mock_sse",
+  "plan": {
+    "levels": [
+      1,
+      4,
+      16,
+      32
+    ],
+    "iterations_per_level": 20,
+    "cancel_every": 4,
+    "timeout_seconds": 15.0
+  },
+  "levels": [
+    {
+      "concurrency": 1,
+      "iterations": 20,
+      "completed_requests": 15,
+      "cancelled_requests": 5,
+      "busy_requests": 0,
+      "retried_requests": 0,
+      "failures": [],
+      "failure_details": [],
+      "cross_talk_requests": 0,
+      "missing_terminal_requests": 0,
+      "latency_ms_p50": 80.5,
+      "latency_ms_p95": 1002.8,
+      "passed": true
+    },
+    {
+      "concurrency": 4,
+      "iterations": 20,
+      "completed_requests": 15,
+      "cancelled_requests": 5,
+      "busy_requests": 0,
+      "retried_requests": 0,
+      "failures": [],
+      "failure_details": [],
+      "cross_talk_requests": 0,
+      "missing_terminal_requests": 0,
+      "latency_ms_p50": 90.1,
+      "latency_ms_p95": 883.6,
+      "passed": true
+    },
+    {
+      "concurrency": 16,
+      "iterations": 20,
+      "completed_requests": 15,
+      "cancelled_requests": 5,
+      "busy_requests": 0,
+      "retried_requests": 5,
+      "failures": [],
+      "failure_details": [],
+      "cross_talk_requests": 0,
+      "missing_terminal_requests": 0,
+      "latency_ms_p50": 275.8,
+      "latency_ms_p95": 982.1,
+      "passed": true
+    },
+    {
+      "concurrency": 32,
+      "iterations": 20,
+      "completed_requests": 15,
+      "cancelled_requests": 5,
+      "busy_requests": 0,
+      "retried_requests": 0,
+      "failures": [],
+      "failure_details": [],
+      "cross_talk_requests": 0,
+      "missing_terminal_requests": 0,
+      "latency_ms_p50": 757.6,
+      "latency_ms_p95": 1488.4,
+      "passed": true
+    }
+  ],
+  "passed": true
+}
