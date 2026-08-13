@@ -20,6 +20,7 @@ from ..events import (
 )
 from ..interfaces import Provider, SceneDetector, TemplateResolver
 from ..models import OptimizeRequest, SceneDetectionResult
+from ..provider_events import ProviderEvent
 from ..protocol import EventEnvelope, new_request_id
 from ..safety import InputValidationError, safe_provider_error, sanitize_text, validate_input
 
@@ -27,6 +28,13 @@ from ..safety import InputValidationError, safe_provider_error, sanitize_text, v
 _MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 _MAX_OUTPUT_CHUNKS = 50_000
 _MAX_REQUEST_SECONDS = 120.0
+
+
+class _ProviderEventError(RuntimeError):
+    def __init__(self, code: str, *, retryable: bool) -> None:
+        super().__init__("Provider request failed.")
+        self.code = code
+        self.retryable = retryable
 
 
 class _RequestDeadline:
@@ -161,6 +169,7 @@ class OptimizeUseCase:
                 detected_scene.confidence,
                 detected_scene.method,
                 detected_scene.reason,
+                getattr(detected_scene, "category", None),
             ),
         )
 
@@ -199,13 +208,24 @@ class OptimizeUseCase:
             yield self._request_timeout(current_request_id)
             return
 
-        yield self._envelope(current_request_id, request_event(provider_id, model))
+        yield self._envelope(
+            current_request_id,
+            request_event(provider_id, model, protocol=getattr(self._provider, "protocol", None)),
+        )
 
         try:
             chunks: list[str] = []
             output_bytes = 0
             output_chunks = 0
-            for raw_chunk in self._provider.stream(rendered, request, token):
+            provider_usage: dict[str, Any] = {}
+            structured_stream = callable(getattr(self._provider, "stream_events", None))
+            provider_started = False
+            provider_completed = False
+            provider_terminal = False
+            provider_metadata: dict[str, Any] = {}
+            event_stream = getattr(self._provider, "stream_events", None)
+            raw_events = event_stream(rendered, request, token) if callable(event_stream) else self._provider.stream(rendered, request, token)
+            for raw_chunk in raw_events:
                 if token.is_cancelled:
                     yield self._cancellation_terminal(current_request_id, deadline)
                     return
@@ -213,6 +233,58 @@ class OptimizeUseCase:
                     deadline.expire()
                     yield self._request_timeout(current_request_id)
                     return
+                if isinstance(raw_chunk, ProviderEvent):
+                    if provider_terminal:
+                        raise _ProviderEventError(
+                            "provider_invalid_response", retryable=False
+                        )
+                    if raw_chunk.kind == "request_started":
+                        if provider_started:
+                            raise _ProviderEventError(
+                                "provider_invalid_response", retryable=False
+                            )
+                        provider_started = True
+                        response_id = raw_chunk.data.get("response_id")
+                        if isinstance(response_id, str) and response_id:
+                            provider_metadata["response_id"] = response_id
+                        provider_request_id = raw_chunk.data.get("request_id")
+                        if isinstance(provider_request_id, str) and provider_request_id:
+                            provider_metadata["provider_request_id"] = provider_request_id
+                        continue
+                    if raw_chunk.kind == "cancelled":
+                        provider_terminal = True
+                        yield self._cancellation_terminal(current_request_id, deadline)
+                        return
+                    if not provider_started:
+                        raise _ProviderEventError(
+                            "provider_invalid_response", retryable=False
+                        )
+                    if raw_chunk.kind == "text_delta":
+                        raw_chunk = raw_chunk.data.get("text", "")
+                    elif raw_chunk.kind == "usage":
+                        provider_usage.update(raw_chunk.data)
+                        continue
+                    elif raw_chunk.kind == "error":
+                        provider_terminal = True
+                        raise _ProviderEventError(
+                            str(raw_chunk.data.get("code", "provider_error")),
+                            retryable=bool(raw_chunk.data.get("retryable", False)),
+                        )
+                    elif raw_chunk.kind == "completed":
+                        provider_terminal = True
+                        provider_completed = True
+                        for key in ("response_id", "finish_reason"):
+                            value = raw_chunk.data.get(key)
+                            if isinstance(value, str) and value:
+                                provider_metadata[key] = value
+                        provider_request_id = raw_chunk.data.get("request_id")
+                        if isinstance(provider_request_id, str) and provider_request_id:
+                            provider_metadata["provider_request_id"] = provider_request_id
+                        continue
+                elif structured_stream:
+                    raise _ProviderEventError(
+                        "provider_invalid_response", retryable=False
+                    )
                 chunk = sanitize_text(raw_chunk)
                 if not chunk:
                     continue
@@ -231,6 +303,11 @@ class OptimizeUseCase:
                 output_chunks = next_output_chunks
                 chunks.append(chunk)
                 yield self._envelope(current_request_id, chunk_event(chunk))
+
+            if structured_stream and (not provider_started or not provider_completed):
+                raise _ProviderEventError(
+                    "provider_invalid_response", retryable=False
+                )
 
             if token.is_cancelled:
                 yield self._cancellation_terminal(current_request_id, deadline)
@@ -273,7 +350,11 @@ class OptimizeUseCase:
             )
             yield self._envelope(
                 current_request_id,
-                metric_event(elapsed_seconds=max(0.0, self._clock() - started_at)),
+                metric_event(
+                    elapsed_seconds=max(0.0, self._clock() - started_at),
+                    **provider_usage,
+                    **provider_metadata,
+                ),
             )
         except OperationCancelled:
             yield self._cancellation_terminal(current_request_id, deadline)
@@ -289,10 +370,16 @@ class OptimizeUseCase:
 
     def _resolve_scene(self, request: OptimizeRequest) -> SceneDetectionResult:
         if request.scene and request.scene_policy in {"manual", "ask"}:
+            category: str | None = None
+            scene = request.scene
+            if ":" in scene:
+                category, _, scene = scene.partition(":")
+                category = category or None
             return SceneDetectionResult(
-                scene=request.scene,
+                scene=scene,
                 confidence=1.0,
                 method="manual",
+                category=category,
             )
         try:
             result = self._scene_detector.detect(request.text, request)
@@ -305,6 +392,7 @@ class OptimizeUseCase:
                 confidence=0.0,
                 method="fallback",
                 reason="scene_detector_failed",
+                category="general",
             )
 
     @staticmethod

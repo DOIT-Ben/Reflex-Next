@@ -4,6 +4,7 @@ from reflex_core import (
     OperationCancelled,
     OptimizeRequest,
     OptimizeUseCase,
+    ProviderEvent,
     SceneDetectionResult,
 )
 from reflex_core.testing import FakeProvider, FakeSceneDetector, FakeTemplateResolver
@@ -288,6 +289,93 @@ def test_empty_provider_result_is_recoverable_error():
     events = list(make_use_case(provider=FakeProvider(())).optimize(OptimizeRequest("input")))
     assert events[-1].event.type is EventType.ERROR
     assert events[-1].event.data["code"] == "empty_result"
+
+
+class StructuredProvider:
+    id = "structured"
+    model = "model-1"
+    protocol = "openai_responses"
+
+    def __init__(self, events):
+        self.events = events
+
+    def stream_events(self, rendered_request, request, cancellation):
+        del rendered_request, request, cancellation
+        yield from self.events
+
+
+def test_structured_provider_metadata_is_preserved_in_metric():
+    provider = StructuredProvider(
+        (
+            ProviderEvent.started(
+                provider="structured",
+                model="model-1",
+                protocol="openai_responses",
+                response_id="resp-1",
+            ),
+            ProviderEvent.text("result"),
+            ProviderEvent.usage(input_tokens=4, output_tokens=2, total_tokens=6),
+            ProviderEvent.completed(
+                finish_reason="stop", response_id="resp-1"
+            ),
+        )
+    )
+
+    events = list(make_use_case(provider=provider).optimize(OptimizeRequest("input")))
+
+    assert EventType.DONE in event_types(events)
+    assert events[-1].event.data["response_id"] == "resp-1"
+    assert events[-1].event.data["finish_reason"] == "stop"
+    assert events[-1].event.data["total_tokens"] == 6
+
+
+def test_structured_provider_requires_started_before_content():
+    provider = StructuredProvider(
+        (ProviderEvent.text("invalid"), ProviderEvent.completed())
+    )
+
+    events = list(make_use_case(provider=provider).optimize(OptimizeRequest("input")))
+
+    assert events[-1].event.type is EventType.ERROR
+    assert events[-1].event.data["code"] == "provider_invalid_response"
+
+
+def test_structured_provider_rejects_events_after_terminal():
+    provider = StructuredProvider(
+        (
+            ProviderEvent.started(
+                provider="structured",
+                model="model-1",
+                protocol="openai_responses",
+            ),
+            ProviderEvent.text("first"),
+            ProviderEvent.completed(),
+            ProviderEvent.text("late"),
+        )
+    )
+
+    events = list(make_use_case(provider=provider).optimize(OptimizeRequest("input")))
+
+    assert EventType.DONE not in event_types(events)
+    assert events[-1].event.data["code"] == "provider_invalid_response"
+
+
+def test_structured_provider_error_keeps_safe_stable_code():
+    provider = StructuredProvider(
+        (
+            ProviderEvent.started(
+                provider="structured",
+                model="model-1",
+                protocol="openai_responses",
+            ),
+            ProviderEvent.error("provider_rate_limited", retryable=True),
+        )
+    )
+
+    events = list(make_use_case(provider=provider).optimize(OptimizeRequest("input")))
+
+    assert events[-1].event.type is EventType.ERROR
+    assert events[-1].event.data["code"] == "provider_rate_limited"
 
 
 def test_template_error_happens_before_provider_request_and_is_safe():

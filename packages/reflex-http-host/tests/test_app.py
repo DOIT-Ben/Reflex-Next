@@ -203,3 +203,28 @@ def test_live_optimize_manual_scene_returns_scene_event(live_client):
     assert len(scene_envelopes) == 1
     assert scene_envelopes[0]["event"]["data"]["scene"] == "sales"
     assert scene_envelopes[0]["event"]["data"]["method"] == "manual"
+
+
+def test_live_optimize_category_colon_scene_reports_category(live_client):
+    with live_client.stream(
+        "POST",
+        "/v1/optimize",
+        json={
+            "text": "hello",
+            "provider": "mock",
+            "model": "mock-stream",
+            "scene": "business:email",
+            "scene_policy": "manual",
+        },
+    ) as response:
+        lines = list(response.iter_lines())
+
+    envelopes = parse_sse(lines)
+    scene_envelopes = [
+        envelope for envelope in envelopes
+        if envelope.get("event", {}).get("type") == "scene"
+    ]
+    assert len(scene_envelopes) == 1
+    assert scene_envelopes[0]["event"]["data"]["scene"] == "email"
+    assert scene_envelopes[0]["event"]["data"]["category"] == "business"
+    assert scene_envelopes[0]["event"]["data"]["method"] == "manual"

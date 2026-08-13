@@ -428,3 +428,11 @@
 - 契约测试 40 项通过（包内 23 + 工具契约 17），`verify_backend.ps1 -PythonProject reflex-http-host` 与 `check_version_consistency.ps1` 通过；
 - 分级并发压力证据 `workbench/http-soak-graded-20260814-0400.json`：并发 1/4/16/32 × 20 次全通过，取消每 4 次全部命中 cancelled 终态，零串线零缺终态；P95 884-1488ms；连接级偶发抖动经单次重试消化；Runtime 4 活跃+32 排队容量为并发硬边界，超限以 runtime_busy 稳定语义表达；
 - 验证记录 `docs/verification/backend-http-host.md`；P3-002 等现有门禁状态不变。
+
+## 2026-08-14 场景库分层（10 大类 + 42 子场景）
+
+- 模板包 `template-packs/builtin` 升级：42 个场景全部标注一级分类（41 个带 category，general 除外），新增 10 个分类默认模板（business/marketing/market_analysis/tech_doc/code/diagnosis/academic/education/creative/translation）；
+- `TemplatePackManifest/FileTemplatePack` 支持 `categories` 资产与场景 `category` 元数据（向后兼容：旧 manifest 无分类字段仍可解析）；`TemplatePackResolver` 支持 `scene="category:scene"`（子场景+分类）、`scene="category"`（分类默认模板）、`scene="scene"`（旧形式自动归类），未知场景回退 general；
+- 检测器 40 条规则升级为 `(category, scene_id, markers)` 三元组，`SceneDetectionResult` 与 `scene` 事件新增 `category` 字段（附加字段，旧消费方不受影响）；手动指定场景（`scene_policy: manual`）支持冒号拆分；
+- HTTP 宿主零改动透传 `scene`（自由字符串）；新增全链路契约测试：`scene="business:email"` → scene 事件 `scene=email, category=business, method=manual`；
+- 全量 Python 门禁通过：reflex-core 102、reflex-runtime 326、reflex-http-host + 工具契约 43；分类模板内容为产品资产（每类含场景描述/重点/优化指导/4 风格指导），可逐类审核调整。

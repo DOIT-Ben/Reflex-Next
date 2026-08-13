@@ -57,7 +57,21 @@ EXPECTED_SCENES = (
 EXPECTED_STYLES = ("concise", "balanced", "detailed", "creative", "precise")
 
 
-def test_builtin_pack_manifest_lists_exactly_42_scenes_and_48_assets():
+EXPECTED_CATEGORIES = (
+    "business",
+    "marketing",
+    "market_analysis",
+    "tech_doc",
+    "code",
+    "diagnosis",
+    "academic",
+    "education",
+    "creative",
+    "translation",
+)
+
+
+def test_builtin_pack_manifest_lists_exactly_42_scenes_and_58_assets():
     pack = FileTemplatePack.load(BUILTIN_PACK_ROOT)
 
     assert pack.manifest.id == "builtin"
@@ -66,10 +80,20 @@ def test_builtin_pack_manifest_lists_exactly_42_scenes_and_48_assets():
     assert pack.manifest.supported_languages == ("zh-CN", "en-US")
     assert pack.scene_ids == EXPECTED_SCENES
     assert pack.style_ids == EXPECTED_STYLES
-    assert pack.asset_count == 48
+    assert pack.category_ids == EXPECTED_CATEGORIES
+    assert pack.asset_count == 58
     assert all(pack.read_scene(scene_id).strip() for scene_id in pack.scene_ids)
     assert all(pack.read_style(style_id).strip() for style_id in pack.style_ids)
+    assert all(pack.read_category(category_id).strip() for category_id in pack.category_ids)
     assert pack.read_system().startswith("# Role:")
+
+
+def test_builtin_pack_every_scene_belongs_to_a_registered_category():
+    pack = FileTemplatePack.load(BUILTIN_PACK_ROOT)
+
+    scene_categories = pack.scene_categories
+    assert set(scene_categories) == set(EXPECTED_SCENES) - {"general"}
+    assert set(scene_categories.values()).issubset(set(pack.category_ids))
 
 
 def test_template_resolver_renders_mode_style_scene_and_language_without_user_text_in_system():
@@ -110,6 +134,56 @@ def test_template_resolver_renders_mode_style_scene_and_language_without_user_te
         "content": "Review this change without leaking it into the system message.",
     }
     assert content["messages"][1]["content"] not in content_system
+
+
+def test_template_resolver_supports_category_colon_scene():
+    resolver = TemplatePackResolver(FileTemplatePack.load(BUILTIN_PACK_ROOT))
+    scene = SceneDetectionResult("business:email", 1.0, "manual")
+
+    content = resolver.render(
+        OptimizeRequest("hello", style="concise"),
+        scene,
+    )
+    assert content["scene"] == "email"
+    assert content["category"] == "business"
+    assert "邮件撰写" in content["messages"][0]["content"]
+
+
+def test_template_resolver_supports_category_only_template():
+    resolver = TemplatePackResolver(FileTemplatePack.load(BUILTIN_PACK_ROOT))
+    scene = SceneDetectionResult("marketing", 1.0, "manual")
+
+    content = resolver.render(
+        OptimizeRequest("hello", style="concise"),
+        scene,
+    )
+    assert content["scene"] == "marketing"
+    assert content["category"] == "marketing"
+    assert "营销文案" in content["messages"][0]["content"]
+
+
+def test_template_resolver_legacy_scene_keeps_category_metadata():
+    resolver = TemplatePackResolver(FileTemplatePack.load(BUILTIN_PACK_ROOT))
+    scene = SceneDetectionResult("email", 1.0, "manual")
+
+    content = resolver.render(
+        OptimizeRequest("hello", style="concise"),
+        scene,
+    )
+    assert content["scene"] == "email"
+    assert content["category"] == "business"
+
+
+def test_template_resolver_unknown_category_falls_back_to_general():
+    resolver = TemplatePackResolver(FileTemplatePack.load(BUILTIN_PACK_ROOT))
+    scene = SceneDetectionResult("unknown:scene", 1.0, "manual")
+
+    content = resolver.render(
+        OptimizeRequest("hello", style="concise"),
+        scene,
+    )
+    assert content["scene"] == "general"
+    assert content["category"] is None
 
 
 def test_template_resolver_uses_safe_general_fallback_when_pack_cannot_load(tmp_path):

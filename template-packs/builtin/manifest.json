@@ -4,61 +4,291 @@
   "version": "1.0.0",
   "default_scene": "general",
   "default_style": "balanced",
-  "supported_modes": ["content", "prompt"],
-  "supported_languages": ["zh-CN", "en-US"],
+  "supported_modes": [
+    "content",
+    "prompt"
+  ],
+  "supported_languages": [
+    "zh-CN",
+    "en-US"
+  ],
   "system": {
     "id": "base",
     "path": "system/base.md"
   },
   "scenes": [
-    { "id": "general", "path": "content/general/scene.md" },
-    { "id": "article_writing", "path": "content/article_writing/scene.md" },
-    { "id": "social_media", "path": "content/social_media/scene.md" },
-    { "id": "email", "path": "content/email/scene.md" },
-    { "id": "ad_creative", "path": "content/ad_creative/scene.md" },
-    { "id": "product_desc", "path": "content/product_desc/scene.md" },
-    { "id": "paper_writing", "path": "content/paper_writing/scene.md" },
-    { "id": "code_generation", "path": "content/code_generation/scene.md" },
-    { "id": "code_review", "path": "content/code_review/scene.md" },
-    { "id": "bug_fix", "path": "content/bug_fix/scene.md" },
-    { "id": "code_refactor", "path": "content/code_refactor/scene.md" },
-    { "id": "tech_doc", "path": "content/tech_doc/scene.md" },
-    { "id": "data_analysis", "path": "content/data_analysis/scene.md" },
-    { "id": "market_research", "path": "content/market_research/scene.md" },
-    { "id": "competitor_analysis", "path": "content/competitor_analysis/scene.md" },
-    { "id": "literature_review", "path": "content/literature_review/scene.md" },
-    { "id": "trend_prediction", "path": "content/trend_prediction/scene.md" },
-    { "id": "knowledge_explain", "path": "content/knowledge_explain/scene.md" },
-    { "id": "study_plan", "path": "content/study_plan/scene.md" },
-    { "id": "exam_prep", "path": "content/exam_prep/scene.md" },
-    { "id": "course_design", "path": "content/course_design/scene.md" },
-    { "id": "homework_help", "path": "content/homework_help/scene.md" },
-    { "id": "report_writing", "path": "content/report_writing/scene.md" },
-    { "id": "decision_analysis", "path": "content/decision_analysis/scene.md" },
-    { "id": "project_planning", "path": "content/project_planning/scene.md" },
-    { "id": "process_optimization", "path": "content/process_optimization/scene.md" },
-    { "id": "meeting_summary", "path": "content/meeting_summary/scene.md" },
-    { "id": "story_writing", "path": "content/story_writing/scene.md" },
-    { "id": "script_writing", "path": "content/script_writing/scene.md" },
-    { "id": "poetry_creation", "path": "content/poetry_creation/scene.md" },
-    { "id": "game_plot", "path": "content/game_plot/scene.md" },
-    { "id": "world_building", "path": "content/world_building/scene.md" },
-    { "id": "doc_translation", "path": "content/doc_translation/scene.md" },
-    { "id": "localization", "path": "content/localization/scene.md" },
-    { "id": "literary_translation", "path": "content/literary_translation/scene.md" },
-    { "id": "term_unification", "path": "content/term_unification/scene.md" },
-    { "id": "interpreting_notes", "path": "content/interpreting_notes/scene.md" },
-    { "id": "problem_diagnosis", "path": "content/problem_diagnosis/scene.md" },
-    { "id": "solution_generation", "path": "content/solution_generation/scene.md" },
-    { "id": "root_cause", "path": "content/root_cause/scene.md" },
-    { "id": "risk_assessment", "path": "content/risk_assessment/scene.md" },
-    { "id": "emergency_plan", "path": "content/emergency_plan/scene.md" }
+    {
+      "id": "general",
+      "path": "content/general/scene.md"
+    },
+    {
+      "id": "article_writing",
+      "path": "content/article_writing/scene.md",
+      "category": "marketing"
+    },
+    {
+      "id": "social_media",
+      "path": "content/social_media/scene.md",
+      "category": "marketing"
+    },
+    {
+      "id": "email",
+      "path": "content/email/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "ad_creative",
+      "path": "content/ad_creative/scene.md",
+      "category": "marketing"
+    },
+    {
+      "id": "product_desc",
+      "path": "content/product_desc/scene.md",
+      "category": "marketing"
+    },
+    {
+      "id": "paper_writing",
+      "path": "content/paper_writing/scene.md",
+      "category": "academic"
+    },
+    {
+      "id": "code_generation",
+      "path": "content/code_generation/scene.md",
+      "category": "code"
+    },
+    {
+      "id": "code_review",
+      "path": "content/code_review/scene.md",
+      "category": "code"
+    },
+    {
+      "id": "bug_fix",
+      "path": "content/bug_fix/scene.md",
+      "category": "code"
+    },
+    {
+      "id": "code_refactor",
+      "path": "content/code_refactor/scene.md",
+      "category": "code"
+    },
+    {
+      "id": "tech_doc",
+      "path": "content/tech_doc/scene.md",
+      "category": "tech_doc"
+    },
+    {
+      "id": "data_analysis",
+      "path": "content/data_analysis/scene.md",
+      "category": "market_analysis"
+    },
+    {
+      "id": "market_research",
+      "path": "content/market_research/scene.md",
+      "category": "market_analysis"
+    },
+    {
+      "id": "competitor_analysis",
+      "path": "content/competitor_analysis/scene.md",
+      "category": "market_analysis"
+    },
+    {
+      "id": "literature_review",
+      "path": "content/literature_review/scene.md",
+      "category": "academic"
+    },
+    {
+      "id": "trend_prediction",
+      "path": "content/trend_prediction/scene.md",
+      "category": "market_analysis"
+    },
+    {
+      "id": "knowledge_explain",
+      "path": "content/knowledge_explain/scene.md",
+      "category": "academic"
+    },
+    {
+      "id": "study_plan",
+      "path": "content/study_plan/scene.md",
+      "category": "education"
+    },
+    {
+      "id": "exam_prep",
+      "path": "content/exam_prep/scene.md",
+      "category": "education"
+    },
+    {
+      "id": "course_design",
+      "path": "content/course_design/scene.md",
+      "category": "education"
+    },
+    {
+      "id": "homework_help",
+      "path": "content/homework_help/scene.md",
+      "category": "education"
+    },
+    {
+      "id": "report_writing",
+      "path": "content/report_writing/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "decision_analysis",
+      "path": "content/decision_analysis/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "project_planning",
+      "path": "content/project_planning/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "process_optimization",
+      "path": "content/process_optimization/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "meeting_summary",
+      "path": "content/meeting_summary/scene.md",
+      "category": "business"
+    },
+    {
+      "id": "story_writing",
+      "path": "content/story_writing/scene.md",
+      "category": "creative"
+    },
+    {
+      "id": "script_writing",
+      "path": "content/script_writing/scene.md",
+      "category": "creative"
+    },
+    {
+      "id": "poetry_creation",
+      "path": "content/poetry_creation/scene.md",
+      "category": "creative"
+    },
+    {
+      "id": "game_plot",
+      "path": "content/game_plot/scene.md",
+      "category": "creative"
+    },
+    {
+      "id": "world_building",
+      "path": "content/world_building/scene.md",
+      "category": "creative"
+    },
+    {
+      "id": "doc_translation",
+      "path": "content/doc_translation/scene.md",
+      "category": "translation"
+    },
+    {
+      "id": "localization",
+      "path": "content/localization/scene.md",
+      "category": "translation"
+    },
+    {
+      "id": "literary_translation",
+      "path": "content/literary_translation/scene.md",
+      "category": "translation"
+    },
+    {
+      "id": "term_unification",
+      "path": "content/term_unification/scene.md",
+      "category": "translation"
+    },
+    {
+      "id": "interpreting_notes",
+      "path": "content/interpreting_notes/scene.md",
+      "category": "translation"
+    },
+    {
+      "id": "problem_diagnosis",
+      "path": "content/problem_diagnosis/scene.md",
+      "category": "diagnosis"
+    },
+    {
+      "id": "solution_generation",
+      "path": "content/solution_generation/scene.md",
+      "category": "diagnosis"
+    },
+    {
+      "id": "root_cause",
+      "path": "content/root_cause/scene.md",
+      "category": "diagnosis"
+    },
+    {
+      "id": "risk_assessment",
+      "path": "content/risk_assessment/scene.md",
+      "category": "diagnosis"
+    },
+    {
+      "id": "emergency_plan",
+      "path": "content/emergency_plan/scene.md",
+      "category": "diagnosis"
+    }
   ],
   "styles": [
-    { "id": "concise", "path": "style/concise.md" },
-    { "id": "balanced", "path": "style/balanced.md" },
-    { "id": "detailed", "path": "style/detailed.md" },
-    { "id": "creative", "path": "style/creative.md" },
-    { "id": "precise", "path": "style/precise.md" }
+    {
+      "id": "concise",
+      "path": "style/concise.md"
+    },
+    {
+      "id": "balanced",
+      "path": "style/balanced.md"
+    },
+    {
+      "id": "detailed",
+      "path": "style/detailed.md"
+    },
+    {
+      "id": "creative",
+      "path": "style/creative.md"
+    },
+    {
+      "id": "precise",
+      "path": "style/precise.md"
+    }
+  ],
+  "categories": [
+    {
+      "id": "business",
+      "path": "categories/business.md"
+    },
+    {
+      "id": "marketing",
+      "path": "categories/marketing.md"
+    },
+    {
+      "id": "market_analysis",
+      "path": "categories/market_analysis.md"
+    },
+    {
+      "id": "tech_doc",
+      "path": "categories/tech_doc.md"
+    },
+    {
+      "id": "code",
+      "path": "categories/code.md"
+    },
+    {
+      "id": "diagnosis",
+      "path": "categories/diagnosis.md"
+    },
+    {
+      "id": "academic",
+      "path": "categories/academic.md"
+    },
+    {
+      "id": "education",
+      "path": "categories/education.md"
+    },
+    {
+      "id": "creative",
+      "path": "categories/creative.md"
+    },
+    {
+      "id": "translation",
+      "path": "categories/translation.md"
+    }
   ]
 }

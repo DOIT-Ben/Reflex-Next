@@ -1,7 +1,7 @@
 import pytest
 
 from reflex_core import OptimizeRequest
-from reflex_core.scene import RuleSceneDetector
+from reflex_core.scene import GeneralSceneDetector, RuleSceneDetector
 
 
 SCENE_CASES = (
@@ -67,3 +67,26 @@ def test_rule_scene_detector_falls_back_to_general():
     result = RuleSceneDetector().detect("帮我优化这句话", OptimizeRequest("input"))
     assert result.scene == "general"
     assert result.confidence < 0.5
+
+
+def test_rule_scene_detector_reports_category_for_every_rule():
+    detector = RuleSceneDetector()
+    for _, text in SCENE_CASES:
+        result = detector.detect(text, OptimizeRequest("input"))
+        assert result.scene == _
+        assert result.category in {
+            "business", "marketing", "market_analysis", "tech_doc", "code",
+            "diagnosis", "academic", "education", "creative", "translation",
+        }
+
+
+def test_rule_scene_detector_general_has_general_category():
+    result = RuleSceneDetector().detect("帮我优化这句话", OptimizeRequest("input"))
+    assert result.scene == "general"
+    assert result.category == "general"
+
+
+def test_general_scene_detector_reports_general_category():
+    result = GeneralSceneDetector().detect("anything", OptimizeRequest("input"))
+    assert result.scene == "general"
+    assert result.category == "general"

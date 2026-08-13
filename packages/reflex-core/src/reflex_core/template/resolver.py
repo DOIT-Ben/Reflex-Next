@@ -35,6 +35,28 @@ _FALLBACK_STYLES = {
 }
 
 
+_FALLBACK_CATEGORIES = {
+    "business": "# 商务沟通类\n目的明确、专业得体、条理清晰。",
+    "marketing": "# 营销文案类\n突出卖点、打动读者、行动导向。",
+    "market_analysis": "# 市场分析类\n数据支撑、逻辑严谨、结论明确。",
+    "tech_doc": "# 技术文档类\n准确规范、可执行、面向读者。",
+    "code": "# 代码工程类\n正确、可读、可维护。",
+    "diagnosis": "# 问题诊断类\n定位根因、结构清晰、措施可落地。",
+    "academic": "# 学术研究类\n严谨规范、引用准确、论证充分。",
+    "education": "# 学习教育类\n循序渐进、讲解清晰、重点突出。",
+    "creative": "# 创意写作类\n想象丰富、表达生动、结构完整。",
+    "translation": "# 翻译本地化类\n语义准确、自然流畅、文化适配。",
+}
+
+
+def _split_scene(value: str) -> tuple[str | None, str | None]:
+    """Split ``category:scene`` into (category, scene); both parts optional."""
+    if ":" in value:
+        category, _, scene = value.partition(":")
+        return (category or None, scene or None)
+    return (None, value)
+
+
 class PassthroughTemplateResolver:
     """Return a structured, provider-neutral request without provider logic."""
 
@@ -44,6 +66,7 @@ class PassthroughTemplateResolver:
             "mode": request.mode,
             "style": request.style,
             "scene": scene.scene,
+            "category": getattr(scene, "category", None),
             "metadata": dict(request.metadata),
         }
 
@@ -63,7 +86,7 @@ class TemplatePackResolver:
 
     def render(self, request: OptimizeRequest, scene: SceneDetectionResult) -> dict[str, object]:
         language = _language(request.metadata.get("language"))
-        scene_id, style_id, system, scene_template, style_template = self._templates(
+        scene_id, category, style_id, system, scene_template, style_template = self._templates(
             scene.scene,
             request.style,
         )
@@ -88,30 +111,63 @@ class TemplatePackResolver:
             "mode": request.mode,
             "style": style_id,
             "scene": scene_id,
+            "category": category,
             "language": language,
         }
 
-    def _templates(self, scene_id: str, style_id: str) -> tuple[str, str, str, str, str]:
+    def _templates(
+        self, scene_value: str, style_id: str
+    ) -> tuple[str, str | None, str, str, str, str]:
+        explicit_category, requested_scene = _split_scene(scene_value)
         pack = self._pack
         if pack is not None:
-            resolved_scene = scene_id if scene_id in pack.scene_ids else pack.manifest.default_scene
+            if requested_scene is not None and requested_scene in pack.scene_ids:
+                resolved_scene = requested_scene
+                category = explicit_category or pack.scene_categories.get(requested_scene)
+                scene_template = pack.read_scene(requested_scene)
+            elif requested_scene is not None and requested_scene in pack.category_ids:
+                resolved_scene = requested_scene
+                category = requested_scene
+                scene_template = pack.read_category(requested_scene)
+            elif explicit_category is not None and explicit_category in pack.category_ids:
+                resolved_scene = explicit_category
+                category = explicit_category
+                scene_template = pack.read_category(explicit_category)
+            else:
+                resolved_scene = pack.manifest.default_scene
+                category = pack.scene_categories.get(resolved_scene)
+                scene_template = pack.read_scene(resolved_scene)
             resolved_style = style_id if style_id in pack.style_ids else pack.manifest.default_style
             try:
                 return (
                     resolved_scene,
+                    category,
                     resolved_style,
                     pack.read_system(),
-                    pack.read_scene(resolved_scene),
+                    scene_template,
                     pack.read_style(resolved_style),
                 )
             except Exception:
                 pass
+        if requested_scene is not None and requested_scene in _FALLBACK_CATEGORIES:
+            resolved_scene = requested_scene
+            category = requested_scene
+            scene_template = _FALLBACK_CATEGORIES[requested_scene]
+        elif explicit_category is not None and explicit_category in _FALLBACK_CATEGORIES:
+            resolved_scene = explicit_category
+            category = explicit_category
+            scene_template = _FALLBACK_CATEGORIES[explicit_category]
+        else:
+            resolved_scene = "general"
+            category = None
+            scene_template = _FALLBACK_SCENE
         resolved_style = style_id if style_id in _FALLBACK_STYLES else "balanced"
         return (
-            "general",
+            resolved_scene,
+            category,
             resolved_style,
             _FALLBACK_SYSTEM,
-            _FALLBACK_SCENE,
+            scene_template,
             _FALLBACK_STYLES[resolved_style],
         )
 

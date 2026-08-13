@@ -11,10 +11,21 @@
 
 ## 2. 形态与端点
 
-- `POST /v1/optimize`：JSON 请求（`text` 必填；`style/provider/model/metadata` 可选；
+- `POST /v1/optimize`：JSON 请求（`text` 必填；`style/mode/scene/scene_policy/stream/provider/model/metadata` 可选；
   `request_id` 可选，客户端可自选以支持确定性取消），响应 `text/event-stream`，事件信封与
   sidecar 协议一致（`status/scene/request/chunk/done/metric/error` 及 runtime 专属信封）；
   连接断开自动发送 `cancel`；单请求 120 秒超时（`REFLEX_HTTP_REQUEST_TIMEOUT` 可配）。
+
+场景分层（2026-08-14 起，模板包 `template-packs/builtin`）：
+
+- `scene` 支持一级分类与二级子场景，冒号形式：`"business:email"`（大类:子场景）、
+  `"business"`（仅大类，使用分类默认模板）、`"email"`（旧形式，自动归类）；
+- 十大一级分类：business 商务沟通 / marketing 营销文案 / market_analysis 市场分析 /
+  tech_doc 技术文档 / code 代码工程 / diagnosis 问题诊断 / academic 学术研究 /
+  education 学习教育 / creative 创意写作 / translation 翻译本地化；
+- 42 个二级子场景全部映射到十大分类；`scene_policy: manual` 时使用手动指定场景，
+  `auto`（默认）时由内置规则检测器自动识别并输出 `category` 元数据；
+- `scene` 事件新增 `category` 字段（附加字段，旧客户端可忽略）；未知场景回退 `general`。
 - `POST /v1/requests/{request_id}/cancel`：发送取消命令。
 - `POST /v1/ping`、`GET /v1/providers`、`GET /v1/health`。
 - 默认绑定 `127.0.0.1:8790`；`REFLEX_HTTP_TOKEN` 非空时所有端点要求 `Authorization: Bearer <token>`。

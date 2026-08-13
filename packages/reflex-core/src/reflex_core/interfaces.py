@@ -6,6 +6,7 @@ from typing import Any, Iterable, Protocol
 
 from .cancellation import CancellationToken
 from .models import OptimizeRequest, SceneDetectionResult
+from .provider_events import ProviderEvent
 
 
 class SceneDetector(Protocol):
@@ -49,4 +50,13 @@ class Provider(Protocol):
         request: OptimizeRequest,
         cancellation: CancellationToken,
     ) -> Iterable[str]:
+        ...
+
+    # New protocol adapters can preserve wire metadata with this method.
+    def stream_events(
+        self,
+        rendered_request: Any,
+        request: OptimizeRequest,
+        cancellation: CancellationToken,
+    ) -> Iterable[ProviderEvent]:
         ...
