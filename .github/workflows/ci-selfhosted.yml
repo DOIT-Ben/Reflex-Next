@@ -13,10 +13,23 @@ jobs:
     name: pytest (self-hosted)
     runs-on: [self-hosted, Windows]
     env:
-      # runner 由计划任务以用户身份运行；本机经 127.0.0.1:7897 代理访问外网。
-      HTTP_PROXY: http://127.0.0.1:7897
-      HTTPS_PROXY: http://127.0.0.1:7897
       NO_PROXY: localhost,127.0.0.1
+    steps:
+      # 网络自适应：探测本机代理 (127.0.0.1:7897) 是否可用，可用则走代理，否则直连。
+      # runner 不继承用户级代理变量，且代理节点状态不稳定。
+      - name: Probe proxy (adaptive network)
+        shell: powershell
+        run: |
+          $proxyOk = $false
+          try {
+            $r = Invoke-WebRequest -Uri 'https://github.com' -Proxy 'http://127.0.0.1:7897' -TimeoutSec 5 -UseBasicParsing
+            if ($r.StatusCode -eq 200) { $proxyOk = $true }
+          } catch { $proxyOk = $false }
+          if ($proxyOk) {
+            'HTTPS_PROXY=http://127.0.0.1:7897' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+            'HTTP_PROXY=http://127.0.0.1:7897' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+          }
+          Write-Host "proxy_ok=$proxyOk"
     steps:
       - uses: actions/checkout@v4
 
