@@ -1,0 +1,43 @@
+# Self-hosted CI：作业由本机注册的 self-hosted runner（host-runner-win-3）执行，
+# 不消耗 GitHub 托管的 Actions 分钟数。
+name: Self-Hosted CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: pytest (self-hosted)
+    runs-on: [self-hosted, Windows]
+    env:
+      NO_PROXY: localhost,127.0.0.1
+    steps:
+      # 网络自适应：探测本机代理 (127.0.0.1:7897) 是否可用，可用则走代理，否则直连。
+      # runner 不继承用户级代理变量，且代理节点状态不稳定。
+      - name: Probe proxy (adaptive network)
+        shell: powershell
+        run: |
+          $proxyOk = $false
+          try {
+            $r = Invoke-WebRequest -Uri 'https://github.com' -Proxy 'http://127.0.0.1:7897' -TimeoutSec 5 -UseBasicParsing
+            if ($r.StatusCode -eq 200) { $proxyOk = $true }
+          } catch { $proxyOk = $false }
+          if ($proxyOk) {
+            'HTTPS_PROXY=http://127.0.0.1:7897' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+            'HTTP_PROXY=http://127.0.0.1:7897' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+          }
+          Write-Host "proxy_ok=$proxyOk"
+      - uses: actions/checkout@v4
+
+      - name: Install pytest (host Python)
+        shell: powershell
+        run: '& "D:\Soft\python310\python.exe" -m pip install --upgrade pip pytest'
+
+      # 排除依赖特殊环境（SQLite 插件/数据库/升级 smoke）的测试文件，
+      # 稳定子集已在本机验证：73 passed 全绿。
+      - name: Run stable test subset
+        shell: powershell
+        run: '& "D:\Soft\python310\python.exe" -m pytest tools/tests -q --ignore=tools/tests/test_benchmark_history_sqlite.py --ignore=tools/tests/test_cross_version_history_upgrade_smoke.py --ignore=tools/tests/test_history_upgrade_smoke.py --ignore=tools/tests/test_reflex_cloud_postgres_quality_release_smoke.py'
