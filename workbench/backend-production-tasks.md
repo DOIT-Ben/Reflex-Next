@@ -399,3 +399,24 @@
 - 初次因本机可用虚拟内存不足而暂缓；随后使用 128 MiB/0.5 CPU、回环端口和 tmpfs 的独立 PostgreSQL 16 容器完成真实验证；结果为同版本发布 `1` 个成功、不同版本发布 `1` 个成功、回滚 `1` 个成功、最终 `published_count=1`、唯一索引有效、schema 清理成功；
 - 数据库侧复核随机 schema 残留为 `0`，临时容器与端口已清理；完整证据见 `docs\verification\cloud-postgres-quality-release-2026-07-15.md`；
 - 测试后的低虚拟内存曾导致 Docker Desktop 退出，已恢复原有三个容器和长期浸泡任务；新增资源保护包装器，低于 2 GiB 可用物理内存或 4 GiB 可用虚拟内存时拒绝执行。
+
+## 2026-08-12 alpha.8 供应链修复与 Windows 生命周期复验
+
+- 统一依赖门禁首次定位到 `cryptography 48.0.1` 对应的 `PYSEC-2026-3552`、`PYSEC-2026-3553`、`PYSEC-2026-3554`；历史插件和 Runtime 已统一升级到 `cryptography>=50.0.0,<51`，锁文件、依赖审计策略和测试均同步更新。
+- `tools\build_runtime_sidecar.ps1` 已在构建前显式执行冻结依赖同步（含 `dev`、`builtins` extra），修复虚拟环境存在但缺少 PyInstaller 时的打包失败；`npm run package:windows` 已完成完整 NSIS 构建。
+- 统一发布门禁复验通过：Core `90 passed`、Runtime `317 passed`、Cloud `81 passed`、History `159 passed`、Rust `194 passed, 3 ignored`、Frontend `27` 个文件/`184 passed`、原生协议 `13 passed`；依赖审计、密钥扫描、SBOM/契约检查均通过；短浸泡 `100 iterations`（`50 completed`、`50 cancelled`）通过。
+- 冻结 Sidecar 探测通过：Anthropic `claude-3-5-haiku-20241022` 与 Gemini `gemini-2.5-pro` 均返回 `catalog_ok`；未读取真实 API Key，未调用真实第三方模型。
+- 最新安装包为 `apps\tauri-host\src-tauri\target\release\bundle\nsis\Reflex_0.7.0-alpha.8_x64-setup.exe`，英文工作台修补后重新构建于 `2026-08-12 13:17:58`，大小 `21,861,462` bytes，SHA-256 `D834199CF786A18B853508B2C82BB72E2BE23E4D3FDB7038FC643511633656F5`；该包已通过包级密钥扫描。
+- Windows 11 隔离生命周期已通过：`install`、`sidecar-ping-shutdown`、`host-start`、`legacy-config-start`、`overlay-install`、`uninstall`、`reinstall`、`final-cleanup`；未知用户文件保持不变。
+- 上述生命周期已使用本轮新包哈希 `D834199CF786A18B853508B2C82BB72E2BE23E4D3FDB7038FC643511633656F5` 重新实跑，`LIFECYCLE_RESULT.status=passed`，并确认 `unknown_file_preserved=true`。
+- 当前构建 Runtime 的真实 MiniMax 脱敏冒烟已复跑：命令为 `packages\reflex-runtime\.venv\Scripts\python.exe tools\provider_smoke.py --operation all --provider minimax --runtime apps\tauri-host\src-tauri\resources\runtime\reflex-runtime.exe --timeout-seconds 30 --cancel-after-ms 250`；Runtime SHA-256 为 `C7113743B89D3E1D5EB11384289A32144BCA865F6E11C53C11424C64F7BA570C`。结果：目录 `catalog_ok`；真实流式请求 `success`，首个分片 `5906 ms`、总耗时 `5922 ms`、`1` 个分片；真实取消 `cancelled`，总耗时 `265 ms`、取消延迟 `15 ms`、无分片。凭据来自 Windows Credential Manager，未把密钥、请求正文或响应正文写入输出。
+- 本轮仍不关闭 P3-002、P4-002、P4-004、P4-005、P4-006：72 小时/至少 10,000 次正式 Runtime 浸泡、Windows 10 干净环境、官方旧版安装包与真实脱敏用户数据升级、代码签名/更新/回滚及正式 RC/v1.0.0 标签仍未形成完整证据。
+- UI 复核发现的英文核心工作台混杂文案已修复：输入区、结果区和生成配置条统一接入 `tr`，英文契约与全量前端回归通过；其他低频页面仍需在 RC 前做一次全局英文可见层扫描。当前建议保持 `v0.7.0-alpha.8` Windows 11 受控试用版定位。
+
+## 2026-08-13 P3-002 浸泡挂起诊断与切片睡眠修复
+
+- 正式 168 小时/10,000 次浸泡于 2026-08-13 19:49 启动，约 30 分钟、第 25 批（约 100 次）后挂起：驱动与 Runtime 子进程 CPU 全部冻结且不再推进；
+- py-spy 转储（`workbench\soak-stuck-driver-20260813-2019.txt`、`soak-stuck-runtime-20260813-2019.txt`）显示驱动主线程停在限速 `time.sleep`，子进程健康等待 stdin、worker 空闲；排除机器睡眠（无电源事件）与请求路径问题；结论为限速长等待偶发不返回；
+- 高速复现 600/min×10,000 次通过：`runtime-soak-repro-fast-20260813-2022.json`，5,000 完成/5,000 取消、65,000 协议事件、`passed=true`；独立 12×80s 长 sleep 微实验全部精确返回，确认非确定性复现；
+- 修复：`tools\soak_backend.py` 限速等待改为 1s 粒度切片循环（`_sliced_sleep`，默认 sleeper，注入契约不变），新增契约测试 1 项；`16 passed`，有界限速验证 `passed=true`；
+- P3-002 保持进行中，正式浸泡在修复后重新启动。
