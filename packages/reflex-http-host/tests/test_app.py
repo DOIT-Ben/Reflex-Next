@@ -77,6 +77,29 @@ def test_optimize_requires_text(client):
     assert response.status_code == 422
 
 
+def test_optimize_passes_scene_and_mode_fields(client):
+    test_client, fake_session = client
+    with test_client.stream(
+        "POST",
+        "/v1/optimize",
+        json={
+            "text": "hello",
+            "mode": "prompt",
+            "scene": "sales",
+            "scene_policy": "manual",
+            "stream": False,
+            "style": "creative",
+        },
+    ):
+        pass
+    optimize = [command for command in fake_session.sent if command["type"] == "optimize"][-1]
+    assert optimize["payload"]["mode"] == "prompt"
+    assert optimize["payload"]["scene"] == "sales"
+    assert optimize["payload"]["scene_policy"] == "manual"
+    assert optimize["payload"]["stream"] is False
+    assert optimize["payload"]["style"] == "creative"
+
+
 def test_optimize_request_timeout_sends_cancel_and_error_event(fake_session):
     gateway = SidecarGateway(
         session_factory=lambda _: fake_session,
@@ -156,3 +179,27 @@ def test_live_optimize_without_provider_reports_unconfigured(live_client):
     envelopes = parse_sse(lines)
     assert envelopes[-1]["event"]["type"] == "error"
     assert envelopes[-1]["event"]["data"]["code"] == "provider_unconfigured"
+
+
+def test_live_optimize_manual_scene_returns_scene_event(live_client):
+    with live_client.stream(
+        "POST",
+        "/v1/optimize",
+        json={
+            "text": "hello",
+            "provider": "mock",
+            "model": "mock-stream",
+            "scene": "sales",
+            "scene_policy": "manual",
+        },
+    ) as response:
+        lines = list(response.iter_lines())
+
+    envelopes = parse_sse(lines)
+    scene_envelopes = [
+        envelope for envelope in envelopes
+        if envelope.get("event", {}).get("type") == "scene"
+    ]
+    assert len(scene_envelopes) == 1
+    assert scene_envelopes[0]["event"]["data"]["scene"] == "sales"
+    assert scene_envelopes[0]["event"]["data"]["method"] == "manual"

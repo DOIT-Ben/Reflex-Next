@@ -20,6 +20,7 @@ REQUEST_TIMEOUT_SECONDS = float(
 )
 MAX_OPTIMIZE_TEXT = 1_000_000
 
+_ALLOWED_MODES = frozenset({"content", "prompt"})
 _SSE_HEADERS = {
     "Cache-Control": "no-store",
     "X-Accel-Buffering": "no",
@@ -30,6 +31,10 @@ _SSE_HEADERS = {
 class OptimizeRequest(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_OPTIMIZE_TEXT)
     style: str | None = None
+    mode: str | None = None
+    scene: str | None = None
+    scene_policy: str | None = None
+    stream: bool | None = None
     provider: str | None = None
     model: str | None = None
     metadata: dict[str, object] | None = None
@@ -169,6 +174,14 @@ def create_app(gateway: SidecarGateway | None = None) -> FastAPI:
         command_payload: dict[str, object] = {"text": payload.text}
         if payload.style is not None:
             command_payload["style"] = payload.style
+        if payload.mode is not None:
+            command_payload["mode"] = payload.mode
+        if payload.scene is not None:
+            command_payload["scene"] = payload.scene
+        if payload.scene_policy is not None:
+            command_payload["scene_policy"] = payload.scene_policy
+        if payload.stream is not None:
+            command_payload["stream"] = payload.stream
         if payload.provider is not None:
             command_payload["provider"] = payload.provider
         if payload.model is not None:
