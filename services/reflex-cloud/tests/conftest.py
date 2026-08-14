@@ -43,6 +43,7 @@ def admin_headers() -> dict[str, str]:
 
 def feedback_payload(**overrides):
     payload = {
+        "source": "manual",
         "sentiment": "negative",
         "category": "quality",
         "message": "结果没有保留关键约束",

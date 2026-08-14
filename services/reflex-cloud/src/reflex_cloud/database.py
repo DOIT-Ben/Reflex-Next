@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from sqlalchemy import Engine, create_engine, event, text
+from sqlalchemy import Engine, create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
@@ -20,6 +20,24 @@ class Database:
 
     def create_schema(self) -> None:
         Base.metadata.create_all(self.engine)
+        self._upgrade_feedback_source()
+
+    def _upgrade_feedback_source(self) -> None:
+        columns = {
+            column["name"]
+            for column in inspect(self.engine).get_columns("feedback_items")
+        }
+        if "source" in columns:
+            return
+        statement = (
+            "ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS "
+            "source VARCHAR(16) NOT NULL DEFAULT 'manual'"
+            if self.engine.dialect.name == "postgresql"
+            else "ALTER TABLE feedback_items ADD COLUMN "
+            "source VARCHAR(16) NOT NULL DEFAULT 'manual'"
+        )
+        with self.engine.begin() as connection:
+            connection.execute(text(statement))
 
     def ping(self) -> bool:
         with self.engine.connect() as connection:

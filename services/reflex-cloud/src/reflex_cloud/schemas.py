@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 FeedbackSentiment = Literal["positive", "negative"]
 FeedbackCategory = Literal["quality", "bug", "performance", "feature", "other"]
+FeedbackSource = Literal["manual", "prompt"]
 FeedbackStatus = Literal["new", "triaged", "reproduced", "planned", "fixed", "released", "rejected"]
 QualityReleaseStatus = Literal["draft", "published", "superseded", "rolled_back"]
 OptimizeMode = Literal["content", "prompt"]
@@ -52,6 +53,7 @@ class ScreenshotInput(BaseModel):
 
 
 class FeedbackCreate(BaseModel):
+    source: FeedbackSource = "manual"
     sentiment: FeedbackSentiment
     category: FeedbackCategory
     message: str = Field(default="", max_length=4000)
@@ -87,6 +89,7 @@ class FeedbackCreated(BaseModel):
 
 class FeedbackSummary(BaseModel):
     id: str
+    source: FeedbackSource
     sentiment: FeedbackSentiment
     category: FeedbackCategory
     status: FeedbackStatus
@@ -214,8 +217,11 @@ class FeedbackAnalytics(BaseModel):
     negative: int
     negative_rate: float
     average_elapsed_ms: float | None
+    by_source: dict[str, QualityBucket]
     by_category: dict[str, QualityBucket]
     by_version: dict[str, QualityBucket]
+    by_scene: dict[str, QualityBucket]
+    by_provider_model: dict[str, QualityBucket]
     by_quality_release: dict[str, QualityBucket]
 
 
