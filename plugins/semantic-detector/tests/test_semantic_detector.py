@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import sys
 import threading
 from importlib.metadata import entry_points
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +12,7 @@ from reflex_core import CancellationToken, OperationCancelled, OptimizeRequest
 from reflex_semantic_detector import SemanticModelManager, SemanticSceneDetector
 from reflex_semantic_detector.model_manager import SemanticModelError
 from reflex_semantic_detector.lifecycle import ModelLifecycle
+from reflex_semantic_detector.plugin import _SCENE_EXAMPLES
 
 
 class FakeModel:
@@ -32,6 +35,18 @@ def test_import_does_not_load_optional_model_packages() -> None:
     assert reflex_semantic_detector
     assert "sentence_transformers" not in sys.modules
     assert "torch" not in sys.modules
+
+
+def test_builtin_examples_cover_every_shipped_scene() -> None:
+    manifest_path = (
+        Path(__file__).resolve().parents[3]
+        / "template-packs"
+        / "builtin"
+        / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert set(_SCENE_EXAMPLES) == {item["id"] for item in manifest["scenes"]}
 
 
 def test_entry_point_uses_the_runtime_allowlist_id() -> None:

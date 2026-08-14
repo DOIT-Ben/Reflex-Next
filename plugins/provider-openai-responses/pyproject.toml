@@ -3,22 +3,17 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "reflex-history-sqlite"
+name = "reflex-provider-openai-responses"
 version = "0.1.0"
-description = "Encrypted SQLite history storage plugin for Reflex Next."
+description = "OpenAI Responses API provider adapter for Reflex Next."
 requires-python = ">=3.11"
-dependencies = [
-  "cryptography>=50.0.0,<51",
-  "reflex-core",
-]
+dependencies = ["httpx>=0.28,<0.29", "reflex-core"]
 
 [project.optional-dependencies]
-dev = [
-  "pytest",
-]
+dev = ["pytest"]
 
-[project.entry-points."reflex.storage"]
-history-sqlite = "reflex_history_sqlite:plugin"
+[project.entry-points."reflex.providers"]
+openai-responses = "reflex_provider_openai_responses:openai_responses"
 
 [tool.setuptools.packages.find]
 where = ["src"]

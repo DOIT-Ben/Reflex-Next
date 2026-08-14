@@ -89,6 +89,21 @@ def build_provider(factory, handler, *, sleeps=None):
     )
 
 
+def test_model_discovery_uses_official_models_endpoint_and_authentication():
+    factory = deepseek()
+    captured = []
+
+    def handler(req):
+        captured.append(req)
+        return httpx.Response(200, json={"data": [{"id": "model-z"}, {"id": "model-a"}]})
+
+    provider = build_provider(factory, handler)
+
+    assert provider.list_models() == ("model-a", "model-z")
+    assert captured[0].url == httpx.URL("https://api.deepseek.com/models")
+    assert captured[0].headers["Authorization"] == f"Bearer {PRIVATE_SENTINEL}"
+
+
 @pytest.mark.parametrize("build", FACTORIES)
 def test_factory_has_a_fixed_safe_contract(build):
     factory = build()
@@ -158,10 +173,158 @@ def test_complete_json_response_is_supported():
     ) == ["完整结果"]
 
 
+def test_stream_events_map_official_chat_completion_chunks_and_usage():
+    factory = deepseek()
+    response_id = "chatcmpl-contract-1"
+    payloads = [
+        {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+        },
+        {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"content": "第一段"}, "finish_reason": None}],
+        },
+        {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"content": "第二段"}, "finish_reason": "length"}],
+        },
+        {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "choices": [],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+        },
+    ]
+    body = b"".join(
+        f"data: {json.dumps(payload)}\n\n".encode() for payload in payloads
+    ) + b"data: [DONE]\n\n"
+    provider = build_provider(
+        factory,
+        lambda _: httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=body,
+        ),
+    )
+
+    events = list(
+        provider.stream_events(
+            {"text": "input"}, optimize_request(factory), CancellationToken()
+        )
+    )
+
+    assert [event.kind for event in events] == [
+        "request_started",
+        "text_delta",
+        "text_delta",
+        "usage",
+        "completed",
+    ]
+    assert events[0].data == {
+        "provider": factory.id,
+        "model": factory.default_model,
+        "protocol": "openai_chat_completions",
+        "response_id": response_id,
+    }
+    assert [events[1].data["text"], events[2].data["text"]] == ["第一段", "第二段"]
+    assert events[3].data == {
+        "input_tokens": 11,
+        "output_tokens": 7,
+        "total_tokens": 18,
+    }
+    assert events[4].data == {
+        "finish_reason": "length",
+        "response_id": response_id,
+    }
+
+
+def test_stream_events_map_non_stream_chat_completion_metadata():
+    factory = qwen()
+    response_id = "chatcmpl-contract-2"
+    provider = build_provider(
+        factory,
+        lambda _: httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={
+                "id": response_id,
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "完整结果"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            },
+        ),
+    )
+
+    events = list(
+        provider.stream_events(
+            {"text": "input"},
+            optimize_request(factory, stream=False),
+            CancellationToken(),
+        )
+    )
+
+    assert [event.kind for event in events] == [
+        "request_started",
+        "text_delta",
+        "usage",
+        "completed",
+    ]
+    assert events[0].data["response_id"] == response_id
+    assert events[1].data == {"text": "完整结果"}
+    assert events[2].data == {
+        "input_tokens": 5,
+        "output_tokens": 3,
+        "total_tokens": 8,
+    }
+    assert events[3].data == {
+        "finish_reason": "stop",
+        "response_id": response_id,
+    }
+
+
+def test_safe_custom_model_id_is_forwarded_without_a_static_allowlist():
+    factory = deepseek()
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"choices": [{"message": {"content": "ok"}}]},
+        )
+
+    custom_model = "gpt-5.6-luna"
+    provider = CompatibleProvider(
+        factory,
+        PRIVATE_SENTINEL,
+        provider_config(factory, model=custom_model),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert list(
+        provider.stream(
+            {"text": "input"},
+            optimize_request(factory, stream=False, model=custom_model),
+            CancellationToken(),
+        )
+    ) == ["ok"]
+    assert json.loads(captured[0].content)["model"] == custom_model
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"model": "not-approved"},
         {"base_url": "http://api.example.test"},
         {"timeout_seconds": 0},
         {"timeout_seconds": True},

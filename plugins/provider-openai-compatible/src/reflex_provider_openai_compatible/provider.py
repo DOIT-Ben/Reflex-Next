@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import ssl
 import uuid
+import json
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
-from reflex_core import CancellationToken, OperationCancelled, OptimizeRequest
+from reflex_core import CancellationToken, OperationCancelled, OptimizeRequest, ProviderEvent
 
-from .protocol import ProtocolError, iter_sse_content, parse_json_content
+from .protocol import (
+    ProtocolError,
+    iter_chat_completion_parts,
+    parse_chat_completion,
+)
 
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -86,6 +91,9 @@ class CompatibleFactory:
     version: str = "1"
     required_secret: str = "api_key"
     permissions: tuple[str, ...] = ("network",)
+    protocol: str = "openai_chat_completions"
+    accepts_custom_models: bool = True
+    model_capabilities: dict[str, object] = field(default_factory=dict)
 
     def create(self, secret: str, config: Any) -> "CompatibleProvider":
         return CompatibleProvider(self, secret, config)
@@ -111,6 +119,7 @@ class CompatibleProvider:
             raise CompatibleProviderError("provider_auth_failed", retryable=False)
 
         self.id = spec.id
+        self.protocol = spec.protocol
         self.model = _config_string(config, "model")
         self._models = spec.models
         self._secret = normalized_secret
@@ -121,7 +130,7 @@ class CompatibleProvider:
             raise CompatibleProviderError(
                 "provider_invalid_response", retryable=False
             )
-        if self.model not in self._models:
+        if not _valid_model_id(self.model):
             raise CompatibleProviderError(
                 "provider_invalid_response", retryable=False
             )
@@ -131,19 +140,57 @@ class CompatibleProvider:
     def __repr__(self) -> str:
         return f"CompatibleProvider(id={self.id!r}, model={self.model!r})"
 
+    def list_models(self) -> tuple[str, ...]:
+        try:
+            with self._build_client() as client:
+                response = client.get(
+                    _models_url(self._url),
+                    headers={
+                        "Authorization": f"Bearer {self._secret}",
+                        "Accept": "application/json",
+                    },
+                )
+                status_error = _error_for_status(response.status_code)
+                if status_error is not None:
+                    raise status_error
+                return _parse_models(response.content)
+        except CompatibleProviderError:
+            raise
+        except httpx.TimeoutException:
+            raise CompatibleProviderError("provider_timeout", retryable=True) from None
+        except httpx.NetworkError:
+            raise CompatibleProviderError("provider_network_error", retryable=True) from None
+        except (httpx.HTTPError, OSError, ValueError, UnicodeError):
+            raise CompatibleProviderError("provider_invalid_response", retryable=False) from None
+
+    def test_connection(self, model: str | None = None) -> bool:
+        return isinstance(model, str) and model in self.list_models()
+
     def stream(
         self,
         rendered_request: Any,
         request: OptimizeRequest,
         cancellation: CancellationToken,
     ) -> Iterable[str]:
+        for event in self.stream_events(rendered_request, request, cancellation):
+            if event.kind == "text_delta":
+                text = event.data.get("text")
+                if isinstance(text, str) and text:
+                    yield text
+
+    def stream_events(
+        self,
+        rendered_request: Any,
+        request: OptimizeRequest,
+        cancellation: CancellationToken,
+    ) -> Iterable[ProviderEvent]:
         if cancellation.is_cancelled:
             return
 
         payload = self._request_payload(rendered_request, request)
+        model = request.model or self.model
         idempotency_key = str(uuid.uuid4())
-        yielded_content = False
-
+        yielded_event = False
         client: httpx.Client | None = None
         unregister_client: Callable[[], None] = lambda: None
         try:
@@ -152,21 +199,26 @@ class CompatibleProvider:
             cancellation.raise_if_cancelled()
             for attempt in range(MAX_ATTEMPTS):
                 if cancellation.is_cancelled:
+                    yield ProviderEvent.cancelled()
                     return
                 try:
                     attempt_had_content = False
-                    for content in self._stream_once(
+                    for event in self._stream_once_events(
                         client,
                         payload,
+                        model,
                         idempotency_key,
                         cancellation,
                     ):
                         if cancellation.is_cancelled:
+                            yield ProviderEvent.cancelled()
                             return
-                        attempt_had_content = True
-                        yielded_content = True
-                        yield content
+                        if event.kind == "text_delta":
+                            attempt_had_content = True
+                        yielded_event = True
+                        yield event
                     if cancellation.is_cancelled:
+                        yield ProviderEvent.cancelled()
                         return
                     if not attempt_had_content:
                         raise CompatibleProviderError(
@@ -175,9 +227,10 @@ class CompatibleProvider:
                     return
                 except CompatibleProviderError as error:
                     if cancellation.is_cancelled:
+                        yield ProviderEvent.cancelled()
                         return
                     if (
-                        yielded_content
+                        yielded_event
                         or not error.retryable
                         or attempt == MAX_ATTEMPTS - 1
                     ):
@@ -185,9 +238,10 @@ class CompatibleProvider:
                     if self._wait_for_retry(
                         cancellation, RETRY_DELAYS_SECONDS[attempt]
                     ):
+                        yield ProviderEvent.cancelled()
                         return
         except OperationCancelled:
-            return
+            yield ProviderEvent.cancelled()
         except CompatibleProviderError:
             raise
         except httpx.TimeoutException:
@@ -205,13 +259,14 @@ class CompatibleProvider:
             if client is not None:
                 _close_quietly(client)
 
-    def _stream_once(
+    def _stream_once_events(
         self,
         client: httpx.Client,
         payload: dict[str, object],
+        model: str,
         idempotency_key: str,
         cancellation: CancellationToken,
-    ) -> Iterator[str]:
+    ) -> Iterator[ProviderEvent]:
         try:
             with client.stream(
                 "POST",
@@ -233,21 +288,66 @@ class CompatibleProvider:
 
                     content_type = response.headers.get("content-type", "").lower()
                     if "json" in content_type or not payload["stream"]:
-                        content = parse_json_content(
+                        completion = parse_chat_completion(
                             response.iter_bytes(), max_bytes=MAX_RESPONSE_BYTES
                         )
                         cancellation.raise_if_cancelled()
-                        if content:
-                            yield content
+                        yield ProviderEvent.started(
+                            provider=self.id,
+                            model=model,
+                            protocol=self.protocol,
+                            response_id=completion.response_id,
+                        )
+                        if not completion.text:
+                            raise CompatibleProviderError(
+                                "provider_empty_response", retryable=False
+                            )
+                        yield ProviderEvent.text(completion.text)
+                        if completion.usage:
+                            yield ProviderEvent.usage(**completion.usage)
+                        yield ProviderEvent.completed(
+                            finish_reason=completion.finish_reason,
+                            response_id=completion.response_id,
+                        )
                         return
 
-                    for content in iter_sse_content(
+                    started = False
+                    had_text = False
+                    response_id: str | None = None
+                    finish_reason: str | None = None
+                    for part in iter_chat_completion_parts(
                         response.iter_bytes(),
                         max_bytes=MAX_RESPONSE_BYTES,
                         max_events=MAX_STREAM_EVENTS,
                     ):
                         cancellation.raise_if_cancelled()
-                        yield content
+                        if part.response_id is not None:
+                            if response_id is not None and response_id != part.response_id:
+                                raise ProtocolError()
+                            response_id = part.response_id
+                        if not started:
+                            started = True
+                            yield ProviderEvent.started(
+                                provider=self.id,
+                                model=model,
+                                protocol=self.protocol,
+                                response_id=response_id,
+                            )
+                        if part.text:
+                            had_text = True
+                            yield ProviderEvent.text(part.text)
+                        if part.usage:
+                            yield ProviderEvent.usage(**part.usage)
+                        if part.finish_reason is not None:
+                            finish_reason = part.finish_reason
+                    if not had_text:
+                        raise CompatibleProviderError(
+                            "provider_empty_response", retryable=False
+                        )
+                    yield ProviderEvent.completed(
+                        finish_reason=finish_reason or "stop",
+                        response_id=response_id,
+                    )
                 finally:
                     unregister_response()
         except OperationCancelled:
@@ -289,7 +389,7 @@ class CompatibleProvider:
         self, rendered_request: Any, request: OptimizeRequest
     ) -> dict[str, object]:
         model = request.model or self.model
-        if model not in self._models:
+        if not _valid_model_id(model):
             raise CompatibleProviderError(
                 "provider_invalid_response", retryable=False
             )
@@ -348,6 +448,45 @@ def _messages_from_rendered(rendered_request: Any) -> list[dict[str, str]]:
     if isinstance(text, str) and text:
         return [{"role": "user", "content": text}]
     raise CompatibleProviderError("provider_invalid_response", retryable=False)
+
+
+def _valid_model_id(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= 256
+        and value == value.strip()
+        and all(character.isascii() and character.isprintable() for character in value)
+    )
+
+
+def _models_url(value: str) -> str:
+    url = httpx.URL(value)
+    segments = [segment for segment in url.path.split("/") if segment]
+    if len(segments) < 2 or segments[-2:] != ["chat", "completions"]:
+        raise CompatibleProviderError("provider_invalid_response", retryable=False)
+    segments = [*segments[:-2], "models"]
+    return str(url.copy_with(path="/" + "/".join(segments)))
+
+
+def _parse_models(raw: bytes) -> tuple[str, ...]:
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise CompatibleProviderError("provider_invalid_response", retryable=False)
+    payload = json.loads(raw.decode("utf-8"))
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        raise CompatibleProviderError("provider_invalid_response", retryable=False)
+    models = tuple(
+        sorted(
+            {
+                item["id"]
+                for item in data
+                if isinstance(item, dict) and _valid_model_id(item.get("id"))
+            }
+        )
+    )
+    if not models or len(models) > 256:
+        raise CompatibleProviderError("provider_invalid_response", retryable=False)
+    return models
 
 
 def _error_for_status(status_code: int) -> CompatibleProviderError | None:
