@@ -1091,6 +1091,23 @@ pre {
   margin-bottom: 16px;
 }
 
+.settings-wide-field {
+  grid-column: 1 / -1;
+}
+
+.provider-connection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.model-candidate-actions {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
 .settings-grid label,
 .api-key-row label {
   display: grid;
@@ -1233,9 +1250,10 @@ pre {
   border-radius: 10px;
 }
 
-.settings-toggle span {
+.settings-content label.settings-toggle > span {
   display: grid;
   gap: 3px;
+  margin-bottom: 0;
 }
 
 .settings-toggle small {

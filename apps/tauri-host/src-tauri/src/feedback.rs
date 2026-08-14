@@ -20,6 +20,7 @@ const FEEDBACK_CONSENT_REQUIRED: &str = "请先在设置中开启对应的隐私
 const FEEDBACK_CONSENT_OUTDATED: &str = "隐私授权已更新，请刷新设置后重新提交。";
 const FEEDBACK_RATE_LIMITED: &str = "反馈提交过于频繁，请稍后再试。";
 const FEEDBACK_REQUEST_INVALID: &str = "反馈内容不完整，请检查后重试。";
+const FEEDBACK_STORAGE_UNAVAILABLE: &str = "反馈附件暂时无法保存，请稍后再试。";
 const CLOUD_UNAVAILABLE: &str = "云端服务暂不可用，请稍后重试。";
 const CLOUD_RATE_LIMITED: &str = "云端免费额度已用完或请求过于频繁。";
 const CLOUD_PROTOCOL_INVALID: &str = "云端服务返回了无效数据。";
@@ -55,6 +56,7 @@ pub struct FeedbackScreenshot {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FeedbackPayload {
+    source: String,
     sentiment: String,
     category: String,
     message: String,
@@ -558,6 +560,7 @@ fn feedback_error_for_status(status: StatusCode, code: Option<&str>) -> &'static
         Some("consent_required") => FEEDBACK_CONSENT_REQUIRED,
         Some("consent_outdated") => FEEDBACK_CONSENT_OUTDATED,
         Some("feedback_rate_limited") => FEEDBACK_RATE_LIMITED,
+        Some("feedback_storage_unavailable") => FEEDBACK_STORAGE_UNAVAILABLE,
         Some("request_invalid") => FEEDBACK_REQUEST_INVALID,
         _ if status == StatusCode::TOO_MANY_REQUESTS => FEEDBACK_RATE_LIMITED,
         _ => FEEDBACK_SUBMIT_FAILED,
@@ -673,7 +676,8 @@ fn is_loopback_host(host: &str) -> bool {
 }
 
 fn validate_feedback_payload(payload: &FeedbackPayload) -> Result<(), &'static str> {
-    if !matches!(payload.sentiment.as_str(), "positive" | "negative")
+    if !matches!(payload.source.as_str(), "manual" | "prompt")
+        || !matches!(payload.sentiment.as_str(), "positive" | "negative")
         || !matches!(
             payload.category.as_str(),
             "quality" | "bug" | "performance" | "feature" | "other"
@@ -823,6 +827,7 @@ mod tests {
 
     fn payload() -> FeedbackPayload {
         FeedbackPayload {
+            source: "manual".into(),
             sentiment: "negative".into(),
             category: "quality".into(),
             message: "not good".into(),
@@ -877,6 +882,13 @@ mod tests {
         assert_eq!(
             feedback_error_for_status(StatusCode::UNPROCESSABLE_ENTITY, Some("request_invalid")),
             FEEDBACK_REQUEST_INVALID
+        );
+        assert_eq!(
+            feedback_error_for_status(
+                StatusCode::SERVICE_UNAVAILABLE,
+                Some("feedback_storage_unavailable")
+            ),
+            "反馈附件暂时无法保存，请稍后再试。"
         );
         assert_eq!(
             feedback_error_for_status(StatusCode::BAD_GATEWAY, Some("provider-internal-detail")),

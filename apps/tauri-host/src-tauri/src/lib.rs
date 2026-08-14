@@ -93,6 +93,8 @@ pub fn run() {
             commands::runtime_optimize,
             commands::runtime_cancel,
             commands::runtime_list_providers,
+            commands::runtime_discover_provider_models,
+            commands::runtime_test_provider_connection,
             commands::runtime_list_plugins,
             commands::runtime_plugin_call,
             commands::runtime_plugin_cancel,

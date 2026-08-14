@@ -2,6 +2,12 @@ export type ProviderReleaseStatus = "supported" | "experimental";
 
 export type ProviderModelOption = { id: string; label: string };
 
+export type WorkbenchModelOption = ProviderModelOption & {
+  providerId: string;
+  providerLabel: string;
+  isDefault: boolean;
+};
+
 export type ProviderOption = {
   id: string;
   label: string;
@@ -24,6 +30,11 @@ export type RuntimeProviderDescriptor = {
 export type ProviderAvailability = "checking" | "ready" | "missing" | "unavailable";
 
 const knownModelLabels: Record<string, string> = {
+  "gpt-5.6-luna": "GPT-5.6 Luna",
+  "claude-sonnet-4-20250514": "Claude Sonnet 4",
+  "claude-3-5-haiku-20241022": "Claude 3.5 Haiku",
+  "gemini-2.5-flash": "Gemini 2.5 Flash",
+  "gemini-2.5-pro": "Gemini 2.5 Pro",
   "MiniMax-M2.7-highspeed": "M2.7 高速版",
   "deepseek-chat": "DeepSeek Chat",
   "deepseek-reasoner": "DeepSeek Reasoner",
@@ -48,6 +59,39 @@ const cloudProvider: ProviderOption = {
 
 export const fallbackProviderCatalog: ProviderOption[] = [
   cloudProvider,
+  {
+    id: "openai-responses",
+    label: "OpenAI Responses",
+    models: [{ id: "gpt-5.6-luna", label: "GPT-5.6 Luna" }],
+    defaultModel: "gpt-5.6-luna",
+    releaseStatus: "experimental",
+    sessionConfigured: false,
+    source: "fallback"
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    models: [
+      { id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
+      { id: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku" }
+    ],
+    defaultModel: "claude-sonnet-4-20250514",
+    releaseStatus: "experimental",
+    sessionConfigured: false,
+    source: "fallback"
+  },
+  {
+    id: "gemini",
+    label: "Google Gemini",
+    models: [
+      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" }
+    ],
+    defaultModel: "gemini-2.5-flash",
+    releaseStatus: "experimental",
+    sessionConfigured: false,
+    source: "fallback"
+  },
   {
     id: "minimax",
     label: "MiniMax",
@@ -144,6 +188,52 @@ export function providerDefaultModel(
   return provider?.defaultModel ?? provider?.models[0]?.id ?? catalog[0]?.models[0]?.id ?? null;
 }
 
+export function workbenchModelOptions(
+  config: Record<string, unknown> | null,
+  catalog: readonly ProviderOption[] = providerCatalog
+): WorkbenchModelOption[] {
+  const configured = configuredProviderModels(config?.provider_models);
+  const defaultProvider = typeof config?.provider === "string"
+    ? config.provider.trim().toLowerCase()
+    : "";
+  const defaultModel = typeof config?.model === "string" ? config.model.trim() : "";
+  const providers = configured.size > 0
+    ? catalog.filter((provider) => configured.has(provider.id))
+    : catalog.filter((provider) =>
+        provider.source === "cloud" ||
+        provider.sessionConfigured ||
+        provider.id === defaultProvider
+      );
+
+  return providers.flatMap((provider) => {
+    const configuredIds = configured.get(provider.id);
+    const models = configuredIds
+      ? configuredIds.map((id) => provider.models.find((model) => model.id === id) ?? { id, label: id })
+      : provider.models;
+    return models.map((model) => ({
+      ...model,
+      providerId: provider.id,
+      providerLabel: provider.label,
+      isDefault: provider.id === defaultProvider && model.id === defaultModel
+    }));
+  });
+}
+
+function configuredProviderModels(value: unknown): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  if (!value || typeof value !== "object" || Array.isArray(value)) return result;
+  for (const [providerId, rawModels] of Object.entries(value)) {
+    const normalizedProvider = providerId.trim().toLowerCase();
+    if (!/^[a-z0-9._-]{1,64}$/.test(normalizedProvider) || !Array.isArray(rawModels)) continue;
+    const models = [...new Set(rawModels
+      .filter((model): model is string => typeof model === "string")
+      .map((model) => model.trim())
+      .filter((model) => model.length > 0 && model.length <= 256))];
+    if (models.length > 0) result.set(normalizedProvider, models);
+  }
+  return result;
+}
+
 export function providerName(
   providerId: string | null,
   catalog: readonly ProviderOption[] = providerCatalog
@@ -152,16 +242,35 @@ export function providerName(
   return catalog.find((provider) => provider.id === normalized)?.label ?? providerId ?? "未配置";
 }
 
+export function withConfiguredModels(
+  catalog: readonly ProviderOption[],
+  configuredModels: Record<string, string[]>
+): ProviderOption[] {
+  return catalog.map((provider) => {
+    const models = configuredModels[provider.id];
+    if (!models?.length) return { ...provider, models: provider.models.map((model) => ({ ...model })) };
+    const options = [...new Set(models)].map((id) => ({ id, label: knownModelLabels[id] ?? id }));
+    return {
+      ...provider,
+      models: options,
+      defaultModel: options.some((model) => model.id === provider.defaultModel)
+        ? provider.defaultModel
+        : options[0].id
+    };
+  });
+}
+
 export function resolveProviderAvailability(
   providerId: string | null,
   secretStatus: { providerId: string; configured: boolean } | null,
   settingsReady: boolean,
-  statusError: boolean
+  statusError: boolean,
+  cloudAvailability: ProviderAvailability = "checking"
 ): ProviderAvailability {
   if (!settingsReady || !providerId) return "checking";
 
   const activeId = providerId.trim().toLowerCase();
-  if (activeId === "reflex-cloud") return "ready";
+  if (activeId === "reflex-cloud") return cloudAvailability;
   if (statusError) return "unavailable";
   if (!secretStatus) return "checking";
   const statusId = secretStatus.providerId.trim().toLowerCase();

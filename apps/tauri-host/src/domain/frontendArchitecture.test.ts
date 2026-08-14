@@ -147,6 +147,38 @@ describe("production frontend architecture", () => {
     expect(appSource).toMatch(/from\s+["']\.\/domain\/tauriHostApi["']/);
     expect(appSource).toContain("createDefaultCoreBridge(");
     expect(appSource).toContain("createTauriHostApi(");
+    expect(appSource).not.toContain("new DemoCoreBridge()");
+    expect(appSource).toContain(
+      "const promptPersisted = await persistFeedbackPrompt(decision.state);"
+    );
+    expect(appSource).toMatch(/decision\.shouldPrompt\s*&&\s*promptPersisted/);
+    expect(appSource).toContain("const promptAvailable =");
+    expect(appSource).toContain("createPromptFeedbackPayload({");
+    expect(appSource).not.toContain('openFeedback(sentiment, "prompt", false)');
+
+    const settingsSource = readFileSync(
+      join(sourceRoot, "components", "settings", "SettingsDialog.svelte"),
+      "utf8"
+    );
+    expect(settingsSource).not.toContain("手动固定");
+    expect(settingsSource).toContain('releaseStatus === "experimental"');
+
+    const promptSource = readFileSync(
+      join(sourceRoot, "components", "feedback", "FeedbackPromptDialog.svelte"),
+      "utf8"
+    );
+    expect(promptSource).toContain('role="region"');
+    expect(promptSource).not.toContain('aria-modal="true"');
+    expect(promptSource).toContain('translate("这次结果有帮助吗？")');
+
+    const scenePromptSource = readFileSync(
+      join(sourceRoot, "components", "workbench", "ScenePromptDialog.svelte"),
+      "utf8"
+    );
+    expect(scenePromptSource).toContain('translate("当前场景：{scene}"');
+
+    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+    expect(styles).toContain(".settings-content label.settings-toggle > span");
 
     const tauriAdapterSource = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "tauriHostApi.ts"),
@@ -177,7 +209,8 @@ describe("production frontend architecture", () => {
       "InputPane",
       "ConfigSummary",
       "ResultPane",
-      "AdjustPanel"
+      "AdjustPanel",
+      "ScenePromptDialog"
     ]) {
       expect(appSource).toMatch(new RegExp(`import\\s+${component}\\s+from`));
       expect(appSource).toContain(`<${component}`);

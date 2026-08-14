@@ -16,6 +16,7 @@
   export let improvementConsent = false;
   export let busy = false;
   export let notice: string | null = null;
+  export let translate: (source: string, values?: Record<string, string | number>) => string;
   export let onClose: () => void;
   export let onRemoveScreenshot: () => void;
   export let onSubmit: (value: FeedbackFormValue) => void | Promise<void>;
@@ -52,14 +53,14 @@
 </script>
 
 <div class="feedback-layer" role="presentation">
-  <button class="feedback-backdrop" type="button" aria-label="关闭反馈" disabled={busy} onclick={onClose}></button>
+  <button class="feedback-backdrop" type="button" aria-label={translate("关闭反馈")} disabled={busy} onclick={onClose}></button>
   <div class="feedback-dialog" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
     <header>
       <div>
-        <span class:negative={sentiment === "negative"}>{sentiment === "negative" ? "结果不满意" : "结果满意"}</span>
-        <h2 id="feedback-title">提交反馈</h2>
+        <span class:negative={sentiment === "negative"}>{translate(sentiment === "negative" ? "结果不满意" : "结果满意")}</span>
+        <h2 id="feedback-title">{translate("提交反馈")}</h2>
       </div>
-      <button class="icon-button" type="button" aria-label="关闭反馈" title="关闭" disabled={busy} onclick={onClose}>
+      <button class="icon-button" type="button" aria-label={translate("关闭反馈")} title={translate("关闭")} disabled={busy} onclick={onClose}>
         <X size={17} strokeWidth={2} />
       </button>
     </header>
@@ -67,64 +68,64 @@
     <div class="feedback-content">
       <div class="feedback-fields">
         <label>
-          <span>反馈类型</span>
+          <span>{translate("反馈类型")}</span>
           <select bind:value={category} disabled={busy}>
-            <option value="quality">结果质量</option>
-            <option value="bug">功能异常</option>
-            <option value="performance">速度与性能</option>
-            <option value="feature">功能建议</option>
-            <option value="other">其他</option>
+            <option value="quality">{translate("结果质量")}</option>
+            <option value="bug">{translate("功能异常")}</option>
+            <option value="performance">{translate("速度与性能")}</option>
+            <option value="feature">{translate("功能建议")}</option>
+            <option value="other">{translate("其他")}</option>
           </select>
         </label>
         <label>
-          <span>具体问题</span>
-          <textarea bind:value={message} maxlength="4000" rows="5" placeholder="描述发生了什么…" disabled={busy}></textarea>
+          <span>{translate("具体问题")}</span>
+          <textarea bind:value={message} maxlength="4000" rows="5" placeholder={translate("描述发生了什么…")} disabled={busy}></textarea>
         </label>
         <label>
-          <span>期望结果</span>
-          <textarea bind:value={expectedOutput} maxlength="10000" rows="3" placeholder="你希望得到怎样的结果？" disabled={busy}></textarea>
+          <span>{translate("期望结果")}</span>
+          <textarea bind:value={expectedOutput} maxlength="10000" rows="3" placeholder={translate("你希望得到怎样的结果？")} disabled={busy}></textarea>
         </label>
         <label>
-          <span>联系方式（可选）</span>
-          <input bind:value={contact} maxlength="320" placeholder="邮箱或其他联系方式" disabled={busy} />
+          <span>{translate("联系方式（可选）")}</span>
+          <input bind:value={contact} maxlength="320" placeholder={translate("邮箱或其他联系方式")} disabled={busy} />
         </label>
       </div>
 
       <div class="feedback-evidence">
         <div class="evidence-head">
-          <strong>应用截图预览</strong>
+          <strong>{translate("应用截图预览")}</strong>
           {#if screenshot}
-            <button type="button" title="移除截图" aria-label="移除截图" disabled={busy} onclick={() => { includeScreenshot = false; onRemoveScreenshot(); }}>
+            <button type="button" title={translate("移除截图")} aria-label={translate("移除截图")} disabled={busy} onclick={() => { includeScreenshot = false; onRemoveScreenshot(); }}>
               <ImageOff size={15} strokeWidth={2} />
             </button>
           {/if}
         </div>
         {#if screenshot}
-          <img src={screenshotUrl} alt="即将随反馈提交的 Reflex 应用截图" />
+          <img src={screenshotUrl} alt={translate("即将随反馈提交的 Reflex 应用截图")} />
         {:else}
-          <div class="screenshot-empty">未附加截图</div>
+          <div class="screenshot-empty">{translate("未附加截图")}</div>
         {/if}
-        {#if captureNotice}<p class="notice">{captureNotice}</p>{/if}
+        {#if captureNotice}<p class="notice">{translate(captureNotice)}</p>{/if}
         <div class="privacy-options">
-          <label><input type="checkbox" bind:checked={includePrompt} disabled={busy || !improvementConsent} />附加本次输入</label>
-          <label><input type="checkbox" bind:checked={includeResult} disabled={busy || !improvementConsent} />附加本次结果</label>
+          <label><input type="checkbox" bind:checked={includePrompt} disabled={busy || !improvementConsent} />{translate("附加本次输入")}</label>
+          <label><input type="checkbox" bind:checked={includeResult} disabled={busy || !improvementConsent} />{translate("附加本次结果")}</label>
           {#if screenshot}
-            <label><input type="checkbox" bind:checked={includeScreenshot} disabled={busy} />附加应用截图</label>
+            <label><input type="checkbox" bind:checked={includeScreenshot} disabled={busy} />{translate("附加应用截图")}</label>
           {/if}
         </div>
         <p class="privacy-note">
-          {!improvementConsent ? "附加输入和结果前，请先在设置的安全与隐私中开启产品改进计划。" : "仅勾选的内容会随反馈发送。"}
-          API Key 和无关剪贴板内容不会上传。
+          {translate(!improvementConsent ? "附加输入和结果前，请先在设置的安全与隐私中开启产品改进计划。" : "仅勾选的内容会随反馈发送。")}
+          {translate("API Key 和无关剪贴板内容不会上传。")}
         </p>
       </div>
     </div>
 
     <footer>
-      <span class:error={notice?.includes("失败")}>{notice ?? ""}</span>
+      <span class:error={notice?.includes("失败")}>{notice ? translate(notice) : ""}</span>
       <div>
-        <button class="outline" type="button" disabled={busy} onclick={onClose}>取消</button>
+        <button class="outline" type="button" disabled={busy} onclick={onClose}>{translate("取消")}</button>
         <button class="primary" type="button" disabled={busy || (sentiment === "negative" && category === "other" && !message.trim())} onclick={submit}>
-          <Send size={15} strokeWidth={2} />{busy ? "正在发送" : "发送反馈"}
+          <Send size={15} strokeWidth={2} />{translate(busy ? "正在发送" : "发送反馈")}
         </button>
       </div>
     </footer>

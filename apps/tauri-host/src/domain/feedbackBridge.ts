@@ -23,6 +23,7 @@ export type FeedbackContext = {
 };
 
 export type FeedbackPayload = {
+  source: "manual" | "prompt";
   sentiment: FeedbackSentiment;
   category: FeedbackCategory;
   message: string;
@@ -52,6 +53,29 @@ export type FeedbackFormValue = {
   includeResult: boolean;
   includeScreenshot: boolean;
 };
+
+export function createPromptFeedbackPayload(input: {
+  sentiment: FeedbackSentiment;
+  context: FeedbackContext;
+  consentVersion: string;
+}): FeedbackPayload {
+  return {
+    source: "prompt",
+    sentiment: input.sentiment,
+    category: "quality",
+    message: "",
+    expected_output: "",
+    contact: "",
+    context: input.context,
+    include_prompt: false,
+    include_result: false,
+    include_screenshot: false,
+    prompt_text: null,
+    result_text: null,
+    screenshot: null,
+    consent_version: input.consentVersion
+  };
+}
 
 export type CloudConsent = {
   usage_metrics: boolean;
@@ -99,6 +123,7 @@ const SAFE_FEEDBACK_SUBMIT_MESSAGES = new Set([
   "隐私授权已更新，请刷新设置后重新提交。",
   "反馈提交过于频繁，请稍后再试。",
   "反馈内容不完整，请检查后重试。",
+  "反馈附件暂时无法保存，请稍后再试。",
   "云端服务暂不可用，请稍后重试。",
   "云端隐私设置暂不可用。"
 ]);

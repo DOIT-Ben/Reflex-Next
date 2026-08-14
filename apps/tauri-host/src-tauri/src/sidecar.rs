@@ -31,6 +31,8 @@ pub const CORE_EVENT_NAME: &str = "reflex://core-event";
 pub const PLUGIN_EVENT_NAME: &str = "reflex://plugin-event";
 pub const CAPABILITY_LIST_EVENT_NAME: &str = "reflex://capability-list";
 pub const PROVIDER_CATALOG_EVENT_NAME: &str = "reflex://provider-catalog";
+pub const PROVIDER_MODELS_EVENT_NAME: &str = "reflex://provider-models";
+pub const PROVIDER_CONNECTION_EVENT_NAME: &str = "reflex://provider-connection-result";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimePaths {
@@ -366,6 +368,8 @@ impl HostRequestRegistry {
 enum ResponseContract {
     Core,
     ProviderCatalog,
+    ProviderModels,
+    ProviderConnection,
     CapabilityList,
     Plugin {
         plugin_id: String,
@@ -380,6 +384,8 @@ impl ResponseContract {
         match command.kind {
             CommandKind::Cancel => None,
             CommandKind::ListProviders => Some(Self::ProviderCatalog),
+            CommandKind::DiscoverProviderModels => Some(Self::ProviderModels),
+            CommandKind::TestProviderConnection => Some(Self::ProviderConnection),
             CommandKind::ListPlugins => Some(Self::CapabilityList),
             CommandKind::PluginCall | CommandKind::PluginAdminCall => Some(Self::Plugin {
                 plugin_id: command.payload["plugin_id"].as_str()?.to_string(),
@@ -400,6 +406,8 @@ impl ResponseContract {
         match self {
             Self::Core => CORE_EVENT_NAME,
             Self::ProviderCatalog => PROVIDER_CATALOG_EVENT_NAME,
+            Self::ProviderModels => PROVIDER_MODELS_EVENT_NAME,
+            Self::ProviderConnection => PROVIDER_CONNECTION_EVENT_NAME,
             Self::CapabilityList => CAPABILITY_LIST_EVENT_NAME,
             Self::Plugin { .. } => PLUGIN_EVENT_NAME,
         }
@@ -1698,6 +1706,18 @@ fn safe_failure_payload(request_id: &str, contract: &ResponseContract) -> Value 
             "type": "provider_catalog_error",
             "code": "runtime_unavailable"
         }),
+        ResponseContract::ProviderModels => serde_json::json!({
+            "version": 1,
+            "request_id": request_id,
+            "type": "provider_models_error",
+            "code": "runtime_unavailable"
+        }),
+        ResponseContract::ProviderConnection => serde_json::json!({
+            "version": 1,
+            "request_id": request_id,
+            "type": "provider_connection_error",
+            "code": "runtime_unavailable"
+        }),
         ResponseContract::CapabilityList => serde_json::json!({
             "version": 1,
             "request_id": request_id,
@@ -1932,9 +1952,120 @@ pub fn parse_sidecar_event(raw: &str) -> Result<ParsedSidecarEvent, &'static str
         Some("provider_catalog") => {
             parse_provider_catalog(value.clone(), object, request_id, raw.len())
         }
+        Some("provider_models") => parse_provider_models(value.clone(), object, request_id),
+        Some("provider_connection_result") => {
+            parse_provider_connection(value.clone(), object, request_id)
+        }
+        Some("provider_models_error") => parse_provider_probe_error(
+            value.clone(),
+            object,
+            request_id,
+            PROVIDER_MODELS_EVENT_NAME,
+        ),
+        Some("provider_connection_error") => parse_provider_probe_error(
+            value.clone(),
+            object,
+            request_id,
+            PROVIDER_CONNECTION_EVENT_NAME,
+        ),
         Some("capability_list") => parse_capability_list(value.clone(), object, request_id),
         _ => Err(RUNTIME_UNAVAILABLE_MESSAGE),
     }
+}
+
+fn parse_provider_models(
+    value: Value,
+    object: &serde_json::Map<String, Value>,
+    request_id: &str,
+) -> Result<ParsedSidecarEvent, &'static str> {
+    let Some(models) = object.get("models").and_then(Value::as_array) else {
+        return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+    };
+    let mut previous: Option<&str> = None;
+    let valid_models = !models.is_empty()
+        && models.len() <= MAX_PROVIDER_MODELS
+        && models.iter().all(|item| {
+            let Some(model) = item.as_str() else {
+                return false;
+            };
+            let ordered = previous.is_none_or(|last| last < model);
+            previous = Some(model);
+            ordered && is_safe_public_text(model, MAX_PROVIDER_MODEL_ID_LENGTH)
+        });
+    if !has_exact_keys(
+        object,
+        &["version", "request_id", "type", "provider_id", "models"],
+    ) || !object
+        .get("provider_id")
+        .and_then(Value::as_str)
+        .is_some_and(crate::runtime_commands::is_safe_id)
+        || !valid_models
+    {
+        return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+    }
+    Ok(ParsedSidecarEvent {
+        event_name: PROVIDER_MODELS_EVENT_NAME,
+        request_id: request_id.to_string(),
+        terminal: true,
+        payload: value,
+    })
+}
+
+fn parse_provider_connection(
+    value: Value,
+    object: &serde_json::Map<String, Value>,
+    request_id: &str,
+) -> Result<ParsedSidecarEvent, &'static str> {
+    if !has_exact_keys(
+        object,
+        &[
+            "version",
+            "request_id",
+            "type",
+            "provider_id",
+            "ok",
+            "latency_ms",
+        ],
+    ) || !object
+        .get("provider_id")
+        .and_then(Value::as_str)
+        .is_some_and(crate::runtime_commands::is_safe_id)
+        || !object.get("ok").is_some_and(Value::is_boolean)
+        || !object
+            .get("latency_ms")
+            .and_then(Value::as_u64)
+            .is_some_and(|latency| latency <= 300_000)
+    {
+        return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+    }
+    Ok(ParsedSidecarEvent {
+        event_name: PROVIDER_CONNECTION_EVENT_NAME,
+        request_id: request_id.to_string(),
+        terminal: true,
+        payload: value,
+    })
+}
+
+fn parse_provider_probe_error(
+    value: Value,
+    object: &serde_json::Map<String, Value>,
+    request_id: &str,
+    event_name: &'static str,
+) -> Result<ParsedSidecarEvent, &'static str> {
+    if !has_exact_keys(object, &["version", "request_id", "type", "code"])
+        || !object
+            .get("code")
+            .and_then(Value::as_str)
+            .is_some_and(crate::runtime_commands::is_safe_id)
+    {
+        return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+    }
+    Ok(ParsedSidecarEvent {
+        event_name,
+        request_id: request_id.to_string(),
+        terminal: true,
+        payload: value,
+    })
 }
 
 #[cfg(test)]

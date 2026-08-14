@@ -1,8 +1,16 @@
 <script lang="ts">
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
+  import Search from "@lucide/svelte/icons/search";
   import X from "@lucide/svelte/icons/x";
-  import type { RequestSettings } from "../../domain/hostState";
-  import type { OptimizeMode, OptimizeStyle, SceneOption } from "../../domain/reflexSession";
+  import { applySceneSelection, type RequestSettings } from "../../domain/hostState";
+  import type { WorkbenchModelOption } from "../../domain/providerCatalog";
+  import {
+    listSceneCategories,
+    type OptimizeMode,
+    type OptimizeStyle,
+    type SceneCategoryId,
+    type SceneOption
+  } from "../../domain/reflexSession";
 
   interface Props {
     draft: RequestSettings;
@@ -10,7 +18,7 @@
     modes: Array<{ id: OptimizeMode; label: string }>;
     styles: Array<{ id: OptimizeStyle; label: string }>;
     scenes: SceneOption[];
-    models: Array<{ id: string; label: string }>;
+    models: WorkbenchModelOption[];
     translate: (source: string, values?: Record<string, string | number>) => string;
     onDraftChange: (draft: RequestSettings) => void;
     onCancel: () => void;
@@ -29,13 +37,39 @@
     onCancel,
     onApply
   }: Props = $props();
+  const sceneCategories = listSceneCategories();
+  let sceneQuery = $state("");
+  let sceneCategory = $state<SceneCategoryId | null>(null);
+  let visibleScenes = $derived(
+    scenes.filter((scene) => {
+      if (sceneCategory && scene.category !== sceneCategory) return false;
+      const query = sceneQuery.trim().toLocaleLowerCase();
+      if (!query) return true;
+      const categoryLabel = sceneCategories.find((item) => item.id === scene.category)?.label ?? "";
+      return [scene.id, translate(scene.label), translate(scene.hint), translate(categoryLabel)]
+        .some((value) => value.toLocaleLowerCase().includes(query));
+    })
+  );
 
   function patchDraft(patch: Partial<RequestSettings>) {
     onDraftChange({ ...draft, ...patch });
   }
 
   function selectScene(value: string) {
-    patchDraft({ scene: value.trim() || null });
+    onDraftChange(applySceneSelection(draft, value));
+  }
+
+  function modelValue(providerId: string, modelId: string): string {
+    return JSON.stringify([providerId, modelId]);
+  }
+
+  function selectModel(value: string) {
+    try {
+      const [provider, model] = JSON.parse(value) as unknown[];
+      if (typeof provider === "string" && typeof model === "string") patchDraft({ provider, model });
+    } catch {
+      // Ignore malformed values that did not originate from the model list.
+    }
   }
 </script>
 
@@ -89,20 +123,62 @@
         </div>
       </fieldset>
 
-      <label class="adjust-field">
-        <span>{translate("场景")}</span>
+      <div class="scene-tools">
+        <label class="scene-search">
+          <span class="sr-only">{translate("搜索场景")}</span>
+          <span class="scene-search-icon" aria-hidden="true"><Search size={15} strokeWidth={2} /></span>
+          <input
+            type="search"
+            value={sceneQuery}
+            placeholder={translate("搜索场景")}
+            oninput={(event) => (sceneQuery = event.currentTarget.value)}
+          />
+        </label>
+        <label class="scene-category">
+          <span class="sr-only">{translate("场景分类")}</span>
+          <select
+            value={sceneCategory ?? ""}
+            onchange={(event) => (sceneCategory = (event.currentTarget.value || null) as SceneCategoryId | null)}
+          >
+            <option value="">{translate("全部分类")}</option>
+            {#each sceneCategories as category}
+              <option value={category.id}>{translate(category.label)}</option>
+            {/each}
+          </select>
+        </label>
+      </div>
+
+      <label class="adjust-field scene-field">
+        <span>{translate("场景")} · {visibleScenes.length}</span>
         <select value={draft.scene ?? ""} onchange={(event) => selectScene(event.currentTarget.value)}>
           <option value="">{translate("自动识别")}</option>
-          {#each scenes as scene}
-            <option value={scene.id}>{translate(scene.label)}</option>
+          {#if draft.scene && !visibleScenes.some((scene) => scene.id === draft.scene)}
+            <option value={draft.scene}>{translate(scenes.find((scene) => scene.id === draft.scene)?.label ?? draft.scene)}</option>
+          {/if}
+          {#each sceneCategories as category}
+            {@const categoryScenes = visibleScenes.filter((scene) => scene.category === category.id)}
+            {#if categoryScenes.length > 0}
+              <optgroup label={translate(category.label)}>
+                {#each categoryScenes as scene}
+                  <option value={scene.id}>{translate(scene.label)} · {translate(scene.hint)}</option>
+                {/each}
+              </optgroup>
+            {/if}
           {/each}
         </select>
       </label>
 
       <label class="adjust-field">
         <span>{translate("模型")}</span>
-        <select value={draft.model ?? ""} onchange={(event) => patchDraft({ model: event.currentTarget.value })}>
-          {#each models as model}<option value={model.id}>{translate(model.label)}</option>{/each}
+        <select
+          value={modelValue(draft.provider ?? "", draft.model ?? "")}
+          onchange={(event) => selectModel(event.currentTarget.value)}
+        >
+          {#each models as model}
+            <option value={modelValue(model.providerId, model.id)}>
+              {model.providerLabel} · {translate(model.label)}{model.isDefault ? ` · ${translate("默认")}` : ""}
+            </option>
+          {/each}
         </select>
       </label>
 
@@ -118,3 +194,66 @@
     </footer>
   </div>
 </div>
+
+<style>
+  .scene-tools {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(132px, 0.42fr);
+    gap: 8px;
+  }
+
+  .scene-search {
+    position: relative;
+    display: block;
+  }
+
+  .scene-search-icon {
+    position: absolute;
+    top: 50%;
+    left: 10px;
+    z-index: 1;
+    display: grid;
+    color: var(--muted);
+    pointer-events: none;
+    transform: translateY(-50%);
+  }
+
+  .scene-search input,
+  .scene-category select {
+    width: 100%;
+    min-height: 36px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+  }
+
+  .scene-search input {
+    padding: 0 10px 0 32px;
+  }
+
+  .scene-category select {
+    padding: 0 28px 0 10px;
+  }
+
+  .scene-field > span {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (max-width: 620px) {
+    .scene-tools {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

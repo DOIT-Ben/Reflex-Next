@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -36,6 +36,8 @@ pub struct AppConfig {
     pub hotkey: String,
     pub tls_verify: bool,
     pub ca_bundle_path: Option<String>,
+    pub provider_endpoints: BTreeMap<String, String>,
+    pub provider_models: BTreeMap<String, Vec<String>>,
     #[serde(flatten)]
     pub extensions: Map<String, Value>,
 }
@@ -60,6 +62,8 @@ impl Default for AppConfig {
             hotkey: "Ctrl+Alt+R".to_string(),
             tls_verify: true,
             ca_bundle_path: None,
+            provider_endpoints: BTreeMap::new(),
+            provider_models: BTreeMap::new(),
             extensions: Map::new(),
         }
     }
@@ -111,6 +115,8 @@ impl AppConfig {
         );
         let hotkey = normalized_bounded_string(object.get("hotkey"), &defaults.hotkey, 128);
         let ca_bundle_path = normalized_ca_bundle_path(object.get("ca_bundle_path"));
+        let provider_endpoints = normalized_provider_endpoints(object.get("provider_endpoints"));
+        let provider_models = normalized_provider_models(object.get("provider_models"));
         let history_redaction = if source_version == u64::from(CURRENT_CONFIG_VERSION) {
             normalized_choice(
                 object.get("history_redaction"),
@@ -151,6 +157,8 @@ impl AppConfig {
             hotkey,
             tls_verify: true,
             ca_bundle_path,
+            provider_endpoints,
+            provider_models,
             extensions,
         })
     }
@@ -371,6 +379,8 @@ fn known_config_fields() -> HashSet<&'static str> {
         "hotkey",
         "tls_verify",
         "ca_bundle_path",
+        "provider_endpoints",
+        "provider_models",
     ]
     .into_iter()
     .collect()
@@ -427,6 +437,65 @@ fn normalized_provider(value: Option<&Value>, fallback: &str) -> String {
     }
 }
 
+fn normalized_provider_endpoints(value: Option<&Value>) -> BTreeMap<String, String> {
+    let Some(values) = value.and_then(Value::as_object) else {
+        return BTreeMap::new();
+    };
+    values
+        .iter()
+        .take(64)
+        .filter_map(|(provider_id, endpoint)| {
+            let provider_id = normalized_provider(Some(&Value::String(provider_id.clone())), "");
+            let endpoint = endpoint.as_str()?.trim();
+            if provider_id.is_empty() || !is_safe_http_endpoint(endpoint) {
+                return None;
+            }
+            Some((provider_id, endpoint.trim_end_matches('/').to_string()))
+        })
+        .collect()
+}
+
+fn normalized_provider_models(value: Option<&Value>) -> BTreeMap<String, Vec<String>> {
+    let Some(values) = value.and_then(Value::as_object) else {
+        return BTreeMap::new();
+    };
+    values
+        .iter()
+        .take(64)
+        .filter_map(|(provider_id, models)| {
+            let provider_id = normalized_provider(Some(&Value::String(provider_id.clone())), "");
+            let mut seen = HashSet::new();
+            let models = models
+                .as_array()?
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|model| {
+                    !model.is_empty() && model.len() <= 256 && !model.chars().any(char::is_control)
+                })
+                .filter(|model| seen.insert((*model).to_string()))
+                .take(256)
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            (!provider_id.is_empty() && !models.is_empty()).then_some((provider_id, models))
+        })
+        .collect()
+}
+
+fn is_safe_http_endpoint(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    !value.is_empty()
+        && value.len() <= 2048
+        && !value.chars().any(char::is_control)
+        && lower.starts_with("https://")
+        && !value.split_once("://").is_some_and(|(_, authority)| {
+            authority
+                .split('/')
+                .next()
+                .is_some_and(|host| host.contains('@'))
+        })
+}
+
 fn normalized_choice(value: Option<&Value>, fallback: &str, allowed: &[&str]) -> String {
     let Some(value) = value.and_then(Value::as_str).map(str::trim) else {
         return fallback.to_string();
@@ -442,11 +511,16 @@ fn normalized_plugins(value: Option<&Value>, fallback: &[String]) -> Vec<String>
     let Some(values) = value.and_then(Value::as_array) else {
         return fallback.to_vec();
     };
-    ["translator", "markdown-preview", "batch-runner", "semantic-detector"]
-        .into_iter()
-        .filter(|allowed| values.iter().any(|value| value.as_str() == Some(*allowed)))
-        .map(str::to_string)
-        .collect()
+    [
+        "translator",
+        "markdown-preview",
+        "batch-runner",
+        "semantic-detector",
+    ]
+    .into_iter()
+    .filter(|allowed| values.iter().any(|value| value.as_str() == Some(*allowed)))
+    .map(str::to_string)
+    .collect()
 }
 
 fn normalized_bounded_string(value: Option<&Value>, fallback: &str, max_len: usize) -> String {
@@ -584,6 +658,8 @@ mod tests {
         assert_eq!(config.theme, "system");
         assert!(config.tls_verify);
         assert!(config.ca_bundle_path.is_none());
+        assert!(config.provider_endpoints.is_empty());
+        assert!(config.provider_models.is_empty());
     }
 
     #[test]
@@ -622,6 +698,36 @@ mod tests {
             Some("C:\\certs\\root.pem")
         );
         assert_eq!(config.extensions.get("future_flag"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn normalizes_provider_endpoints_and_discovered_models_without_secrets() {
+        let config = AppConfig::from_value(json!({
+            "version": 2,
+            "provider_endpoints": {
+                "OpenAI-Responses": "https://api.example.test/v1/",
+                "unsafe": "https://user:pass@example.test"
+            },
+            "provider_models": {
+                "OpenAI-Responses": ["model-a", "model-a", "model-b"],
+                "unsafe": ["bad\nmodel"]
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(
+            config
+                .provider_endpoints
+                .get("openai-responses")
+                .map(String::as_str),
+            Some("https://api.example.test/v1")
+        );
+        assert!(!config.provider_endpoints.contains_key("unsafe"));
+        assert_eq!(
+            config.provider_models.get("openai-responses"),
+            Some(&vec!["model-a".to_string(), "model-b".to_string()])
+        );
+        assert!(!config.provider_models.contains_key("unsafe"));
     }
 
     #[test]

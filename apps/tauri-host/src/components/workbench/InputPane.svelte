@@ -17,6 +17,7 @@
   export let onRun: WorkbenchActionHandler | undefined = undefined;
   export let onReadClipboard: WorkbenchActionHandler | undefined = undefined;
   export let onClear: WorkbenchActionHandler | undefined = undefined;
+  export let translate: (source: string, values?: Record<string, string | number>) => string = (source) => source;
 
   let textarea: HTMLTextAreaElement;
 
@@ -64,22 +65,22 @@
         <button
           type="button"
           disabled={locked || clipboardBusy}
-          aria-label="读取剪贴板"
-          title="读取系统剪贴板内容到输入框"
+          aria-label={translate("读取剪贴板")}
+          title={translate("读取系统剪贴板内容到输入框")}
           on:click={() => void onReadClipboard?.()}
         >
-          {clipboardBusy ? "读取中…" : "读取剪贴板"}
+          {clipboardBusy ? translate("读取中…") : translate("读取剪贴板")}
         </button>
       {/if}
       <button
         class="clear-button"
         type="button"
         disabled={locked || characterCount === 0}
-        aria-label="清空输入"
-        title="清空当前输入"
+        aria-label={translate("清空输入")}
+        title={translate("清空当前输入")}
         on:click={clearInput}
       >
-        清空
+        {translate("清空")}
       </button>
     </div>
   </header>
@@ -101,7 +102,7 @@
     <footer class="editor-footer">
       <span class:error={overLimit} id="workbench-input-help">{helpText}</span>
       <span class:error={overLimit} id="workbench-input-count" aria-live="polite">
-        {characterCount.toLocaleString()} 字
+        {translate("{count} 字", { count: characterCount.toLocaleString() })}
       </span>
     </footer>
   </div>

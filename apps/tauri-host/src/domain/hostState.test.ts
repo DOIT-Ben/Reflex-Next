@@ -18,10 +18,12 @@ import {
   createDefaultSettingsDraft,
   createHostState,
   createRequestDraft,
+  createRequestDraftWithSceneChoice,
   openAdjust,
   openSettings,
   resolveHostShortcut,
   retryAfterError,
+  selectRequestModel,
   startGeneration,
   settingsDraftFromConfig,
   updateHistorySettingsDraft,
@@ -48,7 +50,9 @@ const persistedConfig: AppConfig = {
   theme: "system",
   hotkey: "Ctrl+Alt+R",
   tls_verify: true,
-  ca_bundle_path: null
+  ca_bundle_path: null,
+  provider_endpoints: { minimax: "https://api.minimax.example/v1" },
+  provider_models: { minimax: ["MiniMax-M2.7-highspeed", "custom-model"] }
 };
 
 describe("host state", () => {
@@ -68,7 +72,9 @@ describe("host state", () => {
       history_redaction: "secrets",
       enabled_plugins: ["translator", "markdown-preview"],
       language: "zh-CN",
-      theme: "system"
+      theme: "system",
+      provider_endpoints: {},
+      provider_models: {}
     });
   });
 
@@ -654,6 +660,21 @@ describe("host state", () => {
     expect(cancelSettings(settings).overlay).toBeNull();
   });
 
+  it("switches the workbench request model without changing persisted defaults", () => {
+    const ready = updateInput(createHostState(), "测试文本");
+    const switched = selectRequestModel(ready, "Anthropic", "claude-custom");
+
+    expect(switched.requestDraft).toMatchObject({
+      provider: "anthropic",
+      model: "claude-custom"
+    });
+    expect(switched.settingsDraft).toBeNull();
+    expect(createRequestDraft(switched)).toMatchObject({
+      provider: "anthropic",
+      model: "claude-custom"
+    });
+  });
+
   it("applies persisted config to requests without adding secret state", () => {
     const state = applyPersistedConfig(createHostState(), persistedConfig);
 
@@ -667,6 +688,22 @@ describe("host state", () => {
     expect(state).not.toHaveProperty("apiKey");
     expect(JSON.stringify(state)).not.toContain("secret");
     expect(state.providerSummary).toBe("MiniMax");
+  });
+
+  it("normalizes a legacy global manual scene policy to automatic routing", () => {
+    const legacyManual = { ...persistedConfig, scene_policy: "manual" as const };
+
+    expect(settingsDraftFromConfig(legacyManual).scene_policy).toBe("auto");
+    expect(applyPersistedConfig(createHostState(), legacyManual).requestDraft).toMatchObject({
+      scene: null,
+      scene_policy: "auto"
+    });
+    expect(
+      configFromSettingsDraft(legacyManual, {
+        ...settingsDraftFromConfig(legacyManual),
+        scene_policy: "manual"
+      }).scene_policy
+    ).toBe("auto");
   });
 
   it("creates an OptimizeRequest draft from host state", () => {
@@ -706,6 +743,23 @@ describe("host state", () => {
     expect(applySceneSelection(initial, "code_review")).toMatchObject({
       scene: "code_review",
       scene_policy: "manual"
+    });
+  });
+
+  it("keeps ask mode for a one-off confirmed scene choice", () => {
+    const asking = applyPersistedConfig(
+      updateInput(createHostState(), "请帮我检查这段实现"),
+      persistedConfig
+    );
+
+    expect(createRequestDraftWithSceneChoice(asking, "code_review")).toMatchObject({
+      text: "请帮我检查这段实现",
+      scene: "code_review",
+      scene_policy: "ask"
+    });
+    expect(createRequestDraftWithSceneChoice(asking, "unknown_scene")).toMatchObject({
+      scene: null,
+      scene_policy: "ask"
     });
   });
 

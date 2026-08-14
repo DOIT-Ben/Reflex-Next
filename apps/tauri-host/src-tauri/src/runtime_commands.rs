@@ -16,6 +16,8 @@ pub enum CommandKind {
     Ping,
     Shutdown,
     ConfigureProvider,
+    DiscoverProviderModels,
+    TestProviderConnection,
     ListProviders,
     ListPlugins,
     PluginCall,
@@ -34,6 +36,8 @@ impl CommandKind {
             Self::Ping => "ping",
             Self::Shutdown => "shutdown",
             Self::ConfigureProvider => "configure_provider",
+            Self::DiscoverProviderModels => "discover_provider_models",
+            Self::TestProviderConnection => "test_provider_connection",
             Self::ListProviders => "list_providers",
             Self::ListPlugins => "list_plugins",
             Self::PluginCall => "plugin_call",
@@ -52,6 +56,8 @@ impl CommandKind {
             "ping" => Some(Self::Ping),
             "shutdown" => Some(Self::Shutdown),
             "configure_provider" => Some(Self::ConfigureProvider),
+            "discover_provider_models" => Some(Self::DiscoverProviderModels),
+            "test_provider_connection" => Some(Self::TestProviderConnection),
             "list_providers" => Some(Self::ListProviders),
             "list_plugins" => Some(Self::ListPlugins),
             "plugin_call" => Some(Self::PluginCall),
@@ -122,6 +128,29 @@ pub(crate) fn configure_provider_command(
             "secret": secret,
             "config": config,
         }),
+    })
+}
+
+pub(crate) fn provider_probe_command(
+    kind: CommandKind,
+    provider_id: &str,
+    secret: &str,
+    config: Value,
+) -> Result<ValidatedCommand, &'static str> {
+    if !matches!(
+        kind,
+        CommandKind::DiscoverProviderModels | CommandKind::TestProviderConnection
+    ) {
+        return Err(COMMAND_INVALID_MESSAGE);
+    }
+    let configured = configure_provider_command(provider_id, secret, config)?;
+    Ok(ValidatedCommand {
+        request_id: format!(
+            "host-provider-probe-{}",
+            PRIVATE_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ),
+        kind,
+        payload: configured.payload,
     })
 }
 
@@ -324,7 +353,9 @@ fn validate_payload(kind: CommandKind, payload: &Value) -> bool {
             payload.get("text").is_some_and(Value::is_string)
                 && payload.keys().all(|field| FIELDS.contains(&field.as_str()))
         }
-        CommandKind::ConfigureProvider => {
+        CommandKind::ConfigureProvider
+        | CommandKind::DiscoverProviderModels
+        | CommandKind::TestProviderConnection => {
             has_exact_fields(payload, &["provider_id", "secret", "config"])
                 && payload
                     .get("provider_id")

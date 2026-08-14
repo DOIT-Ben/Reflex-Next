@@ -23,6 +23,7 @@ tools/.runtime-sidecar-build/
 /*.tar
 /workbench/*.log
 /workbench/*.png
+/workbench/qa-artifacts/
 /workbench/runtime-soak-*.json
 
 # Local runtime data
@@ -40,3 +41,6 @@ secrets/
 Thumbs.db
 .idea/
 .vscode/
+
+# ZCode local workspace data
+.zcode/

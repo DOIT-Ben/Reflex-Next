@@ -51,20 +51,41 @@ export class DemoCoreBridge implements CoreBridge {
   }
 }
 
+export type CoreBridgeInitialization = {
+  bridge: CoreBridge;
+  runtimeAvailable: boolean;
+};
+
+export function createDemoCoreBridge(): CoreBridge {
+  return new DemoCoreBridge();
+}
+
+export class UnavailableCoreBridge implements CoreBridge {
+  async *optimize(): AsyncGenerator<CoreEvent> {
+    yield runtimeUnavailableEvent();
+  }
+}
+
 export class TauriRuntimeBridge implements CoreBridge {
   private readonly requestIdFactory: () => string;
+  private readonly runtimeAvailable: boolean;
 
   constructor(
     private readonly host: TauriHostApi,
-    options: { requestIdFactory?: () => string } = {}
+    options: { requestIdFactory?: () => string; runtimeAvailable?: boolean } = {}
   ) {
     this.requestIdFactory = options.requestIdFactory ?? createRequestId;
+    this.runtimeAvailable = options.runtimeAvailable ?? true;
   }
 
   async *optimize(
     request: OptimizeRequestDraft,
     options: OptimizeRunOptions = {}
   ): AsyncGenerator<CoreEvent> {
+    if (!this.runtimeAvailable) {
+      yield runtimeUnavailableEvent();
+      return;
+    }
     const requestId = this.requestIdFactory();
     const queue = createAsyncEventQueue();
     let unlisten = () => undefined;
@@ -197,7 +218,10 @@ export class CloudCoreBridge implements CoreBridge {
 export class RoutedCoreBridge extends TauriRuntimeBridge {
   private readonly cloud: CloudCoreBridge;
 
-  constructor(host: TauriHostApi, options: { requestIdFactory?: () => string } = {}) {
+  constructor(
+    host: TauriHostApi,
+    options: { requestIdFactory?: () => string; runtimeAvailable?: boolean } = {}
+  ) {
     super(host, options);
     this.cloud = new CloudCoreBridge(host, options);
   }
@@ -214,16 +238,37 @@ export class RoutedCoreBridge extends TauriRuntimeBridge {
   }
 }
 
-export async function createDefaultCoreBridge(host?: TauriHostApi | null): Promise<CoreBridge> {
+export async function createDefaultCoreBridge(
+  host?: TauriHostApi | null
+): Promise<CoreBridgeInitialization> {
   if (!host) {
-    return new DemoCoreBridge();
+    return {
+      bridge: new UnavailableCoreBridge(),
+      runtimeAvailable: false
+    };
   }
 
+  let runtimeAvailable = false;
   try {
-    await host.invoke("runtime_available");
+    runtimeAvailable = await host.invoke<boolean>("runtime_available") === true;
   } catch {}
 
-  return new RoutedCoreBridge(host);
+  return {
+    bridge: new RoutedCoreBridge(host, { runtimeAvailable }),
+    runtimeAvailable
+  };
+}
+
+function runtimeUnavailableEvent(): CoreEvent {
+  return {
+    type: "error",
+    data: {
+      code: "runtime_unavailable",
+      message: "运行服务暂不可用，请稍后重试。",
+      recoverable: true,
+      action: "retry"
+    }
+  };
 }
 
 export function parseNdjsonEvents(payload: string): CoreEvent[] {

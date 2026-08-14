@@ -2,8 +2,10 @@
   import type {
     ConfigSummaryItem,
     WorkbenchActionHandler,
+    WorkbenchModelHandler,
     WorkbenchPhase
   } from "./types";
+  import type { WorkbenchModelOption } from "../../domain/providerCatalog";
 
   export let items: ReadonlyArray<ConfigSummaryItem> = [];
   export let phase: WorkbenchPhase = "empty";
@@ -15,19 +17,56 @@
   export let onRun: WorkbenchActionHandler | undefined = undefined;
   export let onCancel: WorkbenchActionHandler | undefined = undefined;
   export let onAdjust: WorkbenchActionHandler | undefined = undefined;
+  export let models: ReadonlyArray<WorkbenchModelOption> = [];
+  export let selectedProvider: string | null = null;
+  export let selectedModel: string | null = null;
+  export let onModelChange: WorkbenchModelHandler | undefined = undefined;
+  export let translate: (source: string, values?: Record<string, string | number>) => string = (source) => source;
 
   $: running = phase === "running";
+
+  function optionValue(providerId: string, modelId: string): string {
+    return JSON.stringify([providerId, modelId]);
+  }
+
+  function changeModel(value: string) {
+    try {
+      const [providerId, modelId] = JSON.parse(value) as unknown[];
+      if (typeof providerId === "string" && typeof modelId === "string") {
+        onModelChange?.(providerId, modelId);
+      }
+    } catch {
+      // Ignore malformed values that did not originate from the model list.
+    }
+  }
 </script>
 
-<section class="config-summary" aria-label="本次生成配置">
+<section class="config-summary" aria-label={translate("本次生成配置")}>
   <div class="summary-row">
-    <div class="summary-items" aria-label="配置摘要">
+    <div class="summary-items" aria-label={translate("配置摘要")}>
       {#each items as item (item.id)}
         <span class="summary-chip" title={item.title ?? `${item.label}：${item.value}`}>
           <span class="chip-label">{item.label}</span>
           <strong>{item.value}</strong>
         </span>
       {/each}
+      {#if models.length > 0 && onModelChange}
+        <label class="model-picker">
+          <span>{translate("模型")}</span>
+          <select
+            aria-label={translate("切换润色模型")}
+            disabled={running}
+            value={optionValue(selectedProvider ?? "", selectedModel ?? "")}
+            on:change={(event) => changeModel(event.currentTarget.value)}
+          >
+            {#each models as model (optionValue(model.providerId, model.id))}
+              <option value={optionValue(model.providerId, model.id)}>
+                {model.providerLabel} · {translate(model.label)}{model.isDefault ? ` · ${translate("默认")}` : ""}
+              </option>
+            {/each}
+          </select>
+        </label>
+      {/if}
     </div>
     {#if onAdjust}
       <button class="adjust-button" type="button" disabled={running} on:click={() => void onAdjust?.()}>
@@ -123,6 +162,32 @@
     color: var(--text, #202535);
     font-weight: 620;
     text-overflow: ellipsis;
+  }
+
+  .model-picker {
+    display: inline-flex;
+    max-width: min(100%, 300px);
+    min-height: 25px;
+    align-items: center;
+    gap: 5px;
+    padding-left: 8px;
+    color: var(--weak, #98a2b3);
+    background: var(--surface, #fff);
+    border: 1px solid var(--line, #e1e6ee);
+    border-radius: 7px;
+    font-size: 11px;
+  }
+
+  .model-picker select {
+    min-width: 0;
+    max-width: 230px;
+    height: 23px;
+    padding: 0 22px 0 2px;
+    color: var(--text, #202535);
+    background: transparent;
+    border: 0;
+    font: inherit;
+    font-weight: 620;
   }
 
   button {

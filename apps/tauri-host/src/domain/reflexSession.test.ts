@@ -3,6 +3,8 @@ import {
   applyCoreEvent,
   createDraftRequest,
   createInitialSession,
+  filterSceneOptions,
+  listSceneCategories,
   listSceneOptions,
   redactVisibleError
 } from "./reflexSession";
@@ -132,7 +134,34 @@ describe("reflex host session", () => {
       "emergency_plan"
     ]);
     expect(new Set(scenes.map((scene) => scene.id)).size).toBe(42);
-    expect(scenes.every((scene) => scene.label && scene.hint)).toBe(true);
+    expect(scenes.every((scene) => scene.label && scene.hint && scene.category)).toBe(true);
+  });
+
+  it("groups every builtin scene and supports category-aware search", () => {
+    const categories = listSceneCategories();
+    const scenes = listSceneOptions();
+
+    expect(categories.map((category) => category.id)).toEqual([
+      "general",
+      "writing",
+      "development",
+      "research",
+      "learning",
+      "work",
+      "creative",
+      "translation",
+      "problem_solving"
+    ]);
+    expect(new Set(scenes.map((scene) => scene.category))).toEqual(
+      new Set(categories.map((category) => category.id))
+    );
+    expect(filterSceneOptions("代码", "development").map((scene) => scene.id)).toEqual([
+      "code_generation",
+      "code_review",
+      "code_refactor"
+    ]);
+    expect(filterSceneOptions("email").map((scene) => scene.id)).toEqual(["email"]);
+    expect(filterSceneOptions("风险", "translation")).toEqual([]);
   });
 
   it("adds a whitelisted output language to request metadata", () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   appendTranslationChunk,
+  buildCloudTranslationPlan,
   buildTranslationInput,
   cancelTranslation,
   closeTranslation,
@@ -121,6 +122,42 @@ describe("translation state", () => {
       model: "model-a"
     });
     expect(Object.keys(buildTranslationInput(opened, {}, {}) ?? {})).not.toContain("secret");
+  });
+
+  it("builds a dedicated Cloud translation request with a resolved target language", () => {
+    const chinese = openTranslation(createTranslationState(), "这是一段中文");
+    const english = selectTranslationTarget(
+      openTranslation(createTranslationState(), "This is English"),
+      "zh"
+    );
+
+    expect(
+      buildCloudTranslationPlan(
+        chinese,
+        { provider: "reflex-cloud", model: "cloud-model" },
+        {}
+      )
+    ).toMatchObject({
+      sourceLanguage: "zh",
+      targetLanguage: "en",
+      request: {
+        text: "这是一段中文",
+        provider: "reflex-cloud",
+        scene: "doc_translation",
+        scene_policy: "manual",
+        metadata: { language: "en-US" }
+      }
+    });
+    expect(
+      buildCloudTranslationPlan(
+        english,
+        { provider: "reflex-cloud", model: null },
+        {}
+      )
+    ).toMatchObject({ sourceLanguage: "en", targetLanguage: "zh" });
+    expect(
+      buildCloudTranslationPlan(chinese, { provider: "minimax", model: null }, {})
+    ).toBeNull();
   });
 
   it("maps provider and plugin failures to fixed user-facing messages", () => {

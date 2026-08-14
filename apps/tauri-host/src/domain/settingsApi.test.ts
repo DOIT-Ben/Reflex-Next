@@ -18,7 +18,9 @@ const config: AppConfig = {
   theme: "system",
   hotkey: "Ctrl+Alt+R",
   tls_verify: true,
-  ca_bundle_path: null
+  ca_bundle_path: null,
+  provider_endpoints: {},
+  provider_models: {}
 };
 
 describe("settings api", () => {
@@ -155,5 +157,27 @@ describe("settings api", () => {
     expect(normalized.future_flag).toBe(true);
     expect(normalized).not.toHaveProperty("future_provider");
     expect(JSON.stringify(normalized)).not.toContain("history-fixture-key");
+  });
+
+  it("normalizes non-sensitive provider endpoints and discovered model candidates", async () => {
+    const api = createSettingsApi({
+      invoke: async () => ({
+        version: 2,
+        provider_endpoints: {
+          "OpenAI-Responses": "https://api.example.test/v1/",
+          unsafe: "https://user:pass@example.test"
+        },
+        provider_models: {
+          "OpenAI-Responses": ["model-a", "model-a", "model-b"],
+          invalid: ["\u0000bad"]
+        }
+      }),
+      listen: async () => () => undefined
+    });
+
+    await expect(api.loadConfig()).resolves.toMatchObject({
+      provider_endpoints: { "openai-responses": "https://api.example.test/v1" },
+      provider_models: { "openai-responses": ["model-a", "model-b"] }
+    });
   });
 });

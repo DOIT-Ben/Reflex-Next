@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import FeedbackDialog from "./components/feedback/FeedbackDialog.svelte";
+  import FeedbackPromptDialog from "./components/feedback/FeedbackPromptDialog.svelte";
   import SettingsDialog from "./components/settings/SettingsDialog.svelte";
   import type { SettingsSection } from "./components/settings/types";
   import ClipboardConfirmDialog from "./components/overlays/ClipboardConfirmDialog.svelte";
@@ -22,6 +23,7 @@
   import AdjustPanel from "./components/workbench/AdjustPanel.svelte";
   import InputPane from "./components/workbench/InputPane.svelte";
   import ResultPane from "./components/workbench/ResultPane.svelte";
+  import ScenePromptDialog from "./components/workbench/ScenePromptDialog.svelte";
   import type {
     ConfigSummaryItem,
     ResultMetaItem,
@@ -30,17 +32,31 @@
   import { CapabilityBridge } from "./domain/capabilityBridge";
   import { createDiagnosticBundleBridge, type DiagnosticBundleBridge } from "./domain/diagnosticBundleBridge";
   import {
+    createPromptFeedbackPayload,
     createFeedbackBridge,
     feedbackSubmitErrorMessage,
     type CloudConsent,
     type CloudQualityRelease,
     type CloudQuota,
     type FeedbackBridge,
+    type FeedbackContext,
     type FeedbackFormValue,
     type FeedbackScreenshot,
     type FeedbackSentiment
   } from "./domain/feedbackBridge";
-  import { createDefaultCoreBridge, DemoCoreBridge } from "./domain/coreBridge";
+  import {
+    createFeedbackPromptState,
+    disableFeedbackPrompt,
+    normalizeFeedbackPromptState,
+    recordSuccessfulGeneration,
+    snoozeFeedbackPrompt,
+    type FeedbackPromptState
+  } from "./domain/feedbackPrompt";
+  import {
+    createDefaultCoreBridge,
+    createDemoCoreBridge,
+    UnavailableCoreBridge
+  } from "./domain/coreBridge";
   import {
     applyAdjustDraft,
     applyClipboardError,
@@ -59,10 +75,12 @@
     createDefaultSettingsDraft,
     createHostState,
     createRequestDraft,
+    createRequestDraftWithSceneChoice,
     openAdjust,
     openSettings,
     resolveHostShortcut,
     retryAfterError,
+    selectRequestModel,
     settingsDraftFromConfig,
     startGeneration,
     updateInput,
@@ -101,6 +119,10 @@
     type ProviderCatalogBridge
   } from "./domain/providerCatalogBridge";
   import {
+    createProviderConnectionBridge,
+    type ProviderConnectionBridge
+  } from "./domain/providerConnectionBridge";
+  import {
     normalizeViewScale,
     stepViewScale,
     viewScaleLabel,
@@ -115,6 +137,7 @@
   import type { CoreBridge, TauriHostApi } from "./domain/coreBridge";
   import {
     appendTranslationChunk,
+    buildCloudTranslationPlan,
     buildTranslationInput,
     cancelTranslation,
     closeTranslation,
@@ -177,7 +200,9 @@
     providerName,
     providerOptionsFromRuntime,
     providerModels,
+    workbenchModelOptions,
     resolveProviderAvailability,
+    withConfiguredModels,
     type ProviderOption,
     type ProviderAvailability
   } from "./domain/providerCatalog";
@@ -207,11 +232,15 @@
     { id: "creative", label: "创意" }
   ];
   const scenes = listSceneOptions();
-  let coreBridge: CoreBridge = new DemoCoreBridge();
+  let coreBridge: CoreBridge = new UnavailableCoreBridge();
+  let coreBridgeState: "initializing" | "ready" | "unavailable" = "initializing";
+  let bridgeReady = false;
+  let bridgeUnavailable = false;
   let capabilityBridge: CapabilityBridge | null = null;
   let diagnosticBundleBridge: DiagnosticBundleBridge | null = null;
   let feedbackBridge: FeedbackBridge | null = null;
   let providerCatalogBridge: ProviderCatalogBridge | null = null;
+  let providerConnectionBridge: ProviderConnectionBridge | null = null;
   let hostApi: TauriHostApi | null = null;
   let settingsApi: SettingsApi | null = null;
   let desktopBridge: DesktopBridge | null = null;
@@ -251,6 +280,8 @@
   let settingsSection: SettingsSection = "provider";
   let settingsBusy = false;
   let secretBusy = false;
+  let providerConnectionBusy: "models" | "test" | null = null;
+  let providerConnectionNotice: string | null = null;
   let providerStatusError = false;
   let providerCatalogNotice: string | null = null;
   let providerOptions: ProviderOption[] = [...fallbackProviderCatalog];
@@ -275,6 +306,12 @@
   let toastTimeout: number | null = null;
   let resultRatingBusy = false;
   let feedbackOpen = false;
+  let feedbackPromptOpen = false;
+  let feedbackPromptBusy = false;
+  let feedbackPromptNotice: string | null = null;
+  let feedbackPromptState: FeedbackPromptState = createFeedbackPromptState();
+  let feedbackPromptEnabledDraft = feedbackPromptState.enabled;
+  let feedbackSource: "manual" | "prompt" = "manual";
   let feedbackSentiment: FeedbackSentiment = "negative";
   let feedbackScreenshot: FeedbackScreenshot | null = null;
   let feedbackCaptureNotice: string | null = null;
@@ -293,10 +330,14 @@
   let cloudQuota: CloudQuota | null = null;
   let cloudPrivacyBusy = false;
   let cloudPrivacyNotice: string | null = null;
+  let cloudFeedbackAvailable = false;
+  let cloudAvailability: ProviderAvailability = "checking";
   let appVersion = __REFLEX_APP_VERSION__;
   let viewScale = 1;
   let windowSizePreset: WindowSizePreset = "default";
   let commandPaletteOpen = false;
+  let scenePromptOpen = false;
+  let scenePromptSelection = "";
   let commandItems: CommandItem[] = [];
   let confirmation: {
     title: string;
@@ -322,11 +363,21 @@
     viewScale = readViewScale();
 
     void createTauriHostApi().then(async (host) => {
-      if (!host || disposed) return;
+      if (disposed) return;
+      if (!host) {
+        if (import.meta.env.DEV) {
+          coreBridge = createDemoCoreBridge();
+          coreBridgeState = "ready";
+        } else {
+          coreBridgeState = "unavailable";
+        }
+        return;
+      }
 
       hostApi = host;
       capabilityBridge = new CapabilityBridge(host);
       providerCatalogBridge = createProviderCatalogBridge(host);
+      providerConnectionBridge = createProviderConnectionBridge(host);
       diagnosticBundleBridge = createDiagnosticBundleBridge(host);
       feedbackBridge = createFeedbackBridge(host);
       void hydrateCloudPrivacy();
@@ -368,9 +419,15 @@
         })
         .catch(() => undefined);
 
-      void createDefaultCoreBridge(host).then((bridge) => {
-        if (!disposed) coreBridge = bridge;
-      });
+      void createDefaultCoreBridge(host)
+        .then((initialized) => {
+          if (disposed) return;
+          coreBridge = initialized.bridge;
+          coreBridgeState = initialized.runtimeAvailable ? "ready" : "unavailable";
+        })
+        .catch(() => {
+          if (!disposed) coreBridgeState = "unavailable";
+        });
 
       await Promise.all([hydrateSettings(), refreshDesktopStatus(), refreshProviderCatalog()]);
       if (disposed) return;
@@ -389,7 +446,13 @@
     };
   });
 
-  $: canGenerate = state.canGenerate && !isGenerating(state.phase);
+  $: bridgeReady = coreBridgeState === "ready" || (
+    coreBridgeState === "unavailable" &&
+    hostApi !== null &&
+    activeProviderId === "reflex-cloud"
+  );
+  $: bridgeUnavailable = coreBridgeState === "unavailable" && !bridgeReady;
+  $: canGenerate = state.canGenerate && !isGenerating(state.phase) && bridgeReady;
   $: translatorEnabled = persistedConfig?.enabled_plugins.includes("translator") ?? true;
   $: markdownPreviewEnabled = persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
   $: batchRunnerEnabled = persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
@@ -402,13 +465,14 @@
   $: templateCategories = [...new Set(customTemplates.map((template) => template.category))].sort((left, right) => left.localeCompare(right, "zh-CN"));
   $: visibleTemplates = filterTemplates(customTemplates, templateQuery, templateCategory);
   $: settingsProviderModels = providerModels(settingsDraft.default_provider, providerOptions);
-  $: draftProviderModels = providerModels(draft.provider, providerOptions);
+  $: selectableModels = workbenchModelOptions(persistedConfig, providerOptions);
   $: activeProviderId = (state.requestDraft.provider ?? "minimax").trim().toLowerCase();
   $: providerStatus = resolveProviderAvailability(
     activeProviderId,
     secretStatus,
     persistedConfig !== null,
-    providerStatusError
+    providerStatusError,
+    cloudAvailability
   );
   $: providerStatusText = providerAvailabilityLabel(providerStatus);
   $: workbenchPhase = isGenerating(state.phase)
@@ -422,7 +486,11 @@
           : state.output
             ? "completed"
             : "empty";
-  $: workbenchStatusMessage = state.phase === "analyzing_scene"
+  $: workbenchStatusMessage = coreBridgeState === "initializing" && !isGenerating(state.phase)
+    ? tr("正在连接运行服务")
+    : bridgeUnavailable && !isGenerating(state.phase)
+      ? tr("运行服务暂不可用")
+      : state.phase === "analyzing_scene"
     ? tr("正在分析场景")
     : state.phase === "connecting_provider"
       ? tr("正在连接模型服务")
@@ -435,7 +503,9 @@
             : state.phase === "cancelled"
               ? tr("已取消生成")
               : tr("准备就绪");
-  $: statusTone = isGenerating(state.phase)
+  $: statusTone = bridgeUnavailable && !isGenerating(state.phase)
+    ? "warning"
+    : isGenerating(state.phase)
     ? "working"
     : state.phase === "completed"
       ? "success"
@@ -490,11 +560,6 @@
     { id: "mode", label: tr("模式"), value: modeLabel(state.requestDraft.mode) },
     { id: "style", label: tr("风格"), value: styleLabel(state.requestDraft.style) },
     { id: "scene", label: tr("场景"), value: sceneLabel(state.requestDraft.scene) },
-    {
-      id: "model",
-      label: tr("模型"),
-      value: state.requestDraft.model ?? tr(providerName(state.requestDraft.provider, providerOptions))
-    }
   ];
   $: resultMetaItems = [
     { id: "mode", label: tr("模式"), value: modeLabel(state.currentResult?.mode ?? state.requestDraft.mode) },
@@ -592,6 +657,13 @@
     state = applyAdjustDraft(state, draft);
   }
 
+  function switchWorkbenchModel(providerId: string, modelId: string) {
+    if (!selectableModels.some((model) => model.providerId === providerId && model.id === modelId)) return;
+    state = selectRequestModel(state, providerId, modelId);
+    draft = { ...state.requestDraft };
+    void refreshProviderSecretStatus(providerId);
+  }
+
   function cancelAdjustView() {
     state = cancelAdjust(state);
     draft = { ...state.requestDraft };
@@ -602,6 +674,7 @@
     if (translation.phase !== "closed") closeTranslationView();
     state = openSettings(state);
     settingsDraft = { ...(state.settingsDraft ?? settingsDraft) };
+    feedbackPromptEnabledDraft = feedbackPromptState.enabled;
     settingsSection = "provider";
     secretInput = "";
     settingsNotice = null;
@@ -615,6 +688,7 @@
     const bridge = feedbackBridge;
     if (!bridge || cloudPrivacyBusy) return;
     cloudPrivacyBusy = true;
+    cloudAvailability = "checking";
     cloudPrivacyNotice = null;
     try {
       const [consent, quota, qualityRelease] = await Promise.all([
@@ -627,7 +701,11 @@
       cloudImprovementDraft = consent.improvement_data;
       cloudQualityRelease = qualityRelease;
       cloudQuota = quota;
+      cloudFeedbackAvailable = true;
+      cloudAvailability = "ready";
     } catch {
+      cloudFeedbackAvailable = false;
+      cloudAvailability = "unavailable";
       cloudPrivacyNotice = "云端隐私设置暂不可用。";
     } finally {
       cloudPrivacyBusy = false;
@@ -712,10 +790,17 @@
     settingsBusy = true;
     settingsNotice = null;
     try {
-      const saved = await settingsApi.saveConfig(
-        configFromSettingsDraft(persistedConfig, settingsDraft)
-      );
+      const nextFeedbackPromptState = {
+        ...feedbackPromptState,
+        enabled: feedbackPromptEnabledDraft
+      };
+      const saved = await settingsApi.saveConfig({
+        ...configFromSettingsDraft(persistedConfig, settingsDraft),
+        feedback_prompt: nextFeedbackPromptState
+      });
       persistedConfig = saved;
+      feedbackPromptState = normalizeFeedbackPromptState(saved.feedback_prompt);
+      feedbackPromptEnabledDraft = feedbackPromptState.enabled;
       settingsDraft = settingsDraftFromConfig(saved);
       state = applySettingsDraft(applyPersistedConfig(state, saved), settingsDraft);
       draft = { ...state.requestDraft };
@@ -772,6 +857,7 @@
     secretInput = "";
     settingsNotice = null;
     secretNotice = null;
+    feedbackPromptEnabledDraft = feedbackPromptState.enabled;
     void refreshProviderSecretStatus(state.requestDraft.provider ?? "minimax");
   }
 
@@ -785,9 +871,12 @@
     try {
       config = await settingsApi.loadConfig();
       persistedConfig = config;
+      feedbackPromptState = normalizeFeedbackPromptState(config.feedback_prompt);
+      feedbackPromptEnabledDraft = feedbackPromptState.enabled;
       customTemplates = readCustomTemplates(config.custom_templates);
       state = applyPersistedConfig(state, config);
       settingsDraft = settingsDraftFromConfig(config);
+      providerOptions = withConfiguredModels(providerOptions, config.provider_models);
     } catch {
       providerStatusError = true;
       settingsNotice = "设置加载失败，请重试。";
@@ -803,7 +892,10 @@
     if (!bridge) return;
     try {
       const descriptors = await bridge.listProviders();
-      providerOptions = providerOptionsFromRuntime(descriptors);
+      providerOptions = withConfiguredModels(
+        providerOptionsFromRuntime(descriptors),
+        settingsDraft.provider_models
+      );
       providerCatalogNotice = null;
     } catch {
       // Keep the browser-safe catalog visible while the Runtime recovers.
@@ -915,7 +1007,66 @@
     };
     secretInput = "";
     secretNotice = null;
+    providerConnectionNotice = null;
     await refreshProviderSecretStatus(provider);
+  }
+
+  function updateProviderBaseUrl(value: string) {
+    const providerId = settingsDraft.default_provider ?? "minimax";
+    settingsDraft = {
+      ...settingsDraft,
+      provider_endpoints: { ...settingsDraft.provider_endpoints, [providerId]: value }
+    };
+    providerConnectionNotice = null;
+  }
+
+  async function discoverProviderModels() {
+    const bridge = providerConnectionBridge;
+    const providerId = settingsDraft.default_provider ?? "minimax";
+    if (!bridge || providerConnectionBusy) return;
+    providerConnectionBusy = "models";
+    providerConnectionNotice = null;
+    try {
+      const models = await bridge.discoverModels({
+        providerId,
+        baseUrl: settingsDraft.provider_endpoints[providerId] ?? ""
+      });
+      settingsDraft = {
+        ...settingsDraft,
+        default_model: models.includes(settingsDraft.default_model ?? "")
+          ? settingsDraft.default_model
+          : models[0],
+        provider_models: { ...settingsDraft.provider_models, [providerId]: models }
+      };
+      providerOptions = withConfiguredModels(providerOptions, settingsDraft.provider_models);
+      providerConnectionNotice = `已获取 ${models.length} 个模型。`;
+    } catch (error) {
+      providerConnectionNotice = error instanceof Error ? error.message : "无法获取模型列表，请重试。";
+    } finally {
+      providerConnectionBusy = null;
+    }
+  }
+
+  async function testProviderConnection() {
+    const bridge = providerConnectionBridge;
+    const providerId = settingsDraft.default_provider ?? "minimax";
+    if (!bridge || providerConnectionBusy) return;
+    providerConnectionBusy = "test";
+    providerConnectionNotice = null;
+    try {
+      const result = await bridge.testConnection({
+        providerId,
+        baseUrl: settingsDraft.provider_endpoints[providerId] ?? "",
+        model: settingsDraft.default_model
+      });
+      providerConnectionNotice = result.ok
+        ? `连接成功${result.latencyMs === null ? "" : `，耗时 ${result.latencyMs} ms`}。`
+        : "模型连接测试失败，请检查配置后重试。";
+    } catch (error) {
+      providerConnectionNotice = error instanceof Error ? error.message : "模型连接测试失败，请重试。";
+    } finally {
+      providerConnectionBusy = null;
+    }
   }
 
   function showToast(message: string, tone?: "success" | "error") {
@@ -929,14 +1080,89 @@
     }, 1400);
   }
 
+  async function persistFeedbackPrompt(next: FeedbackPromptState): Promise<boolean> {
+    feedbackPromptState = next;
+    feedbackPromptEnabledDraft = next.enabled;
+    const api = settingsApi;
+    const config = persistedConfig;
+    if (!api || !config) return false;
+    const pending = { ...config, feedback_prompt: next };
+    persistedConfig = pending;
+    try {
+      const saved = await api.saveConfig(pending);
+      persistedConfig = saved;
+      feedbackPromptState = normalizeFeedbackPromptState(saved.feedback_prompt);
+      feedbackPromptEnabledDraft = feedbackPromptState.enabled;
+      return true;
+    } catch {
+      // Keep the in-memory schedule for this session; a later settings save retries persistence.
+      return false;
+    }
+  }
+
+  async function recordFeedbackPromptCompletion() {
+    if (!cloudFeedbackAvailable || !state.currentResult?.output.trim()) return;
+    const promptAvailable =
+      !feedbackOpen &&
+      !feedbackPromptOpen &&
+      !feedbackPromptBusy &&
+      !confirmation &&
+      !commandPaletteOpen &&
+      !scenePromptOpen &&
+      state.overlay === null &&
+      batch.phase === "closed" &&
+      translation.phase === "closed" &&
+      markdownPreview.phase === "closed" &&
+      state.phase === "completed";
+    const decision = recordSuccessfulGeneration(
+      feedbackPromptState,
+      Date.now(),
+      Math.random,
+      promptAvailable
+    );
+    const promptPersisted = await persistFeedbackPrompt(decision.state);
+    if (decision.shouldPrompt && promptPersisted) {
+      feedbackPromptNotice = null;
+      feedbackPromptOpen = true;
+    }
+  }
+
   async function runOptimization() {
+    if (!canGenerate) return;
+    if (state.requestDraft.scene_policy === "ask") {
+      scenePromptSelection = state.requestDraft.scene ?? "";
+      scenePromptOpen = true;
+      return;
+    }
+    await executeOptimization(createRequestDraft(state, persistedConfig?.language ?? "zh-CN"));
+  }
+
+  function cancelScenePrompt() {
+    scenePromptOpen = false;
+  }
+
+  async function confirmScenePrompt() {
+    if (!canGenerate) {
+      scenePromptOpen = false;
+      return;
+    }
+    const request = createRequestDraftWithSceneChoice(
+      state,
+      scenePromptSelection,
+      persistedConfig?.language ?? "zh-CN"
+    );
+    scenePromptOpen = false;
+    await executeOptimization(request);
+  }
+
+  async function executeOptimization(request = createRequestDraft(state, persistedConfig?.language ?? "zh-CN")) {
     if (!canGenerate) return;
     const requestId = `ui-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const controller = new AbortController();
     activeRun = controller;
     state = startGeneration(state, requestId);
 
-    for await (const event of coreBridge.optimize(createRequestDraft(state, persistedConfig?.language ?? "zh-CN"), {
+    for await (const event of coreBridge.optimize(request, {
       signal: controller.signal
     })) {
       if (controller.signal.aborted) break;
@@ -947,6 +1173,7 @@
       });
       if (event.type === "done" && state.phase === "completed") {
         await handleCompletionClipboard();
+        await recordFeedbackPromptCompletion();
       }
     }
 
@@ -1020,13 +1247,19 @@
     const request = started.request;
     const controller = new AbortController();
     translationRun = controller;
+    const currentRoute = translationSourceResult ?? {};
+    const fallbackRoute = {
+      provider: state.requestDraft.provider,
+      model: state.requestDraft.model
+    };
     const input = buildTranslationInput(
       translation,
-      translationSourceResult ?? {},
-      { provider: state.requestDraft.provider, model: state.requestDraft.model }
+      currentRoute,
+      fallbackRoute
     );
+    const cloudPlan = buildCloudTranslationPlan(translation, currentRoute, fallbackRoute);
     const bridge = capabilityBridge;
-    if (!bridge || !input) {
+    if (!cloudPlan && (!bridge || !input)) {
       if (translationRun === controller) {
         translation = failTranslation(
           translation,
@@ -1039,24 +1272,52 @@
     }
 
     try {
-      for await (const event of bridge.invoke("translator", "translate", input, {
-        signal: controller.signal,
-        timeoutMs: 60_000
-      })) {
-        if (controller.signal.aborted || translationRun !== controller) return;
-        if (event.status === "chunk") {
-          translation = appendTranslationChunk(translation, request, event.data.text);
-        } else if (event.status === "result") {
-          translation = completeTranslation(translation, request, event.data);
-        } else if (event.status === "cancelled") {
-          translation = cancelTranslation(translation, request);
-        } else if (event.status === "error") {
-          translation = failTranslation(
-            translation,
-            request,
-            translationErrorMessage(event.code)
-          );
+      if (cloudPlan) {
+        for await (const event of coreBridge.optimize(cloudPlan.request, {
+          signal: controller.signal
+        })) {
+          if (controller.signal.aborted || translationRun !== controller) return;
+          if (event.type === "chunk") {
+            translation = appendTranslationChunk(translation, request, event.data.text);
+          } else if (event.type === "done") {
+            translation = completeTranslation(translation, request, {
+              text: event.data.text ?? event.data.final_text,
+              source_language: cloudPlan.sourceLanguage,
+              target_language: cloudPlan.targetLanguage
+            });
+          } else if (event.type === "error") {
+            translation = failTranslation(
+              translation,
+              request,
+              translationErrorMessage(event.data.code)
+            );
+          }
         }
+      } else if (bridge && input) {
+        for await (const event of bridge.invoke("translator", "translate", input, {
+          signal: controller.signal,
+          timeoutMs: 60_000
+        })) {
+          if (controller.signal.aborted || translationRun !== controller) return;
+          if (event.status === "chunk") {
+            translation = appendTranslationChunk(translation, request, event.data.text);
+          } else if (event.status === "result") {
+            translation = completeTranslation(translation, request, event.data);
+          } else if (event.status === "cancelled") {
+            translation = cancelTranslation(translation, request);
+          } else if (event.status === "error") {
+            translation = failTranslation(
+              translation,
+              request,
+              translationErrorMessage(event.code)
+            );
+          }
+        }
+      }
+      if (translationRun === controller && translation.phase === "streaming") {
+        translation = controller.signal.aborted
+          ? cancelTranslation(translation, request)
+          : failTranslation(translation, request, "翻译暂时不可用，请重试。");
       }
     } catch {
       if (translationRun === controller) {
@@ -1502,31 +1763,96 @@
 
   function beginFeedback(sentiment: FeedbackSentiment) {
     if (!state.currentResult?.output) return;
+    feedbackPromptOpen = false;
     confirmation = {
       title: sentiment === "negative" ? "反馈这次不满意的结果？" : "反馈这次满意的结果？",
       description: "继续后只截取 Reflex 当前窗口，并在发送前显示预览。输入、结果和截图都可以单独移除。",
       confirmLabel: "继续反馈",
       danger: false,
-      run: () => openFeedback(sentiment)
+      run: () => openFeedback(sentiment, "manual", true)
     };
   }
 
-  async function openFeedback(sentiment: FeedbackSentiment) {
+  async function openFeedback(
+    sentiment: FeedbackSentiment,
+    source: "manual" | "prompt",
+    captureScreenshot: boolean
+  ) {
     feedbackSentiment = sentiment;
+    feedbackSource = source;
     feedbackScreenshot = null;
     feedbackCaptureNotice = null;
     feedbackSubmitNotice = null;
     await tick();
-    if (feedbackBridge) {
+    if (captureScreenshot && feedbackBridge) {
       try {
         feedbackScreenshot = await feedbackBridge.captureWindow();
       } catch {
         feedbackCaptureNotice = "窗口截图失败，可以不附加截图继续反馈。";
       }
-    } else {
+    } else if (captureScreenshot) {
       feedbackCaptureNotice = "当前环境无法截取应用窗口。";
     }
     feedbackOpen = true;
+  }
+
+  async function answerFeedbackPrompt(sentiment: FeedbackSentiment) {
+    const result = state.currentResult;
+    const bridge = feedbackBridge;
+    if (feedbackPromptBusy) return;
+    if (!result || !bridge) {
+      feedbackPromptNotice = "反馈服务暂不可用，请稍后重试。";
+      return;
+    }
+
+    feedbackPromptBusy = true;
+    feedbackPromptNotice = null;
+    try {
+      const latestConsent = await bridge.getConsent();
+      cloudConsent = latestConsent;
+      await bridge.submit(createPromptFeedbackPayload({
+        sentiment,
+        context: feedbackContextFor(result),
+        consentVersion: latestConsent.policy_version
+      }));
+      feedbackPromptOpen = false;
+      showToast("反馈已记录，谢谢。", "success");
+    } catch (error) {
+      feedbackPromptNotice = feedbackSubmitErrorMessage(error);
+    } finally {
+      feedbackPromptBusy = false;
+    }
+  }
+
+  function postponeFeedbackPrompt() {
+    if (feedbackPromptBusy) return;
+    feedbackPromptOpen = false;
+    feedbackPromptNotice = null;
+    void persistFeedbackPrompt(snoozeFeedbackPrompt(feedbackPromptState));
+  }
+
+  function turnOffFeedbackPrompt() {
+    if (feedbackPromptBusy) return;
+    feedbackPromptOpen = false;
+    feedbackPromptNotice = null;
+    void persistFeedbackPrompt(disableFeedbackPrompt(feedbackPromptState));
+    showToast("已关闭主动反馈询问");
+  }
+
+  function feedbackContextFor(result: CurrentResult): FeedbackContext {
+    return {
+      app_version: appVersion,
+      os_version: navigator.userAgent.slice(0, 128),
+      provider: result.provider ?? state.requestDraft.provider ?? "",
+      model: result.model ?? state.requestDraft.model ?? "",
+      mode: result.mode,
+      style: result.style,
+      scene: result.scene ?? state.detectedScene ?? "",
+      request_id: result.requestId,
+      diagnostic_id: state.diagnosticId ?? "",
+      error_code: state.errorCode ?? "",
+      elapsed_ms: result.elapsedMs
+    };
   }
 
   function closeFeedback() {
@@ -1535,6 +1861,7 @@
     feedbackScreenshot = null;
     feedbackCaptureNotice = null;
     feedbackSubmitNotice = null;
+    feedbackSource = "manual";
   }
 
   function removeFeedbackScreenshot() {
@@ -1554,24 +1881,13 @@
       const latestConsent = await feedbackBridge.getConsent();
       cloudConsent = latestConsent;
       await feedbackBridge.submit({
+        source: feedbackSource,
         sentiment: feedbackSentiment,
         category: form.category,
         message: form.message,
         expected_output: form.expectedOutput,
         contact: form.contact,
-        context: {
-          app_version: appVersion,
-          os_version: navigator.userAgent.slice(0, 128),
-          provider: result.provider ?? state.requestDraft.provider ?? "",
-          model: result.model ?? state.requestDraft.model ?? "",
-          mode: result.mode,
-          style: result.style,
-          scene: result.scene ?? state.detectedScene ?? "",
-          request_id: result.requestId,
-          diagnostic_id: state.diagnosticId ?? "",
-          error_code: state.errorCode ?? "",
-          elapsed_ms: result.elapsedMs
-        },
+        context: feedbackContextFor(result),
         include_prompt: form.includePrompt,
         include_result: form.includeResult,
         include_screenshot: form.includeScreenshot && feedbackScreenshot !== null,
@@ -1582,6 +1898,7 @@
       });
       feedbackOpen = false;
       feedbackScreenshot = null;
+      feedbackSource = "manual";
       showToast("反馈已发送，谢谢。", "success");
     } catch (error) {
       feedbackSubmitNotice = feedbackSubmitErrorMessage(error);
@@ -1755,6 +2072,18 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (feedbackPromptOpen && event.key === "Escape") {
+      event.preventDefault();
+      postponeFeedbackPrompt();
+      return;
+    }
+    if (scenePromptOpen) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelScenePrompt();
+      }
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
       event.preventDefault();
       commandPaletteOpen = !commandPaletteOpen;
@@ -1969,15 +2298,21 @@
               onRun={runOptimization}
               onReadClipboard={readClipboard}
               onClear={clearInput}
+              translate={tr}
             />
             <ConfigSummary
               items={configSummaryItems}
+              models={selectableModels}
+              selectedProvider={state.requestDraft.provider}
+              selectedModel={state.requestDraft.model}
               phase={workbenchPhase}
               canRun={canGenerate}
               statusMessage={workbenchStatusMessage}
               onRun={runOptimization}
               onCancel={cancelRun}
               onAdjust={beginAdjust}
+              onModelChange={switchWorkbenchModel}
+              translate={tr}
             />
           </div>
           <ResultPane
@@ -2010,6 +2345,7 @@
             onCopyDiagnosticId={state.diagnosticId ? copyDiagnosticId : undefined}
             onPositiveFeedback={() => beginFeedback("positive")}
             onNegativeFeedback={() => beginFeedback("negative")}
+            translate={tr}
           />
         </div>
       </section>
@@ -2046,9 +2382,33 @@
         improvementConsent={cloudConsent.improvement_data}
         busy={feedbackSubmitBusy}
         notice={feedbackSubmitNotice}
+        translate={tr}
         onClose={closeFeedback}
         onRemoveScreenshot={removeFeedbackScreenshot}
         onSubmit={submitFeedback}
+      />
+    {/if}
+
+    {#if feedbackPromptOpen}
+      <FeedbackPromptDialog
+        busy={feedbackPromptBusy}
+        notice={feedbackPromptNotice}
+        translate={tr}
+        onPositive={() => answerFeedbackPrompt("positive")}
+        onNegative={() => answerFeedbackPrompt("negative")}
+        onLater={postponeFeedbackPrompt}
+        onDisable={turnOffFeedbackPrompt}
+      />
+    {/if}
+
+    {#if scenePromptOpen}
+      <ScenePromptDialog
+        {scenes}
+        selectedScene={scenePromptSelection}
+        translate={tr}
+        onSceneChange={(sceneId) => (scenePromptSelection = sceneId)}
+        onCancel={cancelScenePrompt}
+        onConfirm={confirmScenePrompt}
       />
     {/if}
 
@@ -2059,7 +2419,7 @@
         {modes}
         {styles}
         {scenes}
-        models={draftProviderModels}
+        models={selectableModels}
         translate={tr}
         onDraftChange={(value) => (draft = value)}
         onCancel={cancelAdjustView}
@@ -2168,6 +2528,8 @@
         {secretInput}
         {secretStatus}
         {secretNotice}
+        {providerConnectionBusy}
+        {providerConnectionNotice}
         notice={settingsNotice}
         {providerCatalogNotice}
         providers={providerOptions}
@@ -2183,6 +2545,7 @@
         diagnosticNotice={diagnosticExportNotice}
         cloudUsageMetricsEnabled={cloudUsageMetricsDraft}
         cloudImprovementEnabled={cloudImprovementDraft}
+        feedbackPromptEnabled={feedbackPromptEnabledDraft}
         {cloudQualityRelease}
         {cloudQuota}
         {cloudPrivacyBusy}
@@ -2196,6 +2559,17 @@
         onSecretInput={(value) => (secretInput = value)}
         onSaveSecret={saveSecret}
         onDeleteSecret={deleteSecret}
+        onBaseUrlChange={updateProviderBaseUrl}
+        onDiscoverModels={discoverProviderModels}
+        onTestConnection={testProviderConnection}
+        onModelCandidatesChange={(models) => {
+          const providerId = settingsDraft.default_provider ?? "minimax";
+          settingsDraft = {
+            ...settingsDraft,
+            provider_models: { ...settingsDraft.provider_models, [providerId]: models }
+          };
+          providerOptions = withConfiguredModels(providerOptions, settingsDraft.provider_models);
+        }}
         onPluginChange={setPluginEnabled}
         onSemanticRefresh={refreshSemanticModelStatus}
         onSemanticCancel={cancelSemanticModelDownload}
@@ -2205,6 +2579,7 @@
         onDiagnosticCancel={cancelDiagnosticBundleExport}
         onCloudUsageMetricsChange={(enabled) => (cloudUsageMetricsDraft = enabled)}
         onCloudImprovementChange={(enabled) => (cloudImprovementDraft = enabled)}
+        onFeedbackPromptEnabledChange={(enabled) => (feedbackPromptEnabledDraft = enabled)}
         onCloudRefresh={hydrateCloudPrivacy}
         onCloudDeleteData={confirmDeleteCloudData}
       />
