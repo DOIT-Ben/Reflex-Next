@@ -15,6 +15,7 @@
 ## 架构与迁移
 
 - [架构设计](ARCHITECTURE.md)
+- [Provider 适配层策略](PROVIDER-ADAPTER-STRATEGY.md)
 - [功能迁移](MIGRATION.md)
 - [旧版参考映射](CLASSIC-REFERENCE.md)
 - [UI 实现规格](UI-IMPLEMENTATION-SPEC.md)

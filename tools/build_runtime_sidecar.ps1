@@ -9,6 +9,11 @@ $runtimeDir = Join-Path $root "packages\reflex-runtime"
 $python = Join-Path $runtimeDir ".venv\Scripts\python.exe"
 $entry = Join-Path $root "tools\runtime_sidecar_entry.py"
 
+& uv sync --frozen --project $runtimeDir --extra dev --extra builtins
+if ($LASTEXITCODE -ne 0) {
+  throw "Runtime Python environment synchronization failed."
+}
+
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
   throw "Runtime Python environment is unavailable."
 }
@@ -29,7 +34,9 @@ $paths = @(
   (Join-Path $root "packages\reflex-runtime\src"),
   (Join-Path $root "packages\reflex-core\src"),
   (Join-Path $root "plugins\provider-minimax\src"),
+  (Join-Path $root "plugins\provider-native-protocols\src"),
   (Join-Path $root "plugins\provider-openai-compatible\src"),
+  (Join-Path $root "plugins\provider-openai-responses\src"),
   (Join-Path $root "plugins\history-sqlite\src"),
   (Join-Path $root "plugins\translator\src"),
   (Join-Path $root "plugins\markdown-preview\src"),
@@ -41,7 +48,9 @@ $collectModules = @(
   "reflex_runtime",
   "reflex_core",
   "reflex_provider_minimax",
+  "reflex_provider_native_protocols",
   "reflex_provider_openai_compatible",
+  "reflex_provider_openai_responses",
   "reflex_history_sqlite",
   "reflex_translator",
   "reflex_markdown_preview",
@@ -53,7 +62,9 @@ $metadata = @(
   "reflex-runtime",
   "reflex-core",
   "reflex-provider-minimax",
+  "reflex-provider-native-protocols",
   "reflex-provider-openai-compatible",
+  "reflex-provider-openai-responses",
   "reflex-history-sqlite",
   "reflex-translator",
   "reflex-markdown-preview",
@@ -71,6 +82,15 @@ $arguments = @(
   "--distpath", $distDir,
   "--workpath", (Join-Path $workDir "work"),
   "--specpath", $specDir
+)
+
+$templatePack = Join-Path $root "template-packs\builtin"
+if (-not (Test-Path -LiteralPath $templatePack -PathType Container)) {
+  throw "Built-in template pack is unavailable."
+}
+$arguments += @(
+  "--add-data",
+  ("{0}{1}template-packs\builtin" -f $templatePack, [System.IO.Path]::PathSeparator)
 )
 
 foreach ($path in $paths) {
