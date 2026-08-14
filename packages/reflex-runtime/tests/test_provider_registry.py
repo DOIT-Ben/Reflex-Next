@@ -11,6 +11,10 @@ from reflex_runtime.provider_registry import (
     ProviderConfig,
     ProviderRegistry,
 )
+from reflex_runtime.provider_profiles import (
+    ModelCapabilityProfile,
+    ProtocolProfile,
+)
 
 
 @dataclass
@@ -20,6 +24,12 @@ class RecordingProvider:
 
     def stream(self, rendered_request, request, cancellation):
         return iter(())
+
+    def list_models(self):
+        return ("model-a", "model-b")
+
+    def test_connection(self, model):
+        return model in self.list_models()
 
 
 class RecordingFactory:
@@ -31,6 +41,11 @@ class RecordingFactory:
     required_secret = "api_key"
     permissions = ("network",)
     default_base_url = "https://api.example.test/v1/chat/completions"
+    protocol = "openai_chat_completions"
+    accepts_custom_models = False
+    model_capabilities = {
+        "model-a": {"context_window": 32_768, "supports_json": True},
+    }
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, ProviderConfig]] = []
@@ -42,11 +57,14 @@ class RecordingFactory:
 
 def test_runtime_owns_the_read_only_v1_provider_release_policy():
     assert dict(TRUSTED_PROVIDER_RELEASE_STATUS) == {
+        "anthropic": "experimental",
+        "gemini": "experimental",
         "minimax": "supported",
         "deepseek": "experimental",
         "qwen": "experimental",
         "zhipu": "experimental",
         "siliconflow": "experimental",
+        "openai-responses": "experimental",
     }
     with pytest.raises(TypeError):
         TRUSTED_PROVIDER_RELEASE_STATUS["qwen"] = "supported"
@@ -71,6 +89,22 @@ def test_registry_replaces_configured_instance_without_exposing_secrets():
     assert "second-fixture-secret" not in repr(registry)
 
 
+def test_registry_provider_probe_is_transient_and_returns_safe_results():
+    factory = RecordingFactory()
+    registry = ProviderRegistry({"minimax": factory})
+
+    models = registry.discover_models(
+        "minimax", "fixture-private-credential", {"model": "model-a"}
+    )
+    connected = registry.test_connection(
+        "minimax", "fixture-private-credential", {"model": "model-a"}
+    )
+
+    assert models == ("model-a", "model-b")
+    assert connected is True
+    assert registry.catalog()[0].session_configured is False
+
+
 def test_registry_builds_https_tls_config_with_bounded_timeout():
     factory = RecordingFactory()
     registry = ProviderRegistry({"minimax": factory})
@@ -92,6 +126,43 @@ def test_registry_builds_https_tls_config_with_bounded_timeout():
     assert config.timeout_seconds == 300.0
     assert config.tls_verify is True
     assert config.ca_bundle_path == "C:\\certs\\root.pem"
+    assert config.protocol == ProtocolProfile("openai_chat_completions")
+    assert config.model_capabilities == ModelCapabilityProfile(
+        context_window=32_768,
+        supports_json=True,
+    )
+
+
+def test_registry_accepts_safe_custom_model_when_factory_declares_support():
+    factory = RecordingFactory()
+    factory.accepts_custom_models = True
+    registry = ProviderRegistry({"minimax": factory})
+
+    registry.configure("minimax", "fixture-secret", {"model": "gpt-5.6-luna"})
+
+    configured = factory.calls[0][1]
+    assert configured.model == "gpt-5.6-luna"
+    assert configured.model_capabilities == ModelCapabilityProfile()
+    assert registry.resolve("minimax", "gpt-5.6-luna").model == "gpt-5.6-luna"
+
+
+@pytest.mark.parametrize("model", [" unsafe", "unsafe\nmodel", "", "x" * 257])
+def test_registry_rejects_unsafe_custom_model_ids(model):
+    factory = RecordingFactory()
+    factory.accepts_custom_models = True
+    registry = ProviderRegistry({"minimax": factory})
+
+    with pytest.raises(ProviderRuntimeError) as caught:
+        registry.configure("minimax", "fixture-secret", {"model": model})
+
+    assert caught.value.code == "provider_invalid_response"
+
+
+def test_profile_contracts_reject_unknown_protocol_and_invalid_capabilities():
+    with pytest.raises(ValueError, match="unsupported provider protocol"):
+        ProtocolProfile("vendor_magic")
+    with pytest.raises(ValueError, match="context_window"):
+        ModelCapabilityProfile(context_window=0)
 
 
 @pytest.mark.parametrize(

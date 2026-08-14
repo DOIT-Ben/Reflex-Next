@@ -14,6 +14,8 @@ COMMAND_TYPES = frozenset(
         "ping",
         "shutdown",
         "configure_provider",
+        "discover_provider_models",
+        "test_provider_connection",
         "list_providers",
         "list_plugins",
         "plugin_call",
@@ -58,6 +60,8 @@ PRIVATE_FIELD_NAMES = frozenset(
 SENSITIVE_COMMANDS = frozenset(
     {
         "configure_provider",
+        "discover_provider_models",
+        "test_provider_connection",
         "configure_history_keys",
         "configure_history_policy",
         "configure_history_path",
@@ -119,7 +123,11 @@ def parse_command(value: Any) -> CommandEnvelope:
         _require_fields(payload, frozenset(), "invalid command payload")
     elif command_type == "optimize":
         _validate_optimize(payload)
-    elif command_type == "configure_provider":
+    elif command_type in {
+        "configure_provider",
+        "discover_provider_models",
+        "test_provider_connection",
+    }:
         _validate_provider_configuration(payload)
     elif command_type in {"plugin_call", "plugin_admin_call"}:
         _validate_plugin_call(payload, public=command_type == "plugin_call")

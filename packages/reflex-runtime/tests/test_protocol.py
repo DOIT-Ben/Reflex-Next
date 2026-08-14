@@ -58,6 +58,28 @@ def test_parse_private_provider_configuration_command():
 
 
 @pytest.mark.parametrize(
+    "command_type", ["discover_provider_models", "test_provider_connection"]
+)
+def test_parse_private_provider_probe_commands(command_type):
+    parsed = parse_command(
+        command(
+            command_type,
+            {
+                "provider_id": "deepseek",
+                "secret": "fixture-private-credential",
+                "config": {
+                    "model": "deepseek-chat",
+                    "base_url": "https://api.example.test/v1/chat/completions",
+                },
+            },
+        )
+    )
+
+    assert parsed.type == command_type
+    assert "fixture-private-credential" not in repr(parsed)
+
+
+@pytest.mark.parametrize(
     ("command_type", "payload"),
     [
         ("list_providers", {}),

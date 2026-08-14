@@ -27,7 +27,7 @@ from reflex_core import (
 )
 from reflex_core.events import error_event, status_event
 from reflex_core.scene.detectors import RuleSceneDetector
-from reflex_core.template import TemplatePackResolver
+from reflex_core.template import FileTemplatePack, TemplatePackResolver
 from reflex_core.usecases import OptimizeUseCase
 from reflex_core.safety import redact_for_history, redact_sensitive
 
@@ -51,6 +51,8 @@ from .plugin_contracts import (
     PluginDescriptor,
     PluginEventEnvelope,
     ProviderCatalogEnvelope,
+    ProviderConnectionResultEnvelope,
+    ProviderModelsEnvelope,
     is_safe_id,
 )
 from .protocol import CommandEnvelope, ProtocolError
@@ -100,13 +102,16 @@ def _safe_plugin_error_code(error: BaseException) -> str | None:
 
 
 class _FallbackSceneDetector:
-    """Use the enabled L1 detector only when it returns a trusted result."""
+    """Prefer a decisive L0 result, then let the optional L1 refine fallback."""
 
     def __init__(self, semantic_detector: Any | None, fallback: RuleSceneDetector) -> None:
         self._semantic_detector = semantic_detector
         self._fallback = fallback
 
     def detect(self, text: str, request: OptimizeRequest):
+        rule_result = self._fallback.detect(text, request)
+        if rule_result.scene != "general" and rule_result.confidence >= 0.8:
+            return rule_result
         if self._semantic_detector is not None:
             try:
                 result = self._semantic_detector.detect(text, request)
@@ -114,7 +119,7 @@ class _FallbackSceneDetector:
                     return result
             except Exception:
                 pass
-        return self._fallback.detect(text, request)
+        return rule_result
 
 
 class RuntimeContext:
@@ -241,6 +246,12 @@ class RuntimeContext:
             if command.type == "configure_provider":
                 self.configure_provider(command)
                 return True
+            if command.type == "discover_provider_models":
+                self.discover_provider_models(command)
+                return True
+            if command.type == "test_provider_connection":
+                self.test_provider_connection(command)
+                return True
             if command.type == "list_providers":
                 self.emit_runtime(
                     ProviderCatalogEnvelope(command.request_id, self._registry.catalog())
@@ -278,6 +289,41 @@ class RuntimeContext:
             self.emit_provider_error(command.request_id, error)
             return
         self.emit_status(command.request_id, StatusPhase.COMPLETED, "provider_configured")
+
+    def discover_provider_models(self, command: CommandEnvelope) -> None:
+        try:
+            models = self._registry.discover_models(
+                command.payload["provider_id"],
+                command.payload["secret"],
+                command.payload["config"],
+            )
+            self.emit_runtime(
+                ProviderModelsEnvelope(
+                    command.request_id, command.payload["provider_id"], models
+                )
+            )
+        except ProviderRuntimeError as error:
+            self.emit_provider_error(command.request_id, error)
+
+    def test_provider_connection(self, command: CommandEnvelope) -> None:
+        try:
+            started_at = time.monotonic()
+            ok = self._registry.test_connection(
+                command.payload["provider_id"],
+                command.payload["secret"],
+                command.payload["config"],
+            )
+            latency_ms = min(300_000, max(0, round((time.monotonic() - started_at) * 1000)))
+            self.emit_runtime(
+                ProviderConnectionResultEnvelope(
+                    command.request_id,
+                    command.payload["provider_id"],
+                    ok,
+                    latency_ms,
+                )
+            )
+        except ProviderRuntimeError as error:
+            self.emit_provider_error(command.request_id, error)
 
     def configure_plugin(self, command: CommandEnvelope) -> None:
         try:
@@ -457,7 +503,11 @@ class RuntimeContext:
 
     def emit_runtime(
         self,
-        envelope: CapabilityListEnvelope | PluginEventEnvelope | ProviderCatalogEnvelope,
+        envelope: CapabilityListEnvelope
+        | PluginEventEnvelope
+        | ProviderCatalogEnvelope
+        | ProviderModelsEnvelope
+        | ProviderConnectionResultEnvelope,
     ) -> None:
         if isinstance(envelope, PluginEventEnvelope) and envelope.status in {
             "result",
@@ -1002,7 +1052,12 @@ class RuntimeContext:
 
 
 def _builtin_template_resolver() -> TemplatePackResolver:
+    return TemplatePackResolver(FileTemplatePack.load(_builtin_template_pack_path()))
+
+
+def _builtin_template_pack_path() -> Path:
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if isinstance(bundle_root, str) and bundle_root:
+        return Path(bundle_root) / "template-packs" / "builtin"
     repository_root = Path(__file__).resolve().parents[4]
-    return TemplatePackResolver.from_directory(
-        repository_root / "template-packs" / "builtin"
-    )
+    return repository_root / "template-packs" / "builtin"

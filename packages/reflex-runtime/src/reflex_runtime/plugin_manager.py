@@ -11,6 +11,7 @@ from typing import Any
 
 from .plugin_contracts import PluginDescriptor, PluginFailure, ProviderDescriptor
 from .provider_registry import TRUSTED_PROVIDER_RELEASE_STATUS
+from .provider_profiles import ProtocolProfile
 
 PLUGIN_UNAVAILABLE_MESSAGE = "Provider plugin unavailable."
 DEFAULT_ALLOWED_PROVIDER_IDS = frozenset(TRUSTED_PROVIDER_RELEASE_STATUS)
@@ -375,6 +376,10 @@ def _validate_factory(factory: Any) -> str:
         raise ValueError(PLUGIN_UNAVAILABLE_MESSAGE)
     if not callable(getattr(factory, "create", None)):
         raise ValueError(PLUGIN_UNAVAILABLE_MESSAGE)
+    try:
+        ProtocolProfile(getattr(factory, "protocol", "openai_chat_completions"))
+    except (TypeError, ValueError):
+        raise ValueError(PLUGIN_UNAVAILABLE_MESSAGE) from None
     return provider_id
 
 

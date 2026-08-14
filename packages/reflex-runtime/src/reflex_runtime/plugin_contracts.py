@@ -149,6 +149,69 @@ class ProviderCatalogEnvelope:
 
 
 @dataclass(frozen=True)
+class ProviderModelsEnvelope:
+    request_id: str
+    provider_id: str
+    models: tuple[str, ...]
+    version: int = RUNTIME_PROTOCOL_VERSION
+
+    def __post_init__(self) -> None:
+        _require_request_id(self.request_id)
+        _require_safe_id(self.provider_id, "provider id")
+        if (
+            self.version != RUNTIME_PROTOCOL_VERSION
+            or not isinstance(self.models, tuple)
+            or not self.models
+            or len(self.models) > MAX_PROVIDER_MODELS
+        ):
+            raise ValueError("invalid provider models")
+        for model in self.models:
+            _require_safe_public_text(model, "provider model", MAX_PROVIDER_MODEL_ID_LENGTH)
+        if tuple(sorted(set(self.models))) != self.models:
+            raise ValueError("provider models must be sorted and unique")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "request_id": self.request_id,
+            "type": "provider_models",
+            "provider_id": self.provider_id,
+            "models": list(self.models),
+        }
+
+
+@dataclass(frozen=True)
+class ProviderConnectionResultEnvelope:
+    request_id: str
+    provider_id: str
+    ok: bool
+    latency_ms: int
+    version: int = RUNTIME_PROTOCOL_VERSION
+
+    def __post_init__(self) -> None:
+        _require_request_id(self.request_id)
+        _require_safe_id(self.provider_id, "provider id")
+        if (
+            self.version != RUNTIME_PROTOCOL_VERSION
+            or not isinstance(self.ok, bool)
+            or isinstance(self.latency_ms, bool)
+            or not isinstance(self.latency_ms, int)
+            or not 0 <= self.latency_ms <= 300_000
+        ):
+            raise ValueError("invalid provider connection result")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "request_id": self.request_id,
+            "type": "provider_connection_result",
+            "provider_id": self.provider_id,
+            "ok": self.ok,
+            "latency_ms": self.latency_ms,
+        }
+
+
+@dataclass(frozen=True)
 class PluginDescriptor:
     plugin_id: str
     display_name: str
