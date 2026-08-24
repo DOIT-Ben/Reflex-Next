@@ -25,6 +25,13 @@ tools/.runtime-sidecar-build/
 /workbench/*.png
 /workbench/qa-artifacts/
 /workbench/runtime-soak-*.json
+/workbench/_*.py
+/workbench/_*.ps1
+/workbench/_*.json
+/workbench/http-soak-*.json
+/workbench/soak-*.txt
+/workbench/runtime-soak-*.stdout.log
+/workbench/runtime-soak-*.stderr.log
 
 # Local runtime data
 .env

@@ -455,3 +455,14 @@
 - `scene` 字段 OpenAPI 描述明确三种合法形式与生效条件（仅 `scene_policy: manual/ask` 时生效，默认 auto 会忽略 scene）；
 - 手动指定未知场景改为 **422 明确报错**（`unknown scene 'xxx'; query GET /v1/scenes for valid categories and scenes`），替代静默回退；`category:unknown` 形式仍容错（回退分类模板）；检测路径（auto）的回退 general 语义不变；
 - 新增 4 项契约测试（422 拒绝、合法值放行、auto 忽略 scene）；reflex-http-host 28 项全过。
+
+## 2026-08-22 P3-002 正式浸泡重新启动
+
+- 浸泡夹具契约 `tools\tests\test_soak_backend.py` 本轮 `16 passed`，4 次最小烟测完成/取消各 2 次、安全退出；
+- 正式任务已于 13:55:57（Asia/Shanghai）后台启动：至少 10,000 次、最低 168 小时、批量 4、每 2 次取消、每分钟 3 次；驱动 PID `26208`，启动后复核驱动与 Runtime 子进程均存活；
+- 结果报告待任务自然完成或失败退出后生成：`workbench\runtime-soak-168h-alpha8-20260822-135557.json`；当前仅表示已启动，不表示 P3-002 已通过。
+
+## 2026-08-24 P3-002 状态复核
+
+- 复核时启动记录中的驱动 PID `26208` 与 Runtime 子进程均不存在；预期的最终 JSON 报告未生成，只有空的 stdout/stderr 启动日志；
+- 因此 P3-002 仍为**未完成**，不能将 2026-08-22 的“已启动”记录作为正式浸泡通过证据；后续需以可观察的后台任务、周期性心跳和自然终态报告重新执行。
