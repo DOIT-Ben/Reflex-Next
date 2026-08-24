@@ -30,7 +30,7 @@ describe("first-run activation state", () => {
         version: 1,
         completed: true,
         route: "cloud",
-        api_key: "must-not-survive"
+        api_key: "fixture-value"
       })
     ).toEqual(createActivationState());
 
