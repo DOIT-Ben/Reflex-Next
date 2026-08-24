@@ -5,6 +5,7 @@
   import House from "@lucide/svelte/icons/house";
   import Languages from "@lucide/svelte/icons/languages";
   import Layers3 from "@lucide/svelte/icons/layers-3";
+  import MoreHorizontal from "@lucide/svelte/icons/more-horizontal";
   import Puzzle from "@lucide/svelte/icons/puzzle";
   import Settings from "@lucide/svelte/icons/settings";
   import type { NavRailItem } from "./types";
@@ -18,6 +19,7 @@
 
   const defaultItems: NavRailItem[] = [
     { id: "workbench", label: "工作台", symbol: "⌂" },
+    { id: "tools", label: "更多工具", symbol: "…" },
     { id: "templates", label: "模板", symbol: "▤" },
     { id: "batch", label: "批处理", symbol: "≋" },
     { id: "translation", label: "翻译", symbol: "译" },
@@ -53,6 +55,8 @@
       <span class="nav-symbol" aria-hidden="true">
         {#if item.id === "workbench"}
           <House size={16} strokeWidth={1.8} />
+        {:else if item.id === "tools"}
+          <MoreHorizontal size={16} strokeWidth={1.8} />
         {:else if item.id === "templates"}
           <FileText size={16} strokeWidth={1.8} />
         {:else if item.id === "batch"}

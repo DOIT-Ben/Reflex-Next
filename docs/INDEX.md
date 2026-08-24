@@ -35,6 +35,7 @@
 - [发布恢复指南](RELEASE-RECOVERY.md)
 - [隐私说明](PRIVACY.md)
 - [支持范围](SUPPORT.md)
+- [首次成功受控试用](USER-TRIAL-0.7.1.md)
 - [故障处理](TROUBLESHOOTING.md)
 - [第三方软件声明](THIRD-PARTY-NOTICES.md)
 

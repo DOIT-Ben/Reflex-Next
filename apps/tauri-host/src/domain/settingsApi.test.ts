@@ -159,6 +159,35 @@ describe("settings api", () => {
     expect(JSON.stringify(normalized)).not.toContain("history-fixture-key");
   });
 
+  it("persists only the bounded first-run activation marker", async () => {
+    const api = createSettingsApi({
+      invoke: async () => ({
+        version: 2,
+        first_run_activation: { version: 1, completed: true, route: "cloud" }
+      }),
+      listen: async () => () => undefined
+    });
+
+    await expect(api.loadConfig()).resolves.toMatchObject({
+      first_run_activation: { version: 1, completed: true, route: "cloud" }
+    });
+  });
+
+  it("drops a first-run marker if it ever contains credential-like data", async () => {
+    const api = createSettingsApi({
+      invoke: async () => ({
+        version: 2,
+        first_run_activation: { version: 1, completed: false, route: "byok", token: "fixture" }
+      }),
+      listen: async () => () => undefined
+    });
+
+    const normalized = await api.loadConfig();
+
+    expect(normalized).not.toHaveProperty("first_run_activation");
+    expect(JSON.stringify(normalized)).not.toContain("fixture");
+  });
+
   it("normalizes non-sensitive provider endpoints and discovered model candidates", async () => {
     const api = createSettingsApi({
       invoke: async () => ({

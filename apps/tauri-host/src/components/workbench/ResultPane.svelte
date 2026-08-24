@@ -28,6 +28,7 @@
   export let ratingEnabled = false;
   export let onCopy: WorkbenchActionHandler | undefined = undefined;
   export let onReplace: WorkbenchActionHandler | undefined = undefined;
+  export let onAdjust: WorkbenchActionHandler | undefined = undefined;
   export let onRegenerate: WorkbenchActionHandler | undefined = undefined;
   export let onExport: WorkbenchActionHandler | undefined = undefined;
   export let onOpenHistory: WorkbenchActionHandler | undefined = undefined;
@@ -69,29 +70,6 @@
       {#if elapsedLabel && phase === "completed"}
         <span class="elapsed">{elapsedLabel}</span>
       {/if}
-    </div>
-    <div class="header-actions" aria-label={translate("结果操作")}>
-      <button
-        type="button"
-        disabled={!hasOutput || !onTranslate}
-        aria-label="翻译结果"
-        title="翻译"
-        on:click={() => void onTranslate?.()}
-      >{translate("翻译")}</button>
-      <button
-        type="button"
-        disabled={!hasOutput || !onPreview}
-        aria-label="Markdown 预览"
-        title="Markdown 预览"
-        on:click={() => void onPreview?.()}
-      >{translate("预览")}</button>
-      <button
-        type="button"
-        disabled={!hasOutput || !sourceAvailable || !onCompare}
-        aria-label="对比原文"
-        title="对比原文"
-        on:click={() => void onCompare?.()}
-      >{translate("对比")}</button>
     </div>
   </header>
 
@@ -187,39 +165,56 @@
         {#if onReplace}
           <button class="secondary-result-action" type="button" on:click={() => void onReplace?.()}>{translate("替换剪贴板")}</button>
         {/if}
-        {#if onRegenerate}
-          <button class="secondary-result-action" type="button" on:click={() => void onRegenerate?.()}>{translate("重新生成")}</button>
+        {#if onCompare && sourceAvailable}
+          <button class="secondary-result-action" type="button" on:click={() => void onCompare?.()}>{translate("对比原文")}</button>
         {/if}
-        {#if onExport}
-          <button class="secondary-result-action" type="button" on:click={() => void onExport?.()}>{translate("导出")}</button>
-        {/if}
-        {#if onOpenHistory}
-          <button class="secondary-result-action" type="button" on:click={() => void onOpenHistory?.()}>{translate("历史")}</button>
-        {/if}
-        {#if onPositiveFeedback || onNegativeFeedback}
-          <span class="feedback-actions" aria-label="结果反馈">
-            <button type="button" aria-label="结果满意" title="满意" disabled={!onPositiveFeedback} on:click={() => void onPositiveFeedback?.()}>
-              <ThumbsUp size={15} strokeWidth={2} />
-            </button>
-            <button type="button" aria-label="结果不满意" title="不满意" disabled={!onNegativeFeedback} on:click={() => void onNegativeFeedback?.()}>
-              <ThumbsDown size={15} strokeWidth={2} />
-            </button>
-          </span>
-        {/if}
-        {#if onRate}
-          <span class="rating-actions" aria-label="结果评分">
-            {#each [1, 2, 3, 4, 5] as score}
-              <button
-                type="button"
-                aria-label={`评分 ${score}`}
-                aria-pressed={rating === score}
-                disabled={!ratingEnabled}
-                on:click={() => void onRate?.(score)}
-              >{score}</button>
-            {/each}
-          </span>
+        {#if onAdjust}
+          <button class="secondary-result-action" type="button" on:click={() => void onAdjust?.()}>{translate("再调整")}</button>
         {/if}
       </div>
+      <details class="secondary-tools">
+        <summary>{translate("更多结果工具")}</summary>
+        <div class="secondary-tools-content">
+          {#if onRegenerate}
+            <button class="secondary-result-action" type="button" on:click={() => void onRegenerate?.()}>{translate("重新生成")}</button>
+          {/if}
+          {#if onExport}
+            <button class="secondary-result-action" type="button" on:click={() => void onExport?.()}>{translate("导出")}</button>
+          {/if}
+          {#if onOpenHistory}
+            <button class="secondary-result-action" type="button" on:click={() => void onOpenHistory?.()}>{translate("历史")}</button>
+          {/if}
+          {#if onTranslate}
+            <button class="secondary-result-action" type="button" on:click={() => void onTranslate?.()}>{translate("翻译")}</button>
+          {/if}
+          {#if onPreview}
+            <button class="secondary-result-action" type="button" on:click={() => void onPreview?.()}>{translate("预览")}</button>
+          {/if}
+          {#if onPositiveFeedback || onNegativeFeedback}
+            <span class="feedback-actions" aria-label={translate("结果反馈")}>
+              <button type="button" aria-label={translate("结果满意")} title={translate("满意")} disabled={!onPositiveFeedback} on:click={() => void onPositiveFeedback?.()}>
+                <ThumbsUp size={15} strokeWidth={2} />
+              </button>
+              <button type="button" aria-label={translate("结果不满意")} title={translate("不满意")} disabled={!onNegativeFeedback} on:click={() => void onNegativeFeedback?.()}>
+                <ThumbsDown size={15} strokeWidth={2} />
+              </button>
+            </span>
+          {/if}
+          {#if onRate}
+            <span class="rating-actions" aria-label={translate("结果评分")}>
+              {#each [1, 2, 3, 4, 5] as score}
+                <button
+                  type="button"
+                  aria-label={translate("评分 {score}", { score })}
+                  aria-pressed={rating === score}
+                  disabled={!ratingEnabled}
+                  on:click={() => void onRate?.(score)}
+                >{score}</button>
+              {/each}
+            </span>
+          {/if}
+        </div>
+      </details>
       {#if meta.length || historyStatus}
         <div class="result-meta">
           <span class="meta-list">
@@ -260,7 +255,6 @@
   }
 
   .title-group,
-  .header-actions,
   .state-actions,
   .result-meta,
   .meta-list {
@@ -310,11 +304,6 @@
     white-space: nowrap;
   }
 
-  .header-actions {
-    flex: 0 0 auto;
-    gap: 2px;
-  }
-
   button {
     font: inherit;
     transition: color 140ms ease, background 140ms ease, border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
@@ -328,25 +317,6 @@
   button:disabled {
     cursor: not-allowed;
     opacity: 0.4;
-  }
-
-  .header-actions button {
-    min-width: 40px;
-    height: 30px;
-    padding: 0 8px;
-    color: var(--muted, #697386);
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 7px;
-    font-size: 11px;
-    font-weight: 560;
-  }
-
-  .header-actions button:hover:not(:disabled) {
-    color: var(--text, #202535);
-    background: var(--accent-soft, #eef1ff);
-    border-color: var(--line, #e1e6ee);
-    transform: translateY(-1px);
   }
 
   .result-body {
@@ -482,6 +452,26 @@
     color: #fff;
     background: var(--accent, #5065c7);
     border: 1px solid var(--accent, #5065c7);
+  }
+
+  .secondary-tools {
+    min-width: 0;
+    padding: 0 11px 7px;
+  }
+
+  .secondary-tools summary {
+    width: fit-content;
+    color: var(--muted, #697386);
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .secondary-tools-content {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding-top: 7px;
   }
 
   .primary-action:hover:not(:disabled),
@@ -654,7 +644,6 @@
   .feedback-actions {
     display: inline-flex;
     gap: 3px;
-    margin-left: auto;
   }
 
   .feedback-actions button {
@@ -716,10 +705,6 @@
       align-items: stretch;
       flex-direction: column;
       gap: 4px;
-    }
-
-    .header-actions {
-      justify-content: flex-start;
     }
 
     .result-meta {

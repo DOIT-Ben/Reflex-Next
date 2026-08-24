@@ -14,6 +14,7 @@
   export let runLabel = "优化文本";
   export let cancelLabel = "取消生成";
   export let adjustLabel = "调整方案";
+  export let trustSummary = "";
   export let onRun: WorkbenchActionHandler | undefined = undefined;
   export let onCancel: WorkbenchActionHandler | undefined = undefined;
   export let onAdjust: WorkbenchActionHandler | undefined = undefined;
@@ -102,6 +103,9 @@
       </button>
     {/if}
   </div>
+  {#if trustSummary}
+    <p class="trust-summary" aria-live="polite">{trustSummary}</p>
+  {/if}
 </section>
 
 <style>
@@ -124,6 +128,14 @@
     min-width: 0;
     align-items: center;
     gap: 8px;
+  }
+
+  .trust-summary {
+    margin: 0;
+    color: var(--muted, #697386);
+    font-size: 11px;
+    line-height: 1.48;
+    overflow-wrap: anywhere;
   }
 
   .summary-items {

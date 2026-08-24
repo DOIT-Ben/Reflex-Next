@@ -205,6 +205,7 @@ describe("production frontend architecture", () => {
       "ClipboardConfirmDialog",
       "ResultCompareDialog",
       "PluginDialog",
+      "FirstRunDialog",
       "Toast",
       "InputPane",
       "ConfigSummary",
@@ -238,6 +239,30 @@ describe("production frontend architecture", () => {
     expect(appSource).not.toContain("closeMoreActions");
     expect(appSource).not.toContain("window.confirm");
     expect(appSource).not.toMatch(/class=["'](?:command|template|batch)-dialog["']/);
+  });
+
+  it("keeps the first-success loop in the host UI without leaking credentials", () => {
+    const appSource = readFileSync(join(sourceRoot, "App.svelte"), "utf8");
+    const inputSource = readFileSync(
+      join(sourceRoot, "components", "workbench", "InputPane.svelte"),
+      "utf8"
+    );
+    const resultSource = readFileSync(
+      join(sourceRoot, "components", "workbench", "ResultPane.svelte"),
+      "utf8"
+    );
+
+    expect(appSource).toContain("first_run_activation");
+    expect(appSource).toContain("availableActivationRoutes(cloudAvailability)");
+    expect(appSource).toContain("completeFirstRunActivation()");
+    expect(appSource).toContain("quickActions={quickActions}");
+    expect(appSource).toContain("trustSummary={generationTrust}");
+    expect(inputSource).toContain("onQuickAction");
+    expect(resultSource).toContain('translate("复制结果")');
+    expect(resultSource).toContain('translate("对比原文")');
+    expect(resultSource).toContain('translate("再调整")');
+    expect(resultSource).toContain('translate("更多结果工具")');
+    expect(appSource).not.toMatch(/first_run_activation[\s\S]{0,240}(?:api[_-]?key|secret|token|endpoint)/i);
   });
 
   it("keeps the history window componentized and responsive", () => {

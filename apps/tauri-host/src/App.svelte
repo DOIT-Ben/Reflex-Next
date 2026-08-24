@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import FeedbackDialog from "./components/feedback/FeedbackDialog.svelte";
   import FeedbackPromptDialog from "./components/feedback/FeedbackPromptDialog.svelte";
+  import FirstRunDialog from "./components/onboarding/FirstRunDialog.svelte";
   import SettingsDialog from "./components/settings/SettingsDialog.svelte";
   import type { SettingsSection } from "./components/settings/types";
   import ClipboardConfirmDialog from "./components/overlays/ClipboardConfirmDialog.svelte";
@@ -30,6 +31,16 @@
     WorkbenchPhase
   } from "./components/workbench/types";
   import { CapabilityBridge } from "./domain/capabilityBridge";
+  import {
+    activationRouteForProvider,
+    availableActivationRoutes,
+    completeActivation,
+    createActivationState,
+    normalizeActivationState,
+    selectActivationRoute,
+    type ActivationRoute,
+    type ActivationState
+  } from "./domain/activationState";
   import { createDiagnosticBundleBridge, type DiagnosticBundleBridge } from "./domain/diagnosticBundleBridge";
   import {
     createPromptFeedbackPayload,
@@ -207,6 +218,12 @@
     type ProviderAvailability
   } from "./domain/providerCatalog";
   import {
+    applyQuickAction,
+    generationTrustSummary,
+    preferredByokProvider,
+    quickActions
+  } from "./domain/productExperience";
+  import {
     applySemanticModelEvent,
     beginSemanticModelOperation,
     createSemanticModelState,
@@ -271,6 +288,9 @@
   let templateCategories: string[] = [];
   let visibleTemplates: PromptTemplate[] = [];
   let persistedConfig: AppConfig | null = null;
+  let activationState: ActivationState = createActivationState();
+  let activationOpen = false;
+  let activationNotice = "";
   let secretInput = "";
   let secretStatus: SecretStatus = {
     providerId: "minimax",
@@ -475,6 +495,21 @@
     cloudAvailability
   );
   $: providerStatusText = providerAvailabilityLabel(providerStatus);
+  $: activationRoutes = availableActivationRoutes(cloudAvailability);
+  $: activationProviderReady = providerStatus === "ready";
+  $: activeProviderLabel = tr(providerName(activeProviderId, providerOptions));
+  $: generationTrust = generationTrustSummary(
+    {
+      route: activationRouteForProvider(activeProviderId),
+      providerLabel: activeProviderLabel,
+      historyEnabled: persistedConfig?.history_enabled ?? false,
+      privacyMode: persistedConfig?.privacy_mode ?? false,
+      quota: activeProviderId === "reflex-cloud" && cloudQuota
+        ? { requestsUsed: cloudQuota.requests_used, requestsLimit: cloudQuota.requests_limit }
+        : null
+    },
+    uiLanguage
+  );
   $: workbenchPhase = isGenerating(state.phase)
     ? "running"
     : state.phase === "completed"
@@ -526,24 +561,12 @@
             ? "translation"
             : markdownPreview.phase !== "closed"
               ? "markdown"
-              : "workbench";
+              : commandPaletteOpen
+                ? "tools"
+                : "workbench";
   $: navItems = [
     { id: "workbench", label: tr("工作台"), symbol: "" },
-    { id: "templates", label: tr("模板管理"), symbol: "" },
-    { id: "batch", label: tr("批量处理"), symbol: "", disabled: !batchRunnerEnabled },
-    {
-      id: "translation",
-      label: tr("翻译"),
-      symbol: "",
-      disabled: !translatorEnabled || !state.currentResult?.output
-    },
-    {
-      id: "markdown",
-      label: tr("Markdown 预览"),
-      symbol: "",
-      disabled: !markdownPreviewEnabled || !state.currentResult?.output
-    },
-    { id: "plugins", label: tr("插件"), symbol: "" },
+    { id: "tools", label: tr("更多工具"), symbol: "" },
     { id: "history", label: tr("历史记录"), symbol: "", group: "utility" },
     { id: "settings", label: tr("设置"), symbol: "", shortcut: "Ctrl+,", group: "utility" }
   ];
@@ -575,6 +598,11 @@
     state = updateInput(state, value);
   }
 
+  function applyQuickActionToDraft(actionId: string) {
+    state = { ...state, requestDraft: applyQuickAction(state.requestDraft, actionId) };
+    draft = { ...state.requestDraft };
+  }
+
   function clearInput() {
     setInput("");
   }
@@ -600,11 +628,7 @@
   function handleNavigation(id: string) {
     commandPaletteOpen = false;
     if (id === "workbench") returnToWorkbench();
-    else if (id === "templates") openTemplateManager();
-    else if (id === "batch" && batchRunnerEnabled) openBatchView();
-    else if (id === "translation" && translatorEnabled && state.currentResult?.output) openTranslationView();
-    else if (id === "markdown" && markdownPreviewEnabled && state.currentResult?.output) openMarkdownPreviewView();
-    else if (id === "plugins") state = applyHostAction(state, "plugins");
+    else if (id === "tools") openCommandPalette();
     else if (id === "history") openHistoryWindow();
     else if (id === "settings") beginSettings();
   }
@@ -669,7 +693,7 @@
     draft = { ...state.requestDraft };
   }
 
-  function beginSettings() {
+  function beginSettings(preferredProviderId: string | null = null) {
     if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
     if (translation.phase !== "closed") closeTranslationView();
     state = openSettings(state);
@@ -679,7 +703,7 @@
     secretInput = "";
     settingsNotice = null;
     secretNotice = null;
-    void hydrateSettings();
+    void hydrateSettings(preferredProviderId);
     void refreshProviderCatalog();
     void hydrateCloudPrivacy();
   }
@@ -861,7 +885,7 @@
     void refreshProviderSecretStatus(state.requestDraft.provider ?? "minimax");
   }
 
-  async function hydrateSettings() {
+  async function hydrateSettings(preferredProviderId: string | null = null) {
     if (!settingsApi) return;
     settingsBusy = true;
     providerStatusError = false;
@@ -871,6 +895,8 @@
     try {
       config = await settingsApi.loadConfig();
       persistedConfig = config;
+      activationState = normalizeActivationState(config.first_run_activation);
+      activationOpen = !activationState.completed;
       feedbackPromptState = normalizeFeedbackPromptState(config.feedback_prompt);
       feedbackPromptEnabledDraft = feedbackPromptState.enabled;
       customTemplates = readCustomTemplates(config.custom_templates);
@@ -883,7 +909,16 @@
       settingsBusy = false;
       return;
     }
-    await refreshProviderSecretStatus(config.provider);
+    const preferredProvider = preferredProviderId?.trim().toLowerCase();
+    if (preferredProvider && providerOptions.some((provider) => provider.id === preferredProvider)) {
+      const models = providerModels(preferredProvider, providerOptions);
+      settingsDraft = {
+        ...settingsDraft,
+        default_provider: preferredProvider,
+        default_model: providerDefaultModel(preferredProvider, providerOptions) ?? models[0]?.id ?? null
+      };
+    }
+    await refreshProviderSecretStatus(settingsDraft.default_provider ?? config.provider);
     settingsBusy = false;
   }
 
@@ -956,6 +991,23 @@
       );
       providerStatusError = false;
       secretNotice = "密钥已安全保存。";
+      if (activationOpen && activationState.route === "byok") {
+        const savedProvider = settingsDraft.default_provider ?? "minimax";
+        const savedModel = settingsDraft.default_model ?? providerDefaultModel(savedProvider, providerOptions);
+        if (savedModel) state = selectRequestModel(state, savedProvider, savedModel);
+        let defaultProviderSaved = true;
+        if (persistedConfig) {
+          try {
+            persistedConfig = await api.saveConfig(configFromSettingsDraft(persistedConfig, settingsDraft));
+          } catch {
+            defaultProviderSaved = false;
+          }
+        }
+        cancelSettingsView();
+        activationNotice = defaultProviderSaved
+          ? "密钥已保存，可以开始生成。"
+          : "密钥已保存，本次可继续生成；默认 Provider 尚未保存。";
+      }
     } catch {
       providerStatusError = true;
       secretNotice = "密钥保存失败，请重试。";
@@ -1173,6 +1225,7 @@
       });
       if (event.type === "done" && state.phase === "completed") {
         await handleCompletionClipboard();
+        await completeFirstRunActivation();
         await recordFeedbackPromptCompletion();
       }
     }
@@ -1964,6 +2017,62 @@
     beginSettings();
   }
 
+  async function persistActivationState(next: ActivationState): Promise<boolean> {
+    activationState = next;
+    const api = settingsApi;
+    const config = persistedConfig;
+    if (!api || !config) return false;
+    try {
+      const saved = await api.saveConfig({ ...config, first_run_activation: next });
+      persistedConfig = saved;
+      activationState = normalizeActivationState(saved.first_run_activation);
+      return true;
+    } catch {
+      activationNotice = "首次使用状态暂未保存，本次仍可继续使用。";
+      return false;
+    }
+  }
+
+  async function chooseActivationRoute(route: ActivationRoute) {
+    if (!availableActivationRoutes(cloudAvailability).includes(route)) return;
+    const next = selectActivationRoute(activationState, route);
+    await persistActivationState(next);
+    activationNotice = "";
+    if (route === "cloud") {
+      const model = providerDefaultModel("reflex-cloud", providerOptions);
+      if (model) switchWorkbenchModel("reflex-cloud", model);
+      return;
+    }
+    openByokSettings();
+  }
+
+  function openByokSettings() {
+    const providerId = preferredByokProvider(
+      persistedConfig?.provider ?? activeProviderId,
+      providerOptions.map((provider) => provider.id)
+    );
+    beginSettings(providerId);
+  }
+
+  function continueFirstRun() {
+    activationOpen = false;
+    activationNotice = "";
+  }
+
+  function postponeFirstRun() {
+    activationOpen = false;
+    activationNotice = "";
+  }
+
+  async function completeFirstRunActivation() {
+    if (activationState.completed) return;
+    const route = activationState.route ?? activationRouteForProvider(activeProviderId);
+    const completed = completeActivation(selectActivationRoute(activationState, route));
+    activationOpen = false;
+    activationNotice = "";
+    await persistActivationState(completed);
+  }
+
   function managePluginSettings() {
     beginSettings();
     settingsSection = "plugins";
@@ -2294,7 +2403,9 @@
               maxLength={100_000}
               disabled={state.phase === "adjusting"}
               clipboardBusy={clipboardReading}
+              quickActions={quickActions}
               onInput={setInput}
+              onQuickAction={applyQuickActionToDraft}
               onRun={runOptimization}
               onReadClipboard={readClipboard}
               onClear={clearInput}
@@ -2308,6 +2419,7 @@
               phase={workbenchPhase}
               canRun={canGenerate}
               statusMessage={workbenchStatusMessage}
+              trustSummary={generationTrust}
               onRun={runOptimization}
               onCancel={cancelRun}
               onAdjust={beginAdjust}
@@ -2333,6 +2445,7 @@
             ratingEnabled={state.currentResult?.saveStatus === "saved" && !resultRatingBusy}
             onCopy={copyResult}
             onReplace={askReplaceClipboard}
+            onAdjust={beginAdjust}
             onRegenerate={runOptimization}
             onExport={exportResultMarkdown}
             onOpenHistory={openHistoryWindow}
@@ -2517,6 +2630,21 @@
 
     {#if state.overlay === "plugin_manager"}
       <PluginDialog translate={tr} onManage={managePluginSettings} onClose={closeOverlay} />
+    {/if}
+
+    {#if activationOpen && state.overlay !== "settings"}
+      <FirstRunDialog
+        routes={activationRoutes}
+        selectedRoute={activationState.route}
+        providerReady={activationProviderReady}
+        providerLabel={activeProviderLabel}
+        notice={activationNotice}
+        translate={tr}
+        onChoose={chooseActivationRoute}
+        onOpenSettings={openByokSettings}
+        onContinue={continueFirstRun}
+        onLater={postponeFirstRun}
+      />
     {/if}
 
     {#if state.overlay === "settings"}

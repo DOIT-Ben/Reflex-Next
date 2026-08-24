@@ -4,6 +4,7 @@
     WorkbenchInputHandler,
     WorkbenchPhase
   } from "./types";
+  import type { QuickAction } from "../../domain/productExperience";
 
   export let value = "";
   export let phase: WorkbenchPhase = "empty";
@@ -13,7 +14,9 @@
   export let maxLength = 100_000;
   export let disabled = false;
   export let clipboardBusy = false;
+  export let quickActions: ReadonlyArray<QuickAction> = [];
   export let onInput: WorkbenchInputHandler = () => undefined;
+  export let onQuickAction: ((actionId: string) => void) | undefined = undefined;
   export let onRun: WorkbenchActionHandler | undefined = undefined;
   export let onReadClipboard: WorkbenchActionHandler | undefined = undefined;
   export let onClear: WorkbenchActionHandler | undefined = undefined;
@@ -85,6 +88,24 @@
     </div>
   </header>
 
+  {#if quickActions.length > 0}
+    <div class="quick-actions" aria-label={translate("常用任务")}>
+      <span>{translate("常用任务")}</span>
+      {#each quickActions as action (action.id)}
+        <button
+          class="quick-action"
+          type="button"
+          disabled={locked || !onQuickAction}
+          title={translate(action.hint)}
+          on:click={() => onQuickAction?.(action.id)}
+        >
+          <strong>{translate(action.label)}</strong>
+          <small>{translate(action.hint)}</small>
+        </button>
+      {/each}
+    </div>
+  {/if}
+
   <div class:invalid={overLimit} class="editor-frame">
     <textarea
       bind:this={textarea}
@@ -148,6 +169,37 @@
     justify-content: flex-end;
     gap: 2px;
   }
+
+  .quick-actions {
+    display: flex;
+    min-width: 0;
+    align-items: stretch;
+    gap: 6px;
+    padding: 0 12px 9px;
+    overflow-x: auto;
+  }
+
+  .quick-actions > span {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    color: var(--weak, #98a2b3);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .quick-action {
+    display: grid;
+    min-width: 98px;
+    height: auto;
+    flex: 1 1 0;
+    gap: 3px;
+    padding: 7px 9px;
+    text-align: left;
+  }
+
+  .quick-action strong { color: var(--text, #202535); font-size: 11px; font-weight: 650; }
+  .quick-action small { overflow: hidden; color: var(--muted, #697386); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 
   button {
     min-width: 30px;
@@ -284,6 +336,8 @@
       width: 100%;
       justify-content: flex-start;
     }
+
+    .quick-action { min-width: 116px; flex: 0 0 auto; }
 
     .editor-footer span:first-child {
       max-width: 70%;
