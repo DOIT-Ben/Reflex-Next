@@ -77,6 +77,7 @@ class SceneDetectionResult:
     confidence: float
     method: str
     reason: str = ""
+    category: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.scene, str) or not self.scene.strip():
@@ -91,6 +92,10 @@ class SceneDetectionResult:
         object.__setattr__(self, "scene", self.scene.strip())
         object.__setattr__(self, "method", self.method.strip())
         object.__setattr__(self, "confidence", confidence)
+        if self.category is not None:
+            if not isinstance(self.category, str) or not self.category.strip():
+                raise ValueError("category must be a non-empty string")
+            object.__setattr__(self, "category", self.category.strip())
 
 
 @dataclass(frozen=True)

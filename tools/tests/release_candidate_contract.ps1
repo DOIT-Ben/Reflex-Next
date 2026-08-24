@@ -24,6 +24,7 @@ $components = @(
   [PSCustomObject]@{ Id = "python-history-sqlite"; Name = "reflex-history-sqlite"; Lock = "plugins/history-sqlite/uv.lock" },
   [PSCustomObject]@{ Id = "python-markdown-preview"; Name = "reflex-markdown-preview"; Lock = "plugins/markdown-preview/uv.lock" },
   [PSCustomObject]@{ Id = "python-provider-minimax"; Name = "reflex-provider-minimax"; Lock = "plugins/provider-minimax/uv.lock" },
+  [PSCustomObject]@{ Id = "python-provider-native-protocols"; Name = "reflex-provider-native-protocols"; Lock = "plugins/provider-native-protocols/uv.lock" },
   [PSCustomObject]@{ Id = "python-provider-openai-compatible"; Name = "reflex-provider-openai-compatible"; Lock = "plugins/provider-openai-compatible/uv.lock" },
   [PSCustomObject]@{ Id = "python-semantic-detector"; Name = "reflex-plugin-semantic-detector"; Lock = "plugins/semantic-detector/uv.lock" },
   [PSCustomObject]@{ Id = "python-translator"; Name = "reflex-translator"; Lock = "plugins/translator/uv.lock" },
@@ -186,14 +187,14 @@ try {
   Assert-True (
     $created.ExitCode -eq 0
   ) ("A valid unsigned review candidate must be generated: " + $created.Stderr)
-  Assert-True ($created.Stdout -match 'artifacts=3; sbom=12; release_ready=false') "Generator output must report bounded material and readiness."
+  Assert-True ($created.Stdout -match 'artifacts=3; sbom=13; release_ready=false') "Generator output must report bounded material and readiness."
   $manifestPath = Join-Path $output "release-manifest.json"
   Assert-True (Test-Path -LiteralPath $manifestPath -PathType Leaf) "Release manifest must be emitted."
   $manifest = [System.IO.File]::ReadAllText($manifestPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
   Assert-True ([int]$manifest.schema_version -eq 2) "Release manifest must use schema version 2."
   Assert-True ([string]$manifest.version -ceq $version) "Manifest version must match VERSION."
   Assert-True (@($manifest.artifacts).Count -eq 3) "Manifest must contain exactly three executable artifacts."
-  Assert-True ([int]$manifest.sbom.component_count -eq 12) "Manifest must contain twelve component BOMs."
+  Assert-True ([int]$manifest.sbom.component_count -eq 13) "Manifest must contain thirteen component BOMs."
   $expectedDocuments = [ordered]@{
     release_notes = "RELEASE_NOTES.md"
     recovery_guide = "RECOVERY.md"
@@ -207,15 +208,15 @@ try {
     Assert-True ([string]$manifest.documents.($entry.Key) -ceq $entry.Value) ("Release document mapping drifted: " + $entry.Key)
     Assert-True (Test-Path -LiteralPath (Join-Path $output $entry.Value) -PathType Leaf) ("Release document is missing: " + $entry.Value)
   }
-  Assert-True ([int]$manifest.checksums.file_count -eq 22) "Manifest must checksum every artifact, SBOM and public document."
+  Assert-True ([int]$manifest.checksums.file_count -eq 23) "Manifest must checksum every artifact, SBOM and public document."
   Assert-True (-not [bool]$manifest.gates.signatures_valid) "Unsigned fixture artifacts must not be marked signed."
   Assert-True (-not [bool]$manifest.gates.release_ready) "Unsigned review material must not be release-ready."
   Assert-True ((Get-Content -Raw -Encoding UTF8 $manifestPath) -notmatch [regex]::Escape($root)) "Manifest must not leak absolute workspace paths."
-  Assert-True (@(Get-ChildItem -LiteralPath $output -File -Recurse).Count -eq 24) "Candidate must have an exact bounded file set."
+  Assert-True (@(Get-ChildItem -LiteralPath $output -File -Recurse).Count -eq 25) "Candidate must have an exact bounded file set."
 
   $verified = Verify-Candidate -Directory $output
   Assert-True ($verified.ExitCode -eq 0) "Untampered review material must verify."
-  Assert-True ($verified.Stdout -match 'files=24; release_ready=false') "Verifier must report bounded files and readiness."
+  Assert-True ($verified.Stdout -match 'files=25; release_ready=false') "Verifier must report bounded files and readiness."
 
   $legacySchema = Join-Path $probeRoot "legacy-schema"
   Copy-Item -LiteralPath $output -Destination $legacySchema -Recurse

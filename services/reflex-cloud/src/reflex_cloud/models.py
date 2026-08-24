@@ -133,6 +133,22 @@ class HourlyIpUsage(Base):
     request_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class ClientAbuseUsage(Base):
+    __tablename__ = "client_abuse_usage"
+    __table_args__ = (
+        UniqueConstraint(
+            "ip_hash", "scope", "window_start", name="client_abuse_scope_window_uq"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ip_hash: Mapped[str] = mapped_column(String(64), index=True)
+    scope: Mapped[str] = mapped_column(String(32))
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    request_count: Mapped[int] = mapped_column(Integer, default=0)
+    attachment_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
 class QualityRelease(Base):
     __tablename__ = "quality_releases"
     __table_args__ = (
@@ -239,6 +255,7 @@ class FeedbackItem(Base):
     installation_id: Mapped[str] = mapped_column(
         ForeignKey("installations.id", ondelete="CASCADE"), index=True
     )
+    source: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     sentiment: Mapped[str] = mapped_column(String(16))
     category: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32), default="new")

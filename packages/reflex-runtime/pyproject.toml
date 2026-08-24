@@ -19,7 +19,9 @@ builtins = [
   "reflex-plugin-semantic-detector",
   "reflex-translator",
   "reflex-provider-minimax",
+  "reflex-provider-native-protocols",
   "reflex-provider-openai-compatible",
+  "reflex-provider-openai-responses",
 ]
 dev = [
   "pyinstaller>=6,<7",
@@ -40,4 +42,6 @@ reflex-markdown-preview = { path = "../../plugins/markdown-preview", editable = 
 reflex-plugin-semantic-detector = { path = "../../plugins/semantic-detector", editable = true }
 reflex-translator = { path = "../../plugins/translator", editable = true }
 reflex-provider-minimax = { path = "../../plugins/provider-minimax", editable = true }
+reflex-provider-native-protocols = { path = "../../plugins/provider-native-protocols", editable = true }
 reflex-provider-openai-compatible = { path = "../../plugins/provider-openai-compatible", editable = true }
+reflex-provider-openai-responses = { path = "../../plugins/provider-openai-responses", editable = true }

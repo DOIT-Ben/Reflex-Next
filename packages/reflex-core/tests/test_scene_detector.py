@@ -1,7 +1,7 @@
 import pytest
 
 from reflex_core import OptimizeRequest
-from reflex_core.scene import RuleSceneDetector
+from reflex_core.scene import GeneralSceneDetector, RuleSceneDetector
 
 
 SCENE_CASES = (
@@ -67,3 +67,45 @@ def test_rule_scene_detector_falls_back_to_general():
     result = RuleSceneDetector().detect("帮我优化这句话", OptimizeRequest("input"))
     assert result.scene == "general"
     assert result.confidence < 0.5
+
+
+def test_rule_scene_detector_reports_category_for_every_rule():
+    detector = RuleSceneDetector()
+    for _, text in SCENE_CASES:
+        result = detector.detect(text, OptimizeRequest("input"))
+        assert result.scene == _
+        assert result.category in {
+            "business", "marketing", "market_analysis", "tech_doc", "code",
+            "diagnosis", "academic", "education", "creative", "translation",
+        }
+
+
+def test_rule_scene_detector_general_has_general_category():
+    result = RuleSceneDetector().detect("帮我优化这句话", OptimizeRequest("input"))
+    assert result.scene == "general"
+    assert result.category == "general"
+
+
+def test_general_scene_detector_reports_general_category():
+    result = GeneralSceneDetector().detect("anything", OptimizeRequest("input"))
+    assert result.scene == "general"
+    assert result.category == "general"
+
+
+NEW_SCENE_CASES = (
+    ("resume", "帮我优化这份简历，突出项目成果"),
+    ("cover_letter", "写一封前端开发岗位的求职信"),
+    ("interview", "准备一下产品经理的面试问题"),
+    ("headline", "给这篇文章起几个吸引人的标题"),
+    ("sales_script", "写一段电话销售的销售话术"),
+    ("speech", "帮我写一篇公司年会的演讲稿"),
+    ("prd", "写一份会员体系的产品需求文档"),
+)
+
+
+@pytest.mark.parametrize(("expected", "text"), NEW_SCENE_CASES)
+def test_rule_scene_detector_covers_new_absorbed_scenes(expected, text):
+    result = RuleSceneDetector().detect(text, OptimizeRequest("input"))
+
+    assert result.scene == expected
+    assert result.category is not None

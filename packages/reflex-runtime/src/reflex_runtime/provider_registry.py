@@ -15,16 +15,20 @@ from .provider_errors import (
     provider_configuration_invalid,
     provider_unconfigured,
 )
-from .plugin_contracts import ProviderDescriptor
+from .plugin_contracts import MAX_PROVIDER_MODELS, ProviderDescriptor
+from .provider_profiles import ModelCapabilityProfile, ProtocolProfile
 
 
 TRUSTED_PROVIDER_RELEASE_STATUS = MappingProxyType(
     {
+        "anthropic": "experimental",
+        "gemini": "experimental",
         "minimax": "supported",
         "deepseek": "experimental",
         "qwen": "experimental",
         "zhipu": "experimental",
         "siliconflow": "experimental",
+        "openai-responses": "experimental",
     }
 )
 
@@ -36,6 +40,8 @@ class ProviderConfig:
     timeout_seconds: float = 60.0
     tls_verify: bool = True
     ca_bundle_path: str | None = None
+    protocol: ProtocolProfile = ProtocolProfile("openai_chat_completions")
+    model_capabilities: ModelCapabilityProfile = ModelCapabilityProfile()
 
 
 class ProviderRegistry:
@@ -105,25 +111,104 @@ class ProviderRegistry:
             provider = self._providers.get(normalized_id)
         if factory is None or provider is None:
             raise provider_unconfigured()
-        if model is not None and model not in factory.models:
+        if model is not None and not _model_allowed(factory, model):
+            raise provider_configuration_invalid()
+        return provider
+
+    def discover_models(
+        self, provider_id: str, secret: str, raw_config: dict[str, object]
+    ) -> tuple[str, ...]:
+        provider = self._transient_provider(provider_id, secret, raw_config)
+        operation = getattr(provider, "list_models", None)
+        if not callable(operation):
+            raise ProviderRuntimeError(
+                "provider_capability_unsupported",
+                "Provider does not support model discovery.",
+                recoverable=False,
+                action=None,
+            )
+        try:
+            models = operation()
+        except Exception as error:
+            raise _probe_error(error) from None
+        if not isinstance(models, tuple):
+            raise provider_configuration_invalid()
+        normalized = tuple(sorted(set(models)))
+        if (
+            not normalized
+            or len(normalized) > MAX_PROVIDER_MODELS
+            or any(not _safe_model_id(model) for model in normalized)
+        ):
+            raise provider_configuration_invalid()
+        return normalized
+
+    def test_connection(
+        self, provider_id: str, secret: str, raw_config: dict[str, object]
+    ) -> bool:
+        provider = self._transient_provider(provider_id, secret, raw_config)
+        operation = getattr(provider, "test_connection", None)
+        if not callable(operation):
+            raise ProviderRuntimeError(
+                "provider_capability_unsupported",
+                "Provider does not support connection testing.",
+                recoverable=False,
+                action=None,
+            )
+        try:
+            result = operation(getattr(provider, "model", None))
+        except Exception as error:
+            raise _probe_error(error) from None
+        if result is not True:
+            raise provider_configuration_invalid()
+        return True
+
+    def _transient_provider(
+        self, provider_id: str, secret: str, raw_config: dict[str, object]
+    ) -> Any:
+        normalized_id = _normalize_provider_id(provider_id)
+        factory = self._factories.get(normalized_id)
+        if factory is None:
+            raise provider_unconfigured()
+        if not isinstance(secret, str) or not secret.strip() or len(secret) > 16_384:
+            raise provider_configuration_invalid()
+        config = _provider_config(factory, raw_config)
+        try:
+            provider = factory.create(secret.strip(), config)
+        except Exception as error:
+            raise _probe_error(error) from None
+        if getattr(provider, "id", None) != normalized_id:
             raise provider_configuration_invalid()
         return provider
 
     def catalog(self) -> tuple[ProviderDescriptor, ...]:
         with self._lock:
-            session_configured_ids = frozenset(self._providers)
-        return tuple(
-            replace(
-                self._descriptors[provider_id],
-                session_configured=provider_id in session_configured_ids,
+            configured = dict(self._providers)
+        descriptors: list[ProviderDescriptor] = []
+        for provider_id in sorted(self._descriptors):
+            descriptor = self._descriptors[provider_id]
+            provider = configured.get(provider_id)
+            model = getattr(provider, "model", None)
+            models = descriptor.models
+            if (
+                isinstance(model, str)
+                and model not in models
+                and len(models) < MAX_PROVIDER_MODELS
+                and _safe_model_id(model)
+            ):
+                models = (*models, model)
+            descriptors.append(
+                replace(
+                    descriptor,
+                    models=models,
+                    session_configured=provider_id in configured,
+                )
             )
-            for provider_id in sorted(self._descriptors)
-        )
+        return tuple(descriptors)
 
 
 def _provider_config(factory: Any, raw_config: dict[str, object]) -> ProviderConfig:
     model = raw_config.get("model", factory.default_model)
-    if not isinstance(model, str) or model not in factory.models:
+    if not isinstance(model, str) or not _model_allowed(factory, model):
         raise provider_configuration_invalid()
 
     base_url = raw_config.get("base_url", getattr(factory, "default_base_url", None))
@@ -146,12 +231,60 @@ def _provider_config(factory: Any, raw_config: dict[str, object]) -> ProviderCon
         if not _valid_ca_bundle_path(ca_bundle_path):
             raise provider_configuration_invalid()
 
+    declared_protocol = getattr(factory, "protocol", "openai_chat_completions")
+    requested_protocol = raw_config.get("protocol", declared_protocol)
+    if requested_protocol != declared_protocol:
+        raise provider_configuration_invalid()
+    protocol = declared_protocol
+    if isinstance(protocol, str):
+        try:
+            protocol = ProtocolProfile(protocol)
+        except (TypeError, ValueError):
+            raise provider_configuration_invalid() from None
+    if not isinstance(protocol, ProtocolProfile):
+        raise provider_configuration_invalid()
+    raw_capabilities = getattr(factory, "model_capabilities", {})
+    if not isinstance(raw_capabilities, Mapping):
+        raise provider_configuration_invalid()
+    capability_values = raw_capabilities.get(model, {})
+    if isinstance(capability_values, ModelCapabilityProfile):
+        capabilities = capability_values
+    elif isinstance(capability_values, Mapping):
+        try:
+            capabilities = ModelCapabilityProfile(**dict(capability_values))
+        except (TypeError, ValueError):
+            raise provider_configuration_invalid() from None
+    else:
+        raise provider_configuration_invalid()
+
     return ProviderConfig(
         model=model,
         base_url=base_url,
         timeout_seconds=timeout_seconds,
         tls_verify=True,
         ca_bundle_path=ca_bundle_path,
+        protocol=protocol,
+        model_capabilities=capabilities,
+    )
+
+
+def _model_allowed(factory: Any, model: str) -> bool:
+    if not isinstance(model, str) or not model or len(model) > 256:
+        return False
+    if model != model.strip() or any(not character.isprintable() for character in model):
+        return False
+    models = getattr(factory, "models", ())
+    if model in models:
+        return True
+    return bool(getattr(factory, "accepts_custom_models", False))
+
+
+def _safe_model_id(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= 256
+        and value == value.strip()
+        and all(character.isascii() and character.isprintable() for character in value)
     )
 
 
@@ -218,4 +351,25 @@ def _reserved_windows_name(value: str) -> bool:
         len(stem) == 4
         and stem[:3] in {"COM", "LPT"}
         and stem[3] in "123456789"
+    )
+
+
+def _probe_error(error: Exception) -> ProviderRuntimeError:
+    if isinstance(error, ProviderRuntimeError):
+        return error
+    code = getattr(error, "code", "provider_invalid_response")
+    if code not in {
+        "provider_auth_failed",
+        "provider_rate_limited",
+        "provider_timeout",
+        "provider_network_error",
+        "provider_service_error",
+        "provider_invalid_response",
+    }:
+        code = "provider_invalid_response"
+    return ProviderRuntimeError(
+        code,
+        "Provider connection test failed.",
+        recoverable=bool(getattr(error, "retryable", False)),
+        action="retry" if bool(getattr(error, "retryable", False)) else "settings",
     )

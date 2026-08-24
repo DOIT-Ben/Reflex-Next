@@ -9,6 +9,7 @@ import {
   selectEventsForRequest,
   RoutedCoreBridge,
   TauriRuntimeBridge,
+  UnavailableCoreBridge,
   type CoreEventEnvelope,
   type TauriEvent
 } from "./coreBridge";
@@ -72,10 +73,26 @@ describe("core bridge", () => {
       listen: async () => () => undefined
     };
 
-    const bridge = await createDefaultCoreBridge(host);
+    const initialized = await createDefaultCoreBridge(host);
+    const events = [];
+    for await (const event of initialized.bridge.optimize(createDraftRequest("本地请求"))) {
+      events.push(event);
+    }
 
-    expect(bridge).toBeInstanceOf(TauriRuntimeBridge);
+    expect(initialized.bridge).toBeInstanceOf(TauriRuntimeBridge);
+    expect(initialized.runtimeAvailable).toBe(false);
     expect(calls).toEqual(["runtime_available"]);
+    expect(events).toEqual([
+      {
+        type: "error",
+        data: {
+          code: "runtime_unavailable",
+          message: "运行服务暂不可用，请稍后重试。",
+          recoverable: true,
+          action: "retry"
+        }
+      }
+    ]);
   });
 
   it("creates a Tauri runtime bridge only when runtime_available returns true", async () => {
@@ -84,9 +101,10 @@ describe("core bridge", () => {
       listen: async () => () => undefined
     };
 
-    const bridge = await createDefaultCoreBridge(host);
+    const initialized = await createDefaultCoreBridge(host);
 
-    expect(bridge).toBeInstanceOf(TauriRuntimeBridge);
+    expect(initialized.bridge).toBeInstanceOf(TauriRuntimeBridge);
+    expect(initialized.runtimeAvailable).toBe(true);
   });
 
   it("never falls back to demo output when a Tauri Runtime probe rejects", async () => {
@@ -97,9 +115,27 @@ describe("core bridge", () => {
       listen: async () => () => undefined
     };
 
-    const bridge = await createDefaultCoreBridge(host);
+    const initialized = await createDefaultCoreBridge(host);
+    const events = [];
+    for await (const event of initialized.bridge.optimize(createDraftRequest("本地请求"))) {
+      events.push(event);
+    }
 
-    expect(bridge).toBeInstanceOf(TauriRuntimeBridge);
+    expect(initialized.bridge).toBeInstanceOf(TauriRuntimeBridge);
+    expect(initialized.runtimeAvailable).toBe(false);
+    expect(events.map((event) => event.type)).toEqual(["error"]);
+  });
+
+  it("uses an unavailable bridge when no Tauri host exists", async () => {
+    const initialized = await createDefaultCoreBridge(null);
+    const events = [];
+    for await (const event of initialized.bridge.optimize(createDraftRequest("生产请求"))) {
+      events.push(event);
+    }
+
+    expect(initialized.bridge).toBeInstanceOf(UnavailableCoreBridge);
+    expect(initialized.runtimeAvailable).toBe(false);
+    expect(events.map((event) => event.type)).toEqual(["error"]);
   });
 
   it("filters stale Runtime events by active request id", () => {

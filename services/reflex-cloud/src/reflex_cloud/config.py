@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from ipaddress import ip_address, ip_network
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -30,12 +32,26 @@ class CloudSettings(BaseSettings):
     )
     retention_days: int = Field(default=90, ge=1, le=3650)
     feedback_limit_per_hour: int = Field(default=10, ge=1, le=1000)
+    installation_limit_per_ip_per_hour: int = Field(default=20, ge=1, le=1000)
+    feedback_limit_per_ip_per_hour: int = Field(default=30, ge=1, le=1000)
+    feedback_attachment_bytes_per_ip_per_day: int = Field(
+        default=10 * 1024 * 1024, ge=1024, le=1024 * 1024 * 1024
+    )
+    global_daily_feedback_limit: int = Field(default=10_000, ge=1, le=10_000_000)
+    global_daily_feedback_attachment_bytes: int = Field(
+        default=1024 * 1024 * 1024, ge=1024, le=1024**5
+    )
+    feedback_attachment_min_free_bytes: int = Field(
+        default=512 * 1024 * 1024, ge=0, le=1024**5
+    )
+    trusted_proxy_cidrs: str = ""
     free_requests_per_day: int = Field(default=20, ge=1, le=10000)
     free_input_chars_per_day: int = Field(default=200_000, ge=1_000, le=10_000_000)
     free_output_chars_per_day: int = Field(default=200_000, ge=1_000, le=10_000_000)
     max_screenshot_bytes: int = Field(default=3 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024)
     provider_api_key: SecretStr = SecretStr("")
     provider_base_url: str = "https://api.minimaxi.com/v1/chat/completions"
+    provider_allowed_hosts: str = "api.minimaxi.com"
     provider_model: str = "MiniMax-M2.7-highspeed"
     provider_timeout_seconds: float = Field(default=90.0, ge=5.0, le=120.0)
     provider_pricing_version: str = Field(default="unconfigured", min_length=1, max_length=64)
@@ -66,6 +82,50 @@ class CloudSettings(BaseSettings):
             raise ValueError("invalid environment")
         return normalized
 
+    @field_validator("trusted_proxy_cidrs")
+    @classmethod
+    def validate_trusted_proxy_cidrs(cls, value: str) -> str:
+        networks = []
+        for item in value.split(","):
+            item = item.strip()
+            if item:
+                networks.append(str(ip_network(item, strict=False)))
+        return ",".join(networks)
+
+    @field_validator("provider_allowed_hosts")
+    @classmethod
+    def validate_provider_allowed_hosts(cls, value: str) -> str:
+        hosts: list[str] = []
+        for item in value.split(","):
+            host = item.strip().lower().rstrip(".")
+            if not host or len(host) > 253 or any(
+                character.isspace() or ord(character) < 32 for character in host
+            ):
+                raise ValueError("invalid provider host allowlist")
+            if any(character in host for character in "/@?#:"):
+                raise ValueError("invalid provider host allowlist")
+            try:
+                address = ip_address(host)
+            except ValueError:
+                labels = host.split(".")
+                if any(
+                    not label
+                    or len(label) > 63
+                    or label.startswith("-")
+                    or label.endswith("-")
+                    or not all(character.isalnum() or character == "-" for character in label)
+                    for label in labels
+                ):
+                    raise ValueError("invalid provider host allowlist") from None
+            else:
+                if not address.is_global:
+                    raise ValueError("invalid provider host allowlist")
+            if host not in hosts:
+                hosts.append(host)
+        if not hosts:
+            raise ValueError("provider host allowlist is required")
+        return ",".join(hosts)
+
     @model_validator(mode="after")
     def reject_development_secrets_in_production(self) -> "CloudSettings":
         if self.environment != "production":
@@ -77,8 +137,36 @@ class CloudSettings(BaseSettings):
         )
         if any(secret == _DEVELOPMENT_SECRET or len(secret) < 32 for secret in secrets):
             raise ValueError("production secrets must be independently configured")
-        if not self.provider_base_url.startswith("https://"):
-            raise ValueError("production provider URL must use HTTPS")
+        try:
+            provider_url = urlsplit(self.provider_base_url)
+            provider_port = provider_url.port
+        except ValueError:
+            raise ValueError("invalid production provider URL") from None
+        provider_host = (provider_url.hostname or "").lower().rstrip(".")
+        allowed_hosts = set(self.provider_allowed_hosts.split(","))
+        if (
+            provider_url.scheme != "https"
+            or not provider_host
+            or provider_url.username is not None
+            or provider_url.password is not None
+            or provider_port not in {None, 443}
+            or provider_url.path != "/v1/chat/completions"
+            or provider_url.query
+            or provider_url.fragment
+            or provider_host not in allowed_hosts
+            or any(
+                character.isspace() or ord(character) < 32
+                for character in self.provider_base_url
+            )
+        ):
+            raise ValueError("invalid production provider URL")
+        try:
+            provider_address = ip_address(provider_host)
+        except ValueError:
+            pass
+        else:
+            if not provider_address.is_global:
+                raise ValueError("invalid production provider URL")
         if (
             self.provider_pricing_version == "unconfigured"
             or self.provider_input_usd_per_million_tokens <= 0

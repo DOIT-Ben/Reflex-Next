@@ -16,7 +16,8 @@ use crate::history_key_store::HistoryKeyStore;
 use crate::runtime_commands::{
     configure_history_keyring_command, configure_history_path_command,
     configure_history_policy_command, configure_plugin_command, configure_provider_command,
-    list_providers_command, plugin_admin_command, validate_command, CommandKind, ValidatedCommand,
+    list_providers_command, plugin_admin_command, provider_probe_command, validate_command,
+    CommandKind, ValidatedCommand,
 };
 use crate::secret_store::{CredentialBackend, SecretStatus, SecretStore};
 use crate::sidecar::{
@@ -175,7 +176,11 @@ impl EventEmitter for TauriEventEmitter {
 }
 
 fn runtime_available_value() -> bool {
-    crate::sidecar::resolve_runtime_paths().is_ok()
+    match crate::sidecar::bundled_launch_spec() {
+        Ok(Some(_)) => true,
+        Ok(None) => crate::sidecar::resolve_runtime_paths().is_ok(),
+        Err(_) => false,
+    }
 }
 
 const WINDOW_CONTROL_UNAVAILABLE_MESSAGE: &str = "窗口操作暂不可用，请稍后重试。";
@@ -376,6 +381,78 @@ pub async fn runtime_list_providers(
         .runtime()
         .send_to(command, window.label())
         .map_err(str::to_string)?;
+    Ok(request_id)
+}
+
+#[tauri::command]
+pub async fn runtime_discover_provider_models(
+    window: tauri::WebviewWindow,
+    state: State<'_, TauriRuntimeState>,
+    secret_store: State<'_, SecretStore>,
+    provider_id: String,
+    base_url: String,
+    model: Option<String>,
+) -> Result<String, String> {
+    send_provider_probe(
+        window.label(),
+        state.runtime(),
+        &secret_store,
+        CommandKind::DiscoverProviderModels,
+        provider_id,
+        base_url,
+        model,
+    )
+}
+
+#[tauri::command]
+pub async fn runtime_test_provider_connection(
+    window: tauri::WebviewWindow,
+    state: State<'_, TauriRuntimeState>,
+    secret_store: State<'_, SecretStore>,
+    provider_id: String,
+    base_url: String,
+    model: Option<String>,
+) -> Result<String, String> {
+    send_provider_probe(
+        window.label(),
+        state.runtime(),
+        &secret_store,
+        CommandKind::TestProviderConnection,
+        provider_id,
+        base_url,
+        model,
+    )
+}
+
+fn send_provider_probe(
+    target: &str,
+    runtime: &RuntimeController,
+    secret_store: &SecretStore,
+    kind: CommandKind,
+    provider_id: String,
+    base_url: String,
+    model: Option<String>,
+) -> Result<String, String> {
+    require_main_window(target)?;
+    let provider_id = provider_id.trim().to_ascii_lowercase();
+    let secret = secret_store
+        .read(&provider_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "请先保存 API Key。".to_string())?;
+    let model = model
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if kind == CommandKind::TestProviderConnection && model.is_none() {
+        return Err("请先选择要测试的模型。".to_string());
+    }
+    let mut config = serde_json::json!({"base_url": base_url});
+    if let Some(model) = model {
+        config["model"] = Value::String(model);
+    }
+    let command =
+        provider_probe_command(kind, &provider_id, &secret, config).map_err(str::to_string)?;
+    let request_id = command.request_id.clone();
+    runtime.send_to(command, target).map_err(str::to_string)?;
     Ok(request_id)
 }
 
@@ -1384,20 +1461,25 @@ where
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(&persisted.model);
+        let mut provider_config = serde_json::json!({
+            "model": model,
+            "tls_verify": persisted.tls_verify,
+            "ca_bundle_path": persisted.ca_bundle_path,
+        });
+        if let Some(base_url) = persisted.provider_endpoints.get(&provider_id) {
+            provider_config["base_url"] = Value::String(base_url.clone());
+        }
         commands.push(
-            configure_provider_command(
-                &provider_id,
-                &secret,
-                serde_json::json!({
-                    "model": model,
-                    "tls_verify": persisted.tls_verify,
-                    "ca_bundle_path": persisted.ca_bundle_path,
-                }),
-            )
-            .map_err(str::to_string)?,
+            configure_provider_command(&provider_id, &secret, provider_config)
+                .map_err(str::to_string)?,
         );
     }
-    for plugin_id in ["translator", "markdown-preview", "batch-runner", "semantic-detector"] {
+    for plugin_id in [
+        "translator",
+        "markdown-preview",
+        "batch-runner",
+        "semantic-detector",
+    ] {
         let enabled = persisted
             .enabled_plugins
             .iter()

@@ -99,6 +99,8 @@ export type HostSettingsDraft = {
   enabled_plugins: AppConfig["enabled_plugins"];
   language: AppConfig["language"];
   theme: AppConfig["theme"];
+  provider_endpoints: AppConfig["provider_endpoints"];
+  provider_models: AppConfig["provider_models"];
 };
 
 export const SETTINGS_PLUGIN_IDS = ["translator", "markdown-preview", "batch-runner", "semantic-detector"] as const;
@@ -135,7 +137,7 @@ export function createDefaultSettingsDraft(settings: RequestSettings): HostSetti
     default_model: settings.model,
     default_mode: settings.mode,
     default_style: settings.style,
-    scene_policy: settings.scene_policy,
+    scene_policy: globalScenePolicy(settings.scene_policy),
     clipboard_policy: "manual",
     hotkey: "Ctrl+Alt+R",
     history_enabled: false,
@@ -143,7 +145,9 @@ export function createDefaultSettingsDraft(settings: RequestSettings): HostSetti
     history_redaction: "secrets",
     enabled_plugins: ["translator", "markdown-preview"],
     language: "zh-CN",
-    theme: "system"
+    theme: "system",
+    provider_endpoints: {},
+    provider_models: {}
   };
 }
 
@@ -153,7 +157,7 @@ export function settingsDraftFromConfig(config: AppConfig): HostSettingsDraft {
     default_model: config.model,
     default_mode: config.mode,
     default_style: config.style,
-    scene_policy: config.scene_policy,
+    scene_policy: globalScenePolicy(config.scene_policy),
     clipboard_policy: config.clipboard_policy,
     hotkey: config.hotkey,
     history_enabled: config.history_enabled,
@@ -161,7 +165,11 @@ export function settingsDraftFromConfig(config: AppConfig): HostSettingsDraft {
     history_redaction: config.history_redaction,
     enabled_plugins: [...config.enabled_plugins],
     language: config.language,
-    theme: config.theme
+    theme: config.theme,
+    provider_endpoints: { ...config.provider_endpoints },
+    provider_models: Object.fromEntries(
+      Object.entries(config.provider_models).map(([providerId, models]) => [providerId, [...models]])
+    )
   };
 }
 
@@ -175,7 +183,7 @@ export function configFromSettingsDraft(
     model: draft.default_model ?? "MiniMax-M2.7-highspeed",
     mode: draft.default_mode,
     style: draft.default_style,
-    scene_policy: draft.scene_policy,
+    scene_policy: globalScenePolicy(draft.scene_policy),
     clipboard_policy: draft.clipboard_policy,
     hotkey: draft.hotkey,
     history_enabled: draft.history_enabled,
@@ -183,7 +191,11 @@ export function configFromSettingsDraft(
     history_redaction: draft.history_redaction,
     enabled_plugins: [...draft.enabled_plugins],
     language: draft.language,
-    theme: draft.theme
+    theme: draft.theme,
+    provider_endpoints: { ...draft.provider_endpoints },
+    provider_models: Object.fromEntries(
+      Object.entries(draft.provider_models).map(([providerId, models]) => [providerId, [...models]])
+    )
   };
 }
 
@@ -316,6 +328,27 @@ export function applyAdjustDraft(state: HostState, draft: RequestSettings): Host
   };
 }
 
+export function selectRequestModel(
+  state: HostState,
+  provider: string,
+  model: string
+): HostState {
+  if (isActiveGeneration(state.phase)) return state;
+  const normalizedProvider = provider.trim().toLowerCase();
+  const normalizedModel = model.trim();
+  if (!normalizedProvider || !normalizedModel) return state;
+  const requestDraft = {
+    ...state.requestDraft,
+    provider: normalizedProvider,
+    model: normalizedModel
+  };
+  return {
+    ...state,
+    requestDraft,
+    providerSummary: providerLabel(requestDraft)
+  };
+}
+
 export function applySceneSelection(
   draft: RequestSettings,
   sceneId: string
@@ -388,7 +421,8 @@ export function applySettingsDraft(
     ...state.requestDraft,
     mode: draft.default_mode,
     style: draft.default_style,
-    scene_policy: draft.scene_policy,
+    scene: null,
+    scene_policy: globalScenePolicy(draft.scene_policy),
     provider: draft.default_provider,
     model: draft.default_model
   };
@@ -408,7 +442,8 @@ export function applyPersistedConfig(state: HostState, config: AppConfig): HostS
     model: config.model,
     mode: config.mode,
     style: config.style,
-    scene_policy: config.scene_policy
+    scene: null,
+    scene_policy: globalScenePolicy(config.scene_policy)
   };
   const settingsDraft: HostSettingsDraft | null = state.settingsDraft
     ? settingsDraftFromConfig(config)
@@ -419,6 +454,10 @@ export function applyPersistedConfig(state: HostState, config: AppConfig): HostS
     settingsDraft,
     providerSummary: providerLabel(requestDraft)
   };
+}
+
+function globalScenePolicy(policy: ScenePolicy): ScenePolicy {
+  return policy === "manual" ? "auto" : policy;
 }
 
 export function startGeneration(state: HostState, requestId: string): HostState {
@@ -505,6 +544,23 @@ export function createRequestDraft(
       surface: "quick-panel",
       language: language === "en-US" ? "en-US" : "zh-CN"
     }
+  };
+}
+
+export function createRequestDraftWithSceneChoice(
+  state: HostState,
+  sceneId: string,
+  language: OutputLanguage = "zh-CN"
+): OptimizeRequestDraft {
+  const request = createRequestDraft(state, language);
+  const normalized = sceneId.trim();
+  const scene = listSceneOptions().some((item) => item.id === normalized)
+    ? normalized
+    : null;
+  return {
+    ...request,
+    scene,
+    scene_policy: "ask"
   };
 }
 

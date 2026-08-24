@@ -20,6 +20,8 @@ export type AppConfig = {
   hotkey: string;
   tls_verify: true;
   ca_bundle_path: string | null;
+  provider_endpoints: Record<string, string>;
+  provider_models: Record<string, string[]>;
   [key: string]: unknown;
 };
 
@@ -87,7 +89,9 @@ const defaults: AppConfig = {
   theme: "system",
   hotkey: "Ctrl+Alt+R",
   tls_verify: true,
-  ca_bundle_path: null
+  ca_bundle_path: null,
+  provider_endpoints: {},
+  provider_models: {}
 };
 
 function normalizeConfig(value: unknown): AppConfig {
@@ -138,8 +142,59 @@ function normalizeConfig(value: unknown): AppConfig {
     ca_bundle_path:
       typeof raw.ca_bundle_path === "string" && raw.ca_bundle_path.trim()
         ? raw.ca_bundle_path.trim()
-        : null
+        : null,
+    provider_endpoints: providerEndpointsValue(raw.provider_endpoints),
+    provider_models: providerModelsValue(raw.provider_models)
   };
+}
+
+function providerEndpointsValue(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const entries: Array<[string, string]> = [];
+  for (const [providerId, endpoint] of Object.entries(value)) {
+    const normalizedId = safeProviderId(providerId);
+    const normalizedEndpoint = safeEndpoint(endpoint);
+    if (normalizedId && normalizedEndpoint && entries.length < 64) {
+      entries.push([normalizedId, normalizedEndpoint]);
+    }
+  }
+  return Object.fromEntries(entries);
+}
+
+function providerModelsValue(value: unknown): Record<string, string[]> {
+  if (!isRecord(value)) return {};
+  const entries: Array<[string, string[]]> = [];
+  for (const [providerId, models] of Object.entries(value)) {
+    const normalizedId = safeProviderId(providerId);
+    if (!normalizedId || !Array.isArray(models) || entries.length >= 64) continue;
+    const unique = [...new Set(models.filter(safeModelId))].slice(0, 256);
+    if (unique.length > 0) entries.push([normalizedId, unique]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function safeProviderId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return /^[a-z0-9._-]{1,64}$/.test(normalized) ? normalized : null;
+}
+
+function safeModelId(value: unknown): value is string {
+  return typeof value === "string" && value === value.trim() && value.length > 0 && value.length <= 256 &&
+    !Array.from(value).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
+}
+
+function safeEndpoint(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const candidate = value.trim();
+  if (!candidate || candidate.length > 2048 || Array.from(candidate).some((character) => character.charCodeAt(0) < 32)) return null;
+  try {
+    const url = new URL(candidate);
+    if (url.username || url.password || !["http:", "https:"].includes(url.protocol)) return null;
+    return candidate.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
 }
 
 function enabledPluginsValue(

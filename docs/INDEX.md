@@ -15,6 +15,7 @@
 ## 架构与迁移
 
 - [架构设计](ARCHITECTURE.md)
+- [Provider 适配层策略](PROVIDER-ADAPTER-STRATEGY.md)
 - [功能迁移](MIGRATION.md)
 - [旧版参考映射](CLASSIC-REFERENCE.md)
 - [UI 实现规格](UI-IMPLEMENTATION-SPEC.md)
@@ -34,6 +35,7 @@
 - [发布恢复指南](RELEASE-RECOVERY.md)
 - [隐私说明](PRIVACY.md)
 - [支持范围](SUPPORT.md)
+- [首次成功受控试用](USER-TRIAL-0.7.1.md)
 - [故障处理](TROUBLESHOOTING.md)
 - [第三方软件声明](THIRD-PARTY-NOTICES.md)
 

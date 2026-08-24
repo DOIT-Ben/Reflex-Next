@@ -104,6 +104,35 @@ name = "reflex-runtime"
 version = "$Version"
 source = { editable = "." }
 "@
+  Write-Utf8NoBom -Path (Join-Path $Path "packages\reflex-http-host\pyproject.toml") -Content @"
+[build-system]
+requires = ["setuptools>=68"]
+
+[project]
+name = "reflex-http-host"
+version = "$Version"
+
+[project.optional-dependencies]
+dev = ["pytest>=99"]
+"@
+  Write-Utf8NoBom -Path (Join-Path $Path "packages\reflex-http-host\uv.lock") -Content @"
+version = 1
+
+[[package]]
+name = "reflex-core"
+version = "$Version"
+source = { editable = "../reflex-core" }
+
+[[package]]
+name = "reflex-runtime"
+version = "$Version"
+source = { editable = "../reflex-runtime" }
+
+[[package]]
+name = "reflex-http-host"
+version = "$Version"
+source = { editable = "." }
+"@
   Write-Utf8NoBom -Path (Join-Path $Path "services\reflex-cloud\pyproject.toml") -Content @"
 [build-system]
 requires = ["setuptools>=68"]

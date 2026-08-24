@@ -9,11 +9,13 @@ param(
   [ValidateSet(
     "reflex-core",
     "reflex-runtime",
+    "reflex-http-host",
     "reflex-cloud",
     "batch-runner",
     "history-sqlite",
     "markdown-preview",
     "provider-minimax",
+    "provider-native-protocols",
     "provider-openai-compatible",
     "semantic-detector",
     "translator"
@@ -21,11 +23,13 @@ param(
   [string[]]$PythonProject = @(
     "reflex-core",
     "reflex-runtime",
+    "reflex-http-host",
     "reflex-cloud",
     "batch-runner",
     "history-sqlite",
     "markdown-preview",
     "provider-minimax",
+    "provider-native-protocols",
     "provider-openai-compatible",
     "semantic-detector",
     "translator"
@@ -115,11 +119,13 @@ function New-VerificationStep {
 $pythonProjects = @(
   @{ Name = "reflex-core"; Path = "packages\reflex-core" },
   @{ Name = "reflex-runtime"; Path = "packages\reflex-runtime" },
+  @{ Name = "reflex-http-host"; Path = "packages\reflex-http-host" },
   @{ Name = "reflex-cloud"; Path = "services\reflex-cloud" },
   @{ Name = "batch-runner"; Path = "plugins\batch-runner" },
   @{ Name = "history-sqlite"; Path = "plugins\history-sqlite" },
   @{ Name = "markdown-preview"; Path = "plugins\markdown-preview" },
   @{ Name = "provider-minimax"; Path = "plugins\provider-minimax" },
+  @{ Name = "provider-native-protocols"; Path = "plugins\provider-native-protocols" },
   @{ Name = "provider-openai-compatible"; Path = "plugins\provider-openai-compatible" },
   @{ Name = "semantic-detector"; Path = "plugins\semantic-detector" },
   @{ Name = "translator"; Path = "plugins\translator" }

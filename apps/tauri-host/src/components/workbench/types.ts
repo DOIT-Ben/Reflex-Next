@@ -8,6 +8,7 @@ export type WorkbenchPhase =
 export type WorkbenchActionHandler = () => void | Promise<void>;
 export type WorkbenchInputHandler = (value: string) => void;
 export type WorkbenchRatingHandler = (rating: number) => void | Promise<void>;
+export type WorkbenchModelHandler = (providerId: string, modelId: string) => void;
 
 export type ConfigSummaryItem = {
   id: string;

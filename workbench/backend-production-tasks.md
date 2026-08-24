@@ -399,3 +399,70 @@
 - 初次因本机可用虚拟内存不足而暂缓；随后使用 128 MiB/0.5 CPU、回环端口和 tmpfs 的独立 PostgreSQL 16 容器完成真实验证；结果为同版本发布 `1` 个成功、不同版本发布 `1` 个成功、回滚 `1` 个成功、最终 `published_count=1`、唯一索引有效、schema 清理成功；
 - 数据库侧复核随机 schema 残留为 `0`，临时容器与端口已清理；完整证据见 `docs\verification\cloud-postgres-quality-release-2026-07-15.md`；
 - 测试后的低虚拟内存曾导致 Docker Desktop 退出，已恢复原有三个容器和长期浸泡任务；新增资源保护包装器，低于 2 GiB 可用物理内存或 4 GiB 可用虚拟内存时拒绝执行。
+
+## 2026-08-12 alpha.8 供应链修复与 Windows 生命周期复验
+
+- 统一依赖门禁首次定位到 `cryptography 48.0.1` 对应的 `PYSEC-2026-3552`、`PYSEC-2026-3553`、`PYSEC-2026-3554`；历史插件和 Runtime 已统一升级到 `cryptography>=50.0.0,<51`，锁文件、依赖审计策略和测试均同步更新。
+- `tools\build_runtime_sidecar.ps1` 已在构建前显式执行冻结依赖同步（含 `dev`、`builtins` extra），修复虚拟环境存在但缺少 PyInstaller 时的打包失败；`npm run package:windows` 已完成完整 NSIS 构建。
+- 统一发布门禁复验通过：Core `90 passed`、Runtime `317 passed`、Cloud `81 passed`、History `159 passed`、Rust `194 passed, 3 ignored`、Frontend `27` 个文件/`184 passed`、原生协议 `13 passed`；依赖审计、密钥扫描、SBOM/契约检查均通过；短浸泡 `100 iterations`（`50 completed`、`50 cancelled`）通过。
+- 冻结 Sidecar 探测通过：Anthropic `claude-3-5-haiku-20241022` 与 Gemini `gemini-2.5-pro` 均返回 `catalog_ok`；未读取真实 API Key，未调用真实第三方模型。
+- 最新安装包为 `apps\tauri-host\src-tauri\target\release\bundle\nsis\Reflex_0.7.0-alpha.8_x64-setup.exe`，英文工作台修补后重新构建于 `2026-08-12 13:17:58`，大小 `21,861,462` bytes，SHA-256 `D834199CF786A18B853508B2C82BB72E2BE23E4D3FDB7038FC643511633656F5`；该包已通过包级密钥扫描。
+- Windows 11 隔离生命周期已通过：`install`、`sidecar-ping-shutdown`、`host-start`、`legacy-config-start`、`overlay-install`、`uninstall`、`reinstall`、`final-cleanup`；未知用户文件保持不变。
+- 上述生命周期已使用本轮新包哈希 `D834199CF786A18B853508B2C82BB72E2BE23E4D3FDB7038FC643511633656F5` 重新实跑，`LIFECYCLE_RESULT.status=passed`，并确认 `unknown_file_preserved=true`。
+- 当前构建 Runtime 的真实 MiniMax 脱敏冒烟已复跑：命令为 `packages\reflex-runtime\.venv\Scripts\python.exe tools\provider_smoke.py --operation all --provider minimax --runtime apps\tauri-host\src-tauri\resources\runtime\reflex-runtime.exe --timeout-seconds 30 --cancel-after-ms 250`；Runtime SHA-256 为 `C7113743B89D3E1D5EB11384289A32144BCA865F6E11C53C11424C64F7BA570C`。结果：目录 `catalog_ok`；真实流式请求 `success`，首个分片 `5906 ms`、总耗时 `5922 ms`、`1` 个分片；真实取消 `cancelled`，总耗时 `265 ms`、取消延迟 `15 ms`、无分片。凭据来自 Windows Credential Manager，未把密钥、请求正文或响应正文写入输出。
+- 本轮仍不关闭 P3-002、P4-002、P4-004、P4-005、P4-006：72 小时/至少 10,000 次正式 Runtime 浸泡、Windows 10 干净环境、官方旧版安装包与真实脱敏用户数据升级、代码签名/更新/回滚及正式 RC/v1.0.0 标签仍未形成完整证据。
+- UI 复核发现的英文核心工作台混杂文案已修复：输入区、结果区和生成配置条统一接入 `tr`，英文契约与全量前端回归通过；其他低频页面仍需在 RC 前做一次全局英文可见层扫描。当前建议保持 `v0.7.0-alpha.8` Windows 11 受控试用版定位。
+
+## 2026-08-13 P3-002 浸泡挂起诊断与切片睡眠修复
+
+- 正式 168 小时/10,000 次浸泡于 2026-08-13 19:49 启动，约 30 分钟、第 25 批（约 100 次）后挂起：驱动与 Runtime 子进程 CPU 全部冻结且不再推进；
+- py-spy 转储（`workbench\soak-stuck-driver-20260813-2019.txt`、`soak-stuck-runtime-20260813-2019.txt`）显示驱动主线程停在限速 `time.sleep`，子进程健康等待 stdin、worker 空闲；排除机器睡眠（无电源事件）与请求路径问题；结论为限速长等待偶发不返回；
+- 高速复现 600/min×10,000 次通过：`runtime-soak-repro-fast-20260813-2022.json`，5,000 完成/5,000 取消、65,000 协议事件、`passed=true`；独立 12×80s 长 sleep 微实验全部精确返回，确认非确定性复现；
+- 修复：`tools\soak_backend.py` 限速等待改为 1s 粒度切片循环（`_sliced_sleep`，默认 sleeper，注入契约不变），新增契约测试 1 项；`16 passed`，有界限速验证 `passed=true`；
+- P3-002 保持进行中，正式浸泡在修复后重新启动。
+
+## 2026-08-14 本地 HTTP 宿主（SSE）形态建立
+
+- 新增 `packages/reflex-http-host`：本地 HTTP 宿主，网关进程消费同一套 NDJSON sidecar 协议（与 Tauri 宿主同构），零侵入 Core/Runtime；
+- 端点：`POST /v1/optimize`（SSE 流式，客户端可自选 request_id，断开自动 cancel）、`POST /v1/requests/{id}/cancel`、`POST /v1/ping`、`GET /v1/providers`、`GET /v1/health`；默认绑定 127.0.0.1:8790，可选 Bearer 鉴权（REFLEX_HTTP_TOKEN），单请求 120s 超时，子进程环境白名单不继承凭据；
+- 契约测试 40 项通过（包内 23 + 工具契约 17），`verify_backend.ps1 -PythonProject reflex-http-host` 与 `check_version_consistency.ps1` 通过；
+- 分级并发压力证据 `workbench/http-soak-graded-20260814-0400.json`：并发 1/4/16/32 × 20 次全通过，取消每 4 次全部命中 cancelled 终态，零串线零缺终态；P95 884-1488ms；连接级偶发抖动经单次重试消化；Runtime 4 活跃+32 排队容量为并发硬边界，超限以 runtime_busy 稳定语义表达；
+- 验证记录 `docs/verification/backend-http-host.md`；P3-002 等现有门禁状态不变。
+
+## 2026-08-14 场景库分层（10 大类 + 42 子场景）
+
+- 模板包 `template-packs/builtin` 升级：42 个场景全部标注一级分类（41 个带 category，general 除外），新增 10 个分类默认模板（business/marketing/market_analysis/tech_doc/code/diagnosis/academic/education/creative/translation）；
+- `TemplatePackManifest/FileTemplatePack` 支持 `categories` 资产与场景 `category` 元数据（向后兼容：旧 manifest 无分类字段仍可解析）；`TemplatePackResolver` 支持 `scene="category:scene"`（子场景+分类）、`scene="category"`（分类默认模板）、`scene="scene"`（旧形式自动归类），未知场景回退 general；
+- 检测器 40 条规则升级为 `(category, scene_id, markers)` 三元组，`SceneDetectionResult` 与 `scene` 事件新增 `category` 字段（附加字段，旧消费方不受影响）；手动指定场景（`scene_policy: manual`）支持冒号拆分；
+- HTTP 宿主零改动透传 `scene`（自由字符串）；新增全链路契约测试：`scene="business:email"` → scene 事件 `scene=email, category=business, method=manual`；
+- 全量 Python 门禁通过：reflex-core 102、reflex-runtime 326、reflex-http-host + 工具契约 43；分类模板内容为产品资产（每类含场景描述/重点/优化指导/4 风格指导），可逐类审核调整。
+
+## 2026-08-14 场景库开源吸收（第一批 7 场景）
+
+- 建立长期吸收机制 `template-packs/SOURCES.md`：登记开源来源（awesome-chatgpt-prompts-zh MIT / awesome-chatgpt-prompts CC0 / anthropics-skills Apache-2.0 / agency-swarm MIT）、许可、筛选标准（只吸收方法论不复制原文、跳过医疗法律金融高风险与娱乐角色）与扩展场景流程；
+- 第一批吸收 7 个二级场景（模板 + 检测规则 + manifest 注册）：resume 简历、cover_letter 求职信、interview 面试、headline 标题、sales_script 销售话术、speech 演讲、prd 产品需求文档（归 business/marketing/creative 三类）；
+- 场景库从 42 增至 49 个场景模板；email 规则移除"求职信"marker（归 cover_letter）；
+- 全量 Python 门禁通过：reflex-core 109、reflex-runtime 326、reflex-http-host 26。
+
+## 2026-08-14 场景功能完善：目录接口与检测规则收敛
+
+- 新增 `GET /v1/scenes` 场景库目录端点：返回 10 个一级分类分组 + 49 个场景 + 未分类项，模板包路径可配（REFLEX_TEMPLATE_PACK_ROOT），客户端可构建场景选择 UI；
+- 检测规则收敛过宽 marker：headline 去掉 "title"（技术文本常见误判）、speech 去掉 "开场白" 与单独 "演讲"，保留明确意图词；
+- 全量 Python 门禁通过：reflex-core 109、reflex-http-host 27（新增 scene_catalog 用例）。
+
+## 2026-08-14 场景接口可发现性完善
+
+- `scene` 字段 OpenAPI 描述明确三种合法形式与生效条件（仅 `scene_policy: manual/ask` 时生效，默认 auto 会忽略 scene）；
+- 手动指定未知场景改为 **422 明确报错**（`unknown scene 'xxx'; query GET /v1/scenes for valid categories and scenes`），替代静默回退；`category:unknown` 形式仍容错（回退分类模板）；检测路径（auto）的回退 general 语义不变；
+- 新增 4 项契约测试（422 拒绝、合法值放行、auto 忽略 scene）；reflex-http-host 28 项全过。
+
+## 2026-08-22 P3-002 正式浸泡重新启动
+
+- 浸泡夹具契约 `tools\tests\test_soak_backend.py` 本轮 `16 passed`，4 次最小烟测完成/取消各 2 次、安全退出；
+- 正式任务已于 13:55:57（Asia/Shanghai）后台启动：至少 10,000 次、最低 168 小时、批量 4、每 2 次取消、每分钟 3 次；驱动 PID `26208`，启动后复核驱动与 Runtime 子进程均存活；
+- 结果报告待任务自然完成或失败退出后生成：`workbench\runtime-soak-168h-alpha8-20260822-135557.json`；当前仅表示已启动，不表示 P3-002 已通过。
+
+## 2026-08-24 P3-002 状态复核
+
+- 复核时启动记录中的驱动 PID `26208` 与 Runtime 子进程均不存在；预期的最终 JSON 报告未生成，只有空的 stdout/stderr 启动日志；
+- 因此 P3-002 仍为**未完成**，不能将 2026-08-22 的“已启动”记录作为正式浸泡通过证据；后续需以可观察的后台任务、周期性心跳和自然终态报告重新执行。

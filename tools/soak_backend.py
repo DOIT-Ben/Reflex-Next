@@ -429,6 +429,27 @@ class RuntimeSoakSession:
                 return
 
 
+def _sliced_sleep(
+    seconds: float,
+    *,
+    slice_seconds: float = 1.0,
+    sleeper: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> None:
+    """Sleep for ``seconds`` in bounded slices.
+
+    A long single wait has been observed to occasionally never return on some
+    Windows machines; slicing keeps every individual wait short so a hung
+    timer cannot silently stall a duration soak.
+    """
+    deadline = monotonic() + seconds
+    while True:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return
+        sleeper(min(slice_seconds, remaining))
+
+
 class SoakRunner:
     def __init__(
         self,
@@ -437,7 +458,7 @@ class SoakRunner:
         environment_factory: Callable[[], dict[str, Any]] = collect_environment,
         utc_clock: Callable[[], str] = _utc_now,
         monotonic: Callable[[], float] = time.monotonic,
-        sleeper: Callable[[float], None] = time.sleep,
+        sleeper: Callable[[float], None] = _sliced_sleep,
     ) -> None:
         self._session_factory = session_factory
         self._environment_factory = environment_factory

@@ -17,6 +17,7 @@ $components = [ordered]@{
   "python-history-sqlite" = "reflex-history-sqlite"
   "python-markdown-preview" = "reflex-markdown-preview"
   "python-provider-minimax" = "reflex-provider-minimax"
+  "python-provider-native-protocols" = "reflex-provider-native-protocols"
   "python-provider-openai-compatible" = "reflex-provider-openai-compatible"
   "python-semantic-detector" = "reflex-plugin-semantic-detector"
   "python-translator" = "reflex-translator"
@@ -110,11 +111,11 @@ try {
 
   $success = Invoke-Generator -OutputPath $output -FixturePath $fixtures -ReleasePaths @($safeRelease)
   Assert-True ($success.ExitCode -eq 0) "Valid component BOMs and a clean release path must pass."
-  Assert-True ($success.Stdout -match '12 component BOMs; 1 release paths scanned') "Success output must report bounded component and release counts."
+  Assert-True ($success.Stdout -match '13 component BOMs; 1 release paths scanned') "Success output must report bounded component and release counts."
   $manifestPath = Join-Path $output "sbom-manifest.json"
   Assert-True (Test-Path -LiteralPath $manifestPath -PathType Leaf) "SBOM manifest must be emitted."
   $manifest = [System.IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json
-  Assert-True (@($manifest.components).Count -eq 12) "Manifest must enumerate every product component."
+  Assert-True (@($manifest.components).Count -eq 13) "Manifest must enumerate every product component."
   Assert-True (($manifest.components | Where-Object { $_.source_lock_sha256 -notmatch '^[a-f0-9]{64}$' }).Count -eq 0) "Every source lock must have a SHA-256 digest."
   Assert-True (($manifest.components | Where-Object { $_.sbom_sha256 -notmatch '^[a-f0-9]{64}$' }).Count -eq 0) "Every component BOM must have a SHA-256 digest."
   Assert-True ((Get-Content -Raw -Encoding UTF8 $manifestPath) -notmatch [regex]::Escape($root)) "Manifest must not leak absolute workspace paths."

@@ -64,7 +64,7 @@ $list = Invoke-Verify -Arguments @("-ListSteps")
 Assert-True ($list.ExitCode -eq 0) "-ListSteps must return exit code 0."
 
 $pythonSteps = @($list.Output | Where-Object { $_ -match '^\[STEP\] python:' })
-Assert-True ($pythonSteps.Count -eq 10) "-ListSteps must expose exactly 10 Python test steps."
+Assert-True ($pythonSteps.Count -eq 11) "-ListSteps must expose exactly 11 Python test steps."
 Assert-True (($pythonSteps | Where-Object { $_ -notmatch 'uv run --frozen --extra dev pytest tests' }).Count -eq 0) "Every Python step must use frozen dev dependencies."
 Assert-True (($pythonSteps | Where-Object { $_ -notmatch 'lock=uv\.lock' }).Count -eq 0) "Every Python step must declare uv.lock usage."
 
@@ -76,6 +76,7 @@ $requiredPythonIds = @(
   "python:history-sqlite",
   "python:markdown-preview",
   "python:provider-minimax",
+  "python:provider-native-protocols",
   "python:provider-openai-compatible",
   "python:semantic-detector",
   "python:translator"

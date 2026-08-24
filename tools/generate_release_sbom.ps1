@@ -36,6 +36,7 @@ $pythonComponents = @(
   @{ Id = "python-history-sqlite"; Name = "reflex-history-sqlite"; Project = "plugins\history-sqlite"; Lock = "plugins\history-sqlite\uv.lock" },
   @{ Id = "python-markdown-preview"; Name = "reflex-markdown-preview"; Project = "plugins\markdown-preview"; Lock = "plugins\markdown-preview\uv.lock" },
   @{ Id = "python-provider-minimax"; Name = "reflex-provider-minimax"; Project = "plugins\provider-minimax"; Lock = "plugins\provider-minimax\uv.lock" },
+  @{ Id = "python-provider-native-protocols"; Name = "reflex-provider-native-protocols"; Project = "plugins\provider-native-protocols"; Lock = "plugins\provider-native-protocols\uv.lock" },
   @{ Id = "python-provider-openai-compatible"; Name = "reflex-provider-openai-compatible"; Project = "plugins\provider-openai-compatible"; Lock = "plugins\provider-openai-compatible\uv.lock" },
   @{ Id = "python-semantic-detector"; Name = "reflex-plugin-semantic-detector"; Project = "plugins\semantic-detector"; Lock = "plugins\semantic-detector\uv.lock" },
   @{ Id = "python-translator"; Name = "reflex-translator"; Project = "plugins\translator"; Lock = "plugins\translator\uv.lock" }

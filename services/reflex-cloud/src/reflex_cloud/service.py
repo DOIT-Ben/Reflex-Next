@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from ipaddress import ip_address, ip_network
 from math import ceil
 from threading import Lock
 from uuid import uuid4
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 from .config import CloudSettings
 from .models import (
     BudgetReservation,
+    ClientAbuseUsage,
     ConsentRecord,
     DailyBudgetLedger,
     DailyCostAggregate,
@@ -56,26 +58,105 @@ class CloudService:
         self.attachments = attachments
         self._pepper = settings.token_pepper.get_secret_value()
         self._quota_lock = Lock()
+        self._abuse_lock = Lock()
         self._quality_release_lock = Lock()
 
-    def create_installation(self, session: Session) -> tuple[Installation, str]:
+    def create_installation(
+        self, session: Session, client_ip: str | None
+    ) -> tuple[Installation, str]:
         token = new_installation_token()
         installation = Installation(
             id=str(uuid4()),
             token_hash=token_hash(token, self._pepper),
         )
-        session.add(installation)
-        session.add(
-            ConsentRecord(
-                installation=installation,
-                usage_metrics=False,
-                improvement_data=False,
-                feedback_attachments=False,
-                policy_version=self.settings.privacy_policy_version,
-            )
-        )
-        session.commit()
+        with self._abuse_lock:
+            try:
+                self._reserve_client_abuse_locked(
+                    session,
+                    client_ip,
+                    scope="installation_hour",
+                    request_limit=self.settings.installation_limit_per_ip_per_hour,
+                    error_code="installation_rate_limited",
+                )
+                session.add(installation)
+                session.add(
+                    ConsentRecord(
+                        installation=installation,
+                        usage_metrics=False,
+                        improvement_data=False,
+                        feedback_attachments=False,
+                        policy_version=self.settings.privacy_policy_version,
+                    )
+                )
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
         return installation, token
+
+    def _reserve_client_abuse_locked(
+        self,
+        session: Session,
+        client_ip: str | None,
+        *,
+        scope: str,
+        request_limit: int | None = None,
+        attachment_bytes: int = 0,
+        attachment_limit: int | None = None,
+        daily: bool = False,
+        error_code: str,
+        bucket_key_override: str | None = None,
+    ) -> None:
+        now = utc_now()
+        window = (
+            now.replace(hour=0, minute=0, second=0, microsecond=0)
+            if daily
+            else now.replace(minute=0, second=0, microsecond=0)
+        )
+        bucket_key = bucket_key_override or _client_bucket_key(client_ip)
+        ip_hash = token_hash(f"client-ip:{bucket_key}", self._pepper)
+        usage = session.scalar(
+            select(ClientAbuseUsage)
+            .where(
+                ClientAbuseUsage.ip_hash == ip_hash,
+                ClientAbuseUsage.scope == scope,
+                ClientAbuseUsage.window_start == window,
+            )
+            .with_for_update()
+        )
+        if usage is None:
+            candidate = ClientAbuseUsage(
+                ip_hash=ip_hash, scope=scope, window_start=window
+            )
+            try:
+                with session.begin_nested():
+                    session.add(candidate)
+                    session.flush()
+            except IntegrityError:
+                usage = session.scalar(
+                    select(ClientAbuseUsage)
+                    .where(
+                        ClientAbuseUsage.ip_hash == ip_hash,
+                        ClientAbuseUsage.scope == scope,
+                        ClientAbuseUsage.window_start == window,
+                    )
+                    .with_for_update()
+                )
+                if usage is None:
+                    raise CloudServiceError("client_rate_limit_unavailable", 503) from None
+            else:
+                usage = candidate
+        if request_limit is not None and usage.request_count >= request_limit:
+            raise CloudServiceError(error_code, 429)
+        if (
+            attachment_limit is not None
+            and usage.attachment_bytes + attachment_bytes > attachment_limit
+        ):
+            raise CloudServiceError(error_code, 429)
+        if request_limit is not None:
+            usage.request_count += 1
+        if attachment_bytes:
+            usage.attachment_bytes += attachment_bytes
 
     def authenticate_installation(self, session: Session, token: str) -> Installation:
         if not token or len(token) > 256:
@@ -240,10 +321,9 @@ class CloudService:
     def _reserve_ip_quota_locked(
         self, session: Session, client_ip: str | None
     ) -> None:
-        if not client_ip:
-            return
         window = utc_now().replace(minute=0, second=0, microsecond=0)
-        ip_hash = token_hash(client_ip, self._pepper)
+        bucket_key = client_ip or "<unknown-client>"
+        ip_hash = token_hash(f"client-ip:{bucket_key}", self._pepper)
         usage = session.scalar(
             select(HourlyIpUsage)
             .where(
@@ -935,7 +1015,11 @@ class CloudService:
         return True
 
     def submit_feedback(
-        self, session: Session, installation: Installation, payload: FeedbackCreate
+        self,
+        session: Session,
+        installation: Installation,
+        payload: FeedbackCreate,
+        client_ip: str | None,
     ) -> FeedbackItem:
         consent = self.latest_consent(session, installation.id)
         if payload.consent_version != consent.policy_version:
@@ -946,40 +1030,33 @@ class CloudService:
         ):
             raise CloudServiceError("consent_required", 403)
 
-        cutoff = utc_now() - timedelta(hours=1)
-        recent = session.scalar(
-            select(func.count(FeedbackItem.id)).where(
-                FeedbackItem.installation_id == installation.id,
-                FeedbackItem.created_at >= cutoff,
-            )
-        )
-        if int(recent or 0) >= self.settings.feedback_limit_per_hour:
-            raise CloudServiceError("feedback_rate_limited", 429)
-
         feedback_id = str(uuid4())
+        screenshot_raw = (
+            self.attachments.validate_screenshot(payload.screenshot)
+            if payload.screenshot is not None
+            else None
+        )
         screenshot_path: str | None = None
-        if payload.screenshot is not None:
-            screenshot_path = self.attachments.save_screenshot(feedback_id, payload.screenshot)
-
         context = payload.context
         feedback = FeedbackItem(
             id=feedback_id,
             installation_id=installation.id,
+            source=payload.source,
             sentiment=payload.sentiment,
             category=payload.category,
             message=redact_text(payload.message.strip()),
             expected_output=redact_text(payload.expected_output.strip()),
             contact=redact_text(payload.contact.strip()),
-            app_version=context.app_version,
-            os_version=context.os_version,
-            provider=context.provider,
-            model=context.model,
-            mode=context.mode,
-            style=context.style,
-            scene=context.scene,
-            request_id=context.request_id,
-            diagnostic_id=context.diagnostic_id,
-            error_code=context.error_code,
+            app_version=redact_text(context.app_version),
+            os_version=redact_text(context.os_version),
+            provider=redact_text(context.provider),
+            model=redact_text(context.model),
+            mode=redact_text(context.mode),
+            style=redact_text(context.style),
+            scene=redact_text(context.scene),
+            request_id=redact_text(context.request_id),
+            diagnostic_id=redact_text(context.diagnostic_id),
+            error_code=redact_text(context.error_code),
             elapsed_ms=context.elapsed_ms,
             include_prompt=payload.include_prompt,
             include_result=payload.include_result,
@@ -990,13 +1067,72 @@ class CloudService:
             screenshot_media_type=(payload.screenshot.media_type if payload.screenshot else None),
             consent_version=payload.consent_version,
         )
-        try:
-            session.add(feedback)
-            session.commit()
-        except Exception:
-            session.rollback()
-            self.attachments.delete(screenshot_path)
-            raise
+        with self._abuse_lock:
+            try:
+                cutoff = utc_now() - timedelta(hours=1)
+                recent = session.scalar(
+                    select(func.count(FeedbackItem.id)).where(
+                        FeedbackItem.installation_id == installation.id,
+                        FeedbackItem.created_at >= cutoff,
+                    )
+                )
+                if int(recent or 0) >= self.settings.feedback_limit_per_hour:
+                    raise CloudServiceError("feedback_rate_limited", 429)
+                self._reserve_client_abuse_locked(
+                    session,
+                    None,
+                    scope="feedback_global_day",
+                    request_limit=self.settings.global_daily_feedback_limit,
+                    daily=True,
+                    error_code="feedback_rate_limited",
+                    bucket_key_override="<global-feedback>",
+                )
+                self._reserve_client_abuse_locked(
+                    session,
+                    client_ip,
+                    scope="feedback_hour",
+                    request_limit=self.settings.feedback_limit_per_ip_per_hour,
+                    error_code="feedback_rate_limited",
+                )
+                if screenshot_raw is not None:
+                    if not self.attachments.has_capacity(
+                        len(screenshot_raw),
+                        self.settings.feedback_attachment_min_free_bytes,
+                    ):
+                        raise CloudServiceError("feedback_storage_unavailable", 503)
+                    self._reserve_client_abuse_locked(
+                        session,
+                        None,
+                        scope="feedback_attachment_global_day",
+                        attachment_bytes=len(screenshot_raw),
+                        attachment_limit=(
+                            self.settings.global_daily_feedback_attachment_bytes
+                        ),
+                        daily=True,
+                        error_code="feedback_attachment_rate_limited",
+                        bucket_key_override="<global-feedback>",
+                    )
+                    self._reserve_client_abuse_locked(
+                        session,
+                        client_ip,
+                        scope="feedback_attachment_day",
+                        attachment_bytes=len(screenshot_raw),
+                        attachment_limit=(
+                            self.settings.feedback_attachment_bytes_per_ip_per_day
+                        ),
+                        daily=True,
+                        error_code="feedback_attachment_rate_limited",
+                    )
+                    screenshot_path = self.attachments.save_validated_screenshot(
+                        feedback_id, payload.screenshot.media_type, screenshot_raw
+                    )
+                    feedback.screenshot_path = screenshot_path
+                session.add(feedback)
+                session.commit()
+            except Exception:
+                session.rollback()
+                self.attachments.delete(screenshot_path)
+                raise
         return feedback
 
     def list_feedback(
@@ -1005,6 +1141,7 @@ class CloudService:
         *,
         status: str | None,
         category: str | None,
+        source: str | None,
         limit: int,
         offset: int,
     ) -> tuple[list[FeedbackItem], int]:
@@ -1013,6 +1150,8 @@ class CloudService:
             filters.append(FeedbackItem.status == status)
         if category:
             filters.append(FeedbackItem.category == category)
+        if source:
+            filters.append(FeedbackItem.source == source)
         total = int(session.scalar(select(func.count(FeedbackItem.id)).where(*filters)) or 0)
         items = list(
             session.scalars(
@@ -1051,11 +1190,18 @@ class CloudService:
 
         overall = bucket(items)
         categories: dict[str, list[FeedbackItem]] = {}
+        sources: dict[str, list[FeedbackItem]] = {}
         versions: dict[str, list[FeedbackItem]] = {}
+        scenes: dict[str, list[FeedbackItem]] = {}
+        provider_models: dict[str, list[FeedbackItem]] = {}
         quality_releases: dict[str, list[FeedbackItem]] = {}
         for item in items:
+            sources.setdefault(item.source, []).append(item)
             categories.setdefault(item.category, []).append(item)
             versions.setdefault(item.app_version, []).append(item)
+            scenes.setdefault(item.scene or "unknown", []).append(item)
+            provider_model = f"{item.provider or 'unknown'}/{item.model or 'unknown'}"
+            provider_models.setdefault(provider_model, []).append(item)
             quality_release = exposure_versions.get(
                 (item.installation_id, item.request_id)
             )
@@ -1066,8 +1212,13 @@ class CloudService:
             negative=overall.negative,
             negative_rate=overall.negative_rate,
             average_elapsed_ms=overall.average_elapsed_ms,
+            by_source={key: bucket(value) for key, value in sorted(sources.items())},
             by_category={key: bucket(value) for key, value in sorted(categories.items())},
             by_version={key: bucket(value) for key, value in sorted(versions.items())},
+            by_scene={key: bucket(value) for key, value in sorted(scenes.items())},
+            by_provider_model={
+                key: bucket(value) for key, value in sorted(provider_models.items())
+            },
             by_quality_release={
                 key: bucket(value) for key, value in sorted(quality_releases.items())
             },
@@ -1181,7 +1332,39 @@ class CloudService:
         session.commit()
         return len(expired)
 
+    def purge_expired_abuse_usage(self, session: Session) -> int:
+        cutoff = utc_now() - timedelta(days=2)
+        with self._abuse_lock:
+            client_rows = list(
+                session.scalars(
+                    select(ClientAbuseUsage).where(
+                        ClientAbuseUsage.window_start < cutoff
+                    )
+                )
+            )
+            hourly_rows = list(
+                session.scalars(
+                    select(HourlyIpUsage).where(HourlyIpUsage.window_start < cutoff)
+                )
+            )
+            for item in (*client_rows, *hourly_rows):
+                session.delete(item)
+            session.commit()
+            return len(client_rows) + len(hourly_rows)
+
 
 def _add_usage(target: dict[str, int], values: dict[str, int]) -> None:
     for key, value in values.items():
         target[key] += value
+
+
+def _client_bucket_key(client_ip: str | None) -> str:
+    if not client_ip:
+        return "<unknown-client>"
+    try:
+        address = ip_address(client_ip)
+    except ValueError:
+        return "<unknown-client>"
+    if address.version == 6:
+        return str(ip_network(f"{address}/64", strict=False))
+    return str(address)

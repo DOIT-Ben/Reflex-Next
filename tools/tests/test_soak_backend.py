@@ -190,3 +190,19 @@ def test_summary_contains_counts_but_not_failure_or_fixture_content():
     assert "完成 2" in summary
     assert "取消 2" in summary
     assert soak_backend.FIXTURE_INPUT not in summary
+
+
+def test_sliced_sleep_bounds_every_wait_and_covers_the_deadline():
+    calls: list[float] = []
+    clock = iter((0.0, 0.2, 0.4, 0.6, 0.8, 1.0))
+    soak_backend._sliced_sleep(
+        1.0,
+        slice_seconds=0.3,
+        sleeper=lambda seconds: calls.append(seconds),
+        monotonic=lambda: next(clock, 1.0),
+    )
+
+    assert calls == pytest.approx([0.3, 0.3, 0.3, 0.2])
+    assert all(seconds <= 0.3 for seconds in calls)
+    assert sum(calls) > 0
+

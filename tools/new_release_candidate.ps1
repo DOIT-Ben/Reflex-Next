@@ -126,7 +126,7 @@ function Read-SbomManifest {
     [string]$manifest.format -cne "CycloneDX" -or
     [string]$manifest.spec_version -cne "1.5" -or
     [string]$manifest.target -cne "x86_64-pc-windows-msvc" -or
-    @($manifest.components).Count -ne 12
+    @($manifest.components).Count -ne 13
   ) {
     throw "invalid_sbom_manifest"
   }
@@ -192,7 +192,7 @@ function Read-SbomManifest {
 
   $files = @(Get-ChildItem -LiteralPath $Directory -File -Force)
   $directories = @(Get-ChildItem -LiteralPath $Directory -Directory -Force)
-  if ($files.Count -ne 13 -or $directories.Count -ne 0) {
+  if ($files.Count -ne 14 -or $directories.Count -ne 0) {
     throw "unexpected_sbom_material"
   }
   return [PSCustomObject]@{
@@ -434,7 +434,7 @@ try {
   [System.IO.Directory]::Move($staging, $output)
   $staging = $null
   Write-Output (
-    "Release candidate material passed: version={0}; artifacts=3; sbom=12; release_ready={1}" -f
+    "Release candidate material passed: version={0}; artifacts=3; sbom=13; release_ready={1}" -f
     $version, $releaseReady.ToString().ToLowerInvariant()
   )
 }

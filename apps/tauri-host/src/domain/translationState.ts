@@ -1,4 +1,5 @@
 import type { CurrentResult } from "./hostState";
+import type { OptimizeRequestDraft } from "./reflexSession";
 
 export type TranslationTarget = "auto" | "zh" | "en";
 export type TranslationLanguage = "zh" | "en";
@@ -22,6 +23,12 @@ export type TranslationState = {
 };
 
 export type TranslationRoute = Pick<CurrentResult, "provider" | "model">;
+
+export type CloudTranslationPlan = {
+  sourceLanguage: TranslationLanguage;
+  targetLanguage: TranslationLanguage;
+  request: OptimizeRequestDraft;
+};
 
 export function createTranslationState(): TranslationState {
   return {
@@ -155,6 +162,39 @@ export function buildTranslationInput(
   };
 }
 
+export function buildCloudTranslationPlan(
+  state: TranslationState,
+  current: Partial<TranslationRoute>,
+  fallback: Partial<TranslationRoute>
+): CloudTranslationPlan | null {
+  if (state.phase === "closed" || !state.sourceText) return null;
+  const provider = (current.provider ?? fallback.provider ?? "").trim().toLocaleLowerCase();
+  if (provider !== "reflex-cloud") return null;
+  const sourceLanguage = detectTranslationLanguage(state.sourceText);
+  const targetLanguage = state.target === "auto"
+    ? sourceLanguage === "zh" ? "en" : "zh"
+    : state.target;
+  return {
+    sourceLanguage,
+    targetLanguage,
+    request: {
+      text: state.sourceText,
+      mode: "content",
+      style: "balanced",
+      scene: "doc_translation",
+      scene_policy: "manual",
+      provider: "reflex-cloud",
+      model: current.model ?? fallback.model ?? null,
+      stream: true,
+      metadata: {
+        host: "tauri",
+        surface: "quick-panel",
+        language: targetLanguage === "zh" ? "zh-CN" : "en-US"
+      }
+    }
+  };
+}
+
 export function translationErrorMessage(code: unknown): string {
   if (code === "provider_unconfigured") return "请先在设置中配置当前 Provider。";
   if (code === "provider_auth_failed" || code === "provider_authentication_failed") {
@@ -166,7 +206,16 @@ export function translationErrorMessage(code: unknown): string {
   }
   if (code === "plugin_disabled") return "翻译功能已关闭，可在设置中重新启用。";
   if (code === "provider_empty_response") return "模型没有返回可用译文，请重试。";
+  if (typeof code === "string" && code.startsWith("cloud_")) {
+    return "云端翻译暂时不可用，请稍后重试。";
+  }
   return "翻译暂时不可用，请重试。";
+}
+
+function detectTranslationLanguage(text: string): TranslationLanguage {
+  return Array.from(text.slice(0, 100)).some(
+    (character) => character >= "\u4e00" && character <= "\u9fff"
+  ) ? "zh" : "en";
 }
 
 function sanitizeVisibleText(value: string): string {

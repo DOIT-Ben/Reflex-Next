@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { TauriHostApi } from "./coreBridge";
 import {
+  createPromptFeedbackPayload,
   createFeedbackBridge,
   feedbackSubmitErrorMessage,
   type FeedbackPayload
@@ -12,6 +13,7 @@ function hostWithInvoke(invoke: TauriHostApi["invoke"]): TauriHostApi {
 }
 
 const payload: FeedbackPayload = {
+  source: "manual",
   sentiment: "negative",
   category: "quality",
   message: "结果不准确",
@@ -40,6 +42,24 @@ const payload: FeedbackPayload = {
 };
 
 describe("feedback bridge", () => {
+  it("builds a one-click prompt response without attaching user content", () => {
+    expect(
+      createPromptFeedbackPayload({
+        sentiment: "positive",
+        context: payload.context,
+        consentVersion: "2026-07-15"
+      })
+    ).toEqual({
+      ...payload,
+      source: "prompt",
+      sentiment: "positive",
+      message: "",
+      expected_output: "",
+      contact: "",
+      context: payload.context
+    });
+  });
+
   it("captures only through the scoped Tauri command", async () => {
     const invoke = vi.fn().mockResolvedValue({ media_type: "image/png", data_base64: "fixture" });
     const bridge = createFeedbackBridge(hostWithInvoke(invoke));
@@ -75,6 +95,8 @@ describe("feedback bridge", () => {
       .toBe("请先在设置中开启对应的隐私授权。");
     expect(feedbackSubmitErrorMessage(new Error("api_key=private-value")))
       .toBe("反馈发送失败，请稍后重试。");
+    expect(feedbackSubmitErrorMessage("反馈附件暂时无法保存，请稍后再试。"))
+      .toBe("反馈附件暂时无法保存，请稍后再试。");
 
     const invoke = vi.fn().mockRejectedValue("请先在设置中开启对应的隐私授权。");
     const bridge = createFeedbackBridge(hostWithInvoke(invoke));

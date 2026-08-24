@@ -58,8 +58,9 @@ Assert-True (@($policy.licenses.allowed_expressions.python).Count -gt 0) "Python
 Assert-True (@($policy.licenses.allowed_expressions.rust).Count -gt 0) "Rust licenses require an explicit allowlist."
 Assert-True (@($policy.licenses.allowed_expressions.npm).Count -gt 0) "npm licenses require an explicit allowlist."
 Assert-True (@($policy.rust_advisory_exceptions).Count -gt 0) "Rust advisory exceptions must be explicit and reviewable."
-Assert-True (@($policy.python_projects).Count -eq 10) "Dependency audit must cover every Python product and cloud project."
+Assert-True (@($policy.python_projects).Count -eq 11) "Dependency audit must cover every Python product and cloud project."
 Assert-True (@($policy.python_projects) -contains "services/reflex-cloud") "Dependency audit must include Reflex Cloud."
+Assert-True (@($policy.python_projects) -contains "plugins/provider-native-protocols") "Dependency audit must include native-protocol Providers."
 $expectedPythonLicenseOverrides = @{
   "annotated-doc@0.0.4" = "MIT"
   "annotated-types@0.7.0" = "MIT"

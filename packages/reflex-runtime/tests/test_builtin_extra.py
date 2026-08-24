@@ -29,7 +29,9 @@ def test_capability_plugins_are_only_explicit_local_builtin_extras():
         "reflex-plugin-semantic-detector",
         "reflex-translator",
         "reflex-provider-minimax",
+        "reflex-provider-native-protocols",
         "reflex-provider-openai-compatible",
+        "reflex-provider-openai-responses",
     ]
     assert config["tool"]["uv"]["sources"]["reflex-history-sqlite"] == {
         "path": "../../plugins/history-sqlite",
@@ -53,6 +55,14 @@ def test_capability_plugins_are_only_explicit_local_builtin_extras():
     }
     assert config["tool"]["uv"]["sources"]["reflex-provider-openai-compatible"] == {
         "path": "../../plugins/provider-openai-compatible",
+        "editable": True,
+    }
+    assert config["tool"]["uv"]["sources"]["reflex-provider-native-protocols"] == {
+        "path": "../../plugins/provider-native-protocols",
+        "editable": True,
+    }
+    assert config["tool"]["uv"]["sources"]["reflex-provider-openai-responses"] == {
+        "path": "../../plugins/provider-openai-responses",
         "editable": True,
     }
 

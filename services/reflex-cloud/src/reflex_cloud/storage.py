@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 from pathlib import Path
+import shutil
 
 from .schemas import ScreenshotInput
 
@@ -18,18 +19,37 @@ class AttachmentStore:
         self.directory.mkdir(parents=True, exist_ok=True)
 
     def save_screenshot(self, feedback_id: str, screenshot: ScreenshotInput) -> str:
+        raw = self.validate_screenshot(screenshot)
+        return self.save_validated_screenshot(feedback_id, screenshot.media_type, raw)
+
+    def validate_screenshot(self, screenshot: ScreenshotInput) -> bytes:
         try:
             raw = base64.b64decode(screenshot.data_base64, validate=True)
         except (ValueError, binascii.Error):
             raise AttachmentError("invalid screenshot encoding") from None
         if not raw or len(raw) > self.max_bytes:
             raise AttachmentError("invalid screenshot size")
-        extension = _validated_extension(raw, screenshot.media_type)
+        _validated_extension(raw, screenshot.media_type)
+        return raw
+
+    def save_validated_screenshot(
+        self, feedback_id: str, media_type: str, raw: bytes
+    ) -> str:
+        extension = _validated_extension(raw, media_type)
         target = (self.directory / f"{feedback_id}.{extension}").resolve()
         if target.parent != self.directory:
             raise AttachmentError("invalid screenshot path")
         target.write_bytes(raw)
         return target.name
+
+    def has_capacity(self, additional_bytes: int, minimum_free_bytes: int) -> bool:
+        if additional_bytes < 0 or minimum_free_bytes < 0:
+            return False
+        try:
+            free_bytes = shutil.disk_usage(self.directory).free
+        except OSError:
+            return False
+        return free_bytes - additional_bytes >= minimum_free_bytes
 
     def path_for(self, relative_path: str) -> Path | None:
         target = (self.directory / relative_path).resolve()

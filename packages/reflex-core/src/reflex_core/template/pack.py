@@ -26,6 +26,7 @@ class TemplatePackError(RuntimeError):
 class TemplateAsset:
     id: str
     path: str
+    category: str | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class TemplatePackManifest:
     system: TemplateAsset
     scenes: tuple[TemplateAsset, ...]
     styles: tuple[TemplateAsset, ...]
+    categories: tuple[TemplateAsset, ...] = ()
 
 
 class FileTemplatePack:
@@ -54,6 +56,10 @@ class FileTemplatePack:
         self._assets = dict(assets)
         self._scene_paths = {asset.id: asset.path for asset in manifest.scenes}
         self._style_paths = {asset.id: asset.path for asset in manifest.styles}
+        self._category_paths = {asset.id: asset.path for asset in manifest.categories}
+        self._scene_categories = {
+            asset.id: asset.category for asset in manifest.scenes if asset.category
+        }
 
     @classmethod
     def load(cls, root: str | Path) -> "FileTemplatePack":
@@ -63,7 +69,12 @@ class FileTemplatePack:
                 raise ValueError
             raw_manifest = _read_json(root_path / "manifest.json")
             manifest = _parse_manifest(raw_manifest)
-            listed_assets = (manifest.system, *manifest.scenes, *manifest.styles)
+            listed_assets = (
+                manifest.system,
+                *manifest.scenes,
+                *manifest.styles,
+                *manifest.categories,
+            )
             paths = [asset.path for asset in listed_assets]
             if len(paths) != len(set(paths)):
                 raise ValueError
@@ -86,8 +97,16 @@ class FileTemplatePack:
         return tuple(self._style_paths)
 
     @property
+    def category_ids(self) -> tuple[str, ...]:
+        return tuple(self._category_paths)
+
+    @property
+    def scene_categories(self) -> dict[str, str]:
+        return dict(self._scene_categories)
+
+    @property
     def asset_count(self) -> int:
-        return 1 + len(self._scene_paths) + len(self._style_paths)
+        return 1 + len(self._scene_paths) + len(self._style_paths) + len(self._category_paths)
 
     def read_system(self) -> str:
         return self._assets[self.manifest.system.path]
@@ -95,6 +114,12 @@ class FileTemplatePack:
     def read_scene(self, scene_id: str) -> str:
         try:
             return self._assets[self._scene_paths[scene_id]]
+        except (KeyError, TypeError):
+            raise TemplatePackError() from None
+
+    def read_category(self, category_id: str) -> str:
+        try:
+            return self._assets[self._category_paths[category_id]]
         except (KeyError, TypeError):
             raise TemplatePackError() from None
 
@@ -136,10 +161,15 @@ def _parse_manifest(raw: dict[str, Any]) -> TemplatePackManifest:
     system = _parse_asset(raw.get("system"))
     scenes = _parse_assets(raw.get("scenes"))
     styles = _parse_assets(raw.get("styles"))
+    categories = _parse_assets(raw.get("categories")) if raw.get("categories") is not None else ()
     if default_scene not in {asset.id for asset in scenes}:
         raise ValueError
     if default_style not in {asset.id for asset in styles}:
         raise ValueError
+    category_ids = {asset.id for asset in categories}
+    for scene in scenes:
+        if scene.category is not None and scene.category not in category_ids:
+            raise ValueError
     return TemplatePackManifest(
         schema_version=schema_version,
         id=pack_id,
@@ -151,6 +181,7 @@ def _parse_manifest(raw: dict[str, Any]) -> TemplatePackManifest:
         system=system,
         scenes=scenes,
         styles=styles,
+        categories=categories,
     )
 
 
@@ -171,7 +202,10 @@ def _parse_asset(value: object) -> TemplateAsset:
     path = value.get("path")
     if not _valid_id(asset_id) or not isinstance(path, str) or not _safe_asset_path(path):
         raise ValueError
-    return TemplateAsset(asset_id, path)
+    category = value.get("category")
+    if category is not None and not _valid_id(category):
+        raise ValueError
+    return TemplateAsset(asset_id, path, category)
 
 
 def _read_asset(root: Path, relative_path: str) -> str:

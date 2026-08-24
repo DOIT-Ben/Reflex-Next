@@ -46,15 +46,29 @@ def status_event(phase: StatusPhase, message: str) -> Event:
     return Event(EventType.STATUS, {"phase": phase.value, "message": message})
 
 
-def scene_event(scene: str, confidence: float, method: str, reason: str = "") -> Event:
-    return Event(
-        EventType.SCENE,
-        {"scene": scene, "confidence": float(confidence), "method": method, "reason": reason},
-    )
+def scene_event(
+    scene: str,
+    confidence: float,
+    method: str,
+    reason: str = "",
+    category: str | None = None,
+) -> Event:
+    data: dict[str, Any] = {
+        "scene": scene,
+        "confidence": float(confidence),
+        "method": method,
+        "reason": reason,
+    }
+    if category is not None:
+        data["category"] = category
+    return Event(EventType.SCENE, data)
 
 
-def request_event(provider: str | None, model: str | None) -> Event:
-    return Event(EventType.REQUEST, {"provider": provider, "model": model})
+def request_event(provider: str | None, model: str | None, *, protocol: str | None = None) -> Event:
+    data: dict[str, Any] = {"provider": provider, "model": model}
+    if protocol is not None:
+        data["protocol"] = protocol
+    return Event(EventType.REQUEST, data)
 
 
 def chunk_event(text: str) -> Event:

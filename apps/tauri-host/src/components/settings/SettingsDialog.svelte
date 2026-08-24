@@ -22,6 +22,8 @@
     secretInput: string;
     secretStatus: SecretStatus;
     secretNotice: string | null;
+    providerConnectionBusy: "models" | "test" | null;
+    providerConnectionNotice: string | null;
     notice: string | null;
     providerCatalogNotice: string | null;
     providers: ProviderOption[];
@@ -37,6 +39,7 @@
     diagnosticNotice: string | null;
     cloudUsageMetricsEnabled: boolean;
     cloudImprovementEnabled: boolean;
+    feedbackPromptEnabled: boolean;
     cloudQualityRelease: CloudQualityRelease | null;
     cloudQuota: CloudQuota | null;
     cloudPrivacyBusy: boolean;
@@ -50,6 +53,10 @@
     onSecretInput: (value: string) => void;
     onSaveSecret: () => void;
     onDeleteSecret: () => void;
+    onBaseUrlChange: (value: string) => void;
+    onDiscoverModels: () => void;
+    onTestConnection: () => void;
+    onModelCandidatesChange: (models: string[]) => void;
     onPluginChange: (plugin: SettingsPluginId, enabled: boolean) => void;
     onSemanticRefresh: () => void;
     onSemanticCancel: () => void;
@@ -59,6 +66,7 @@
     onDiagnosticCancel: () => void;
     onCloudUsageMetricsChange: (enabled: boolean) => void;
     onCloudImprovementChange: (enabled: boolean) => void;
+    onFeedbackPromptEnabledChange: (enabled: boolean) => void;
     onCloudRefresh: () => void;
     onCloudDeleteData: () => void;
   }
@@ -71,6 +79,8 @@
     secretInput,
     secretStatus,
     secretNotice,
+    providerConnectionBusy,
+    providerConnectionNotice,
     notice,
     providerCatalogNotice,
     providers,
@@ -86,6 +96,7 @@
     diagnosticNotice,
     cloudUsageMetricsEnabled,
     cloudImprovementEnabled,
+    feedbackPromptEnabled,
     cloudQualityRelease,
     cloudQuota,
     cloudPrivacyBusy,
@@ -99,6 +110,10 @@
     onSecretInput,
     onSaveSecret,
     onDeleteSecret,
+    onBaseUrlChange,
+    onDiscoverModels,
+    onTestConnection,
+    onModelCandidatesChange,
     onPluginChange,
     onSemanticRefresh,
     onSemanticCancel,
@@ -108,14 +123,25 @@
     onDiagnosticCancel,
     onCloudUsageMetricsChange,
     onCloudImprovementChange,
+    onFeedbackPromptEnabledChange,
     onCloudRefresh,
     onCloudDeleteData
   }: Props = $props();
+  let selectedProvider = $derived(
+    providers.find((provider) => provider.id === (draft.default_provider ?? "minimax"))
+  );
+  let supportsCustomModel = $derived(draft.default_provider !== "reflex-cloud");
+  let currentProviderId = $derived(draft.default_provider ?? "minimax");
+  let providerCredentialReady = $derived(secretStatus.configured);
+  let providerConnectionReady = $derived(
+    currentProviderId === "reflex-cloud" || (
+      providerCredentialReady && Boolean((draft.provider_endpoints[currentProviderId] ?? "").trim())
+    )
+  );
 
   const scenePolicies: Array<{ id: HostSettingsDraft["scene_policy"]; label: string }> = [
     { id: "auto", label: "自动" },
-    { id: "ask", label: "每次询问" },
-    { id: "manual", label: "手动固定" }
+    { id: "ask", label: "每次询问" }
   ];
   const clipboardPolicies: Array<{ id: HostSettingsDraft["clipboard_policy"]; label: string }> = [
     { id: "startup", label: "启动时读取" },
@@ -144,6 +170,23 @@
 
   function patchDraft(patch: Partial<HostSettingsDraft>) {
     onDraftChange({ ...draft, ...patch });
+  }
+
+  let customModelId = $state("");
+  function addCustomModel() {
+    const modelId = customModelId.trim();
+    if (!modelId || modelId.length > 256 || models.some((model) => model.id === modelId)) return;
+    onModelCandidatesChange([...models.map((model) => model.id), modelId]);
+    patchDraft({ default_model: modelId });
+    customModelId = "";
+  }
+
+  function removeSelectedModel() {
+    const modelId = draft.default_model?.trim() ?? "";
+    const remaining = models.map((model) => model.id).filter((id) => id !== modelId);
+    if (remaining.length === 0) return;
+    onModelCandidatesChange(remaining);
+    patchDraft({ default_model: remaining[0] });
   }
 
   function pluginDescription(plugin: (typeof plugins)[number]) {
@@ -194,7 +237,11 @@
             <label>
               <span>{translate("默认 Provider")}</span>
               <select value={draft.default_provider ?? "minimax"} disabled={busy} onchange={(event) => onProviderChange(event.currentTarget.value)}>
-                {#each providers as provider}<option value={provider.id}>{translate(provider.label)}</option>{/each}
+                {#each providers as provider}
+                  <option value={provider.id}>
+                    {translate(provider.label)}{provider.releaseStatus === "experimental" ? ` ${translate("（实验）")}` : ""}
+                  </option>
+                {/each}
               </select>
             </label>
             <label>
@@ -203,9 +250,47 @@
                 {#each models as model}<option value={model.id}>{translate(model.label)}</option>{/each}
               </select>
             </label>
+            {#if supportsCustomModel}
+              <label>
+                <span>{translate("自定义模型 ID")}</span>
+                <input
+                  value={customModelId}
+                  disabled={busy}
+                  autocomplete="off"
+                  spellcheck="false"
+                  maxlength="256"
+                  placeholder="e.g. gpt-5.6-luna"
+                  oninput={(event) => (customModelId = event.currentTarget.value)}
+                />
+              </label>
+              <div class="model-candidate-actions">
+                <button class="outline" type="button" disabled={busy || !customModelId.trim()} onclick={addCustomModel}>{translate("加入候选")}</button>
+                <button class="outline danger" type="button" disabled={busy || models.length <= 1} onclick={removeSelectedModel}>{translate("移除当前")}</button>
+              </div>
+            {/if}
+            {#if draft.default_provider !== "reflex-cloud"}
+              <label class="settings-wide-field">
+                <span>Base URL</span>
+                <input
+                  type="url"
+                  value={draft.provider_endpoints[currentProviderId] ?? ""}
+                  disabled={busy || providerConnectionBusy !== null}
+                  autocomplete="url"
+                  spellcheck="false"
+                  maxlength="2048"
+                  placeholder="https://api.example.com/v1"
+                  oninput={(event) => onBaseUrlChange(event.currentTarget.value)}
+                />
+              </label>
+            {/if}
           </div>
           {#if providerCatalogNotice}
             <p class="settings-feedback" role="status" aria-live="polite">{translate(providerCatalogNotice)}</p>
+          {/if}
+          {#if selectedProvider?.releaseStatus === "experimental"}
+            <p class="warning-note" role="status">
+              {translate("此 Provider 仍在实验支持阶段，协议或模型可用性可能变化。")}
+            </p>
           {/if}
 
           {#if draft.default_provider === "reflex-cloud"}
@@ -252,6 +337,15 @@
               </span>
             </div>
           </div>
+          <div class="provider-connection-actions">
+            <button class="outline" type="button" disabled={!providerConnectionReady || providerConnectionBusy !== null} onclick={onDiscoverModels}>
+              {translate(providerConnectionBusy === "models" ? "正在获取模型" : "获取模型")}
+            </button>
+            <button class="outline" type="button" disabled={!providerConnectionReady || !draft.default_model || providerConnectionBusy !== null} onclick={onTestConnection}>
+              {translate(providerConnectionBusy === "test" ? "正在测试连接" : "测试连接")}
+            </button>
+          </div>
+          <p class="settings-feedback" role="status" aria-live="polite">{providerConnectionNotice ? translate(providerConnectionNotice) : ""}</p>
           {/if}
         {:else if section === "defaults"}
           <h3>{translate("默认行为")}</h3>
@@ -334,6 +428,15 @@
                 checked={cloudImprovementEnabled}
                 disabled={busy || cloudPrivacyBusy}
                 onchange={(event) => onCloudImprovementChange(event.currentTarget.checked)}
+              />
+            </label>
+            <label class="settings-toggle">
+              <span><strong>{translate("主动反馈询问")}</strong><small>{translate("在若干次成功生成后偶尔询问结果是否有帮助")}</small></span>
+              <input
+                type="checkbox"
+                checked={feedbackPromptEnabled}
+                disabled={busy}
+                onchange={(event) => onFeedbackPromptEnabledChange(event.currentTarget.checked)}
               />
             </label>
             <label class="settings-toggle">

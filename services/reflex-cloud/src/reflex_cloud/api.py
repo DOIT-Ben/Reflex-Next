@@ -21,6 +21,7 @@ from .schemas import (
     FeedbackAnalytics,
     FeedbackPage,
     FeedbackSummary,
+    FeedbackSource,
     FeedbackUpdate,
     InstallationCreated,
     OptimizeCancelRequest,
@@ -33,7 +34,7 @@ from .schemas import (
     QuotaView,
     UsageAnalytics,
 )
-from .security import secure_equals
+from .security import resolve_client_ip, secure_equals
 from .service import CloudService, CloudServiceError
 
 
@@ -84,8 +85,12 @@ AdminDependency = Annotated[None, Depends(require_admin)]
 
 
 @public_router.post("/installations", response_model=InstallationCreated, status_code=201)
-def create_installation(session: SessionDependency, service: ServiceDependency) -> InstallationCreated:
-    installation, token = service.create_installation(session)
+def create_installation(
+    request: Request, session: SessionDependency, service: ServiceDependency
+) -> InstallationCreated:
+    installation, token = service.create_installation(
+        session, resolve_client_ip(request, service.settings.trusted_proxy_cidrs)
+    )
     return InstallationCreated(installation_id=installation.id, token=token)
 
 
@@ -156,7 +161,7 @@ def optimize(
         budget_reservation_id = service.reserve_request(
             session,
             installation,
-            client_ip=request.client.host if request.client else None,
+            client_ip=resolve_client_ip(request, service.settings.trusted_proxy_cidrs),
             input_chars=len(payload.text),
         )
     except Exception:
@@ -269,8 +274,14 @@ def create_feedback(
     installation: InstallationDependency,
     session: SessionDependency,
     service: ServiceDependency,
+    request: Request,
 ) -> FeedbackCreated:
-    item = service.submit_feedback(session, installation, payload)
+    item = service.submit_feedback(
+        session,
+        installation,
+        payload,
+        resolve_client_ip(request, service.settings.trusted_proxy_cidrs),
+    )
     return FeedbackCreated(id=item.id, status=item.status, created_at=item.created_at)
 
 
@@ -352,11 +363,17 @@ def list_feedback(
     service: ServiceDependency,
     status: str | None = Query(default=None, max_length=32),
     category: str | None = Query(default=None, max_length=32),
+    source: FeedbackSource | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> FeedbackPage:
     items, total = service.list_feedback(
-        session, status=status, category=category, limit=limit, offset=offset
+        session,
+        status=status,
+        category=category,
+        source=source,
+        limit=limit,
+        offset=offset,
     )
     return FeedbackPage(items=[_feedback_summary(item) for item in items], total=total)
 
@@ -482,6 +499,7 @@ def _quality_release_detail(
 def _feedback_summary(item: FeedbackItem) -> FeedbackSummary:
     return FeedbackSummary(
         id=item.id,
+        source=item.source,
         sentiment=item.sentiment,
         category=item.category,
         status=item.status,

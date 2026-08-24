@@ -257,7 +257,7 @@ try {
   if (
     -not $checksumMap.ContainsKey($sbomRelative) -or
     [string]$manifest.sbom.manifest_sha256 -cne $checksumMap[$sbomRelative] -or
-    [int]$manifest.sbom.component_count -ne 12
+    [int]$manifest.sbom.component_count -ne 13
   ) {
     throw "sbom_manifest_mismatch"
   }
@@ -270,7 +270,7 @@ try {
   catch {
     throw "invalid_sbom_manifest"
   }
-  if (@($sbomManifest.components).Count -ne 12) {
+  if (@($sbomManifest.components).Count -ne 13) {
     throw "invalid_sbom_manifest"
   }
   foreach ($component in @($sbomManifest.components)) {

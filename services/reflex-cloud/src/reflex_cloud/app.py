@@ -42,6 +42,10 @@ _ERROR_MESSAGES = {
     "installation_concurrency_reached": "当前安装已有请求处理中，请等待完成。",
     "optimize_request_conflict": "该请求正在处理中，请勿重复提交。",
     "feedback_rate_limited": "反馈提交过于频繁，请稍后再试。",
+    "installation_rate_limited": "安装身份创建过于频繁，请稍后再试。",
+    "feedback_attachment_rate_limited": "反馈附件提交过于频繁，请稍后再试。",
+    "feedback_storage_unavailable": "反馈附件暂时无法保存，请稍后再试。",
+    "client_rate_limit_unavailable": "请求保护服务暂时不可用，请稍后再试。",
     "consent_required": "请先在隐私设置中开启对应的数据改进授权。",
     "consent_outdated": "隐私授权版本已更新，请刷新授权设置后再提交。",
     "quality_release_sensitive_content": "质量发布内容包含敏感信息，请清理后重试。",
@@ -79,6 +83,7 @@ def create_app(
             cloud_service.purge_expired_budget_reservations(session)
             cloud_service.purge_expired_feedback(session)
             cloud_service.purge_expired_improvement_samples(session)
+            cloud_service.purge_expired_abuse_usage(session)
 
     async def retention_loop(stop: asyncio.Event) -> None:
         while True:

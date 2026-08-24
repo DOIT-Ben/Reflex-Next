@@ -133,10 +133,84 @@ def test_feedback_is_persisted_and_admin_list_hides_sensitive_detail(
     assert listing.status_code == 200
     assert listing.headers["cache-control"] == "no-store"
     assert listing.json()["total"] == 1
+    assert listing.json()["items"][0]["source"] == "manual"
     assert "message" not in listing.json()["items"][0]
     assert "prompt_text" not in listing.json()["items"][0]
     assert detail.json()["message"] == "结果没有保留关键约束"
+    assert detail.json()["source"] == "manual"
     assert detail.json()["context"]["request_id"] == "request-1"
+
+
+def test_prompt_feedback_source_is_persisted_and_analyzed(
+    client: TestClient,
+    installation_headers: dict[str, str],
+    admin_headers: dict[str, str],
+):
+    manual = client.post(
+        "/v1/feedback",
+        headers=installation_headers,
+        json=feedback_payload(),
+    )
+    created = client.post(
+        "/v1/feedback",
+        headers=installation_headers,
+        json=feedback_payload(
+            source="prompt",
+            sentiment="positive",
+            message="",
+            context={
+                **feedback_payload()["context"],
+                "provider": "openai-compatible",
+                "model": "fixture-model",
+                "scene": "coding",
+            },
+        ),
+    )
+
+    assert manual.status_code == 201
+    assert created.status_code == 201
+    detail = client.get(
+        f"/v1/admin/feedback/{created.json()['id']}", headers=admin_headers
+    )
+    listing = client.get(
+        "/v1/admin/feedback?source=prompt", headers=admin_headers
+    )
+    analytics = client.get("/v1/admin/analytics/feedback", headers=admin_headers)
+
+    assert detail.json()["source"] == "prompt"
+    assert listing.status_code == 200
+    assert listing.json()["total"] == 1
+    assert listing.json()["items"][0]["id"] == created.json()["id"]
+    assert "message" not in listing.json()["items"][0]
+    assert analytics.json()["by_source"]["prompt"] == {
+        "total": 1,
+        "negative": 0,
+        "negative_rate": 0.0,
+        "average_elapsed_ms": 1234.0,
+    }
+    assert analytics.json()["by_scene"]["coding"] == {
+        "total": 1,
+        "negative": 0,
+        "negative_rate": 0.0,
+        "average_elapsed_ms": 1234.0,
+    }
+    assert analytics.json()["by_provider_model"]["openai-compatible/fixture-model"] == {
+        "total": 1,
+        "negative": 0,
+        "negative_rate": 0.0,
+        "average_elapsed_ms": 1234.0,
+    }
+
+
+def test_feedback_source_filter_rejects_unknown_values(
+    client: TestClient, admin_headers: dict[str, str]
+):
+    response = client.get(
+        "/v1/admin/feedback?source=unknown", headers=admin_headers
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "request_invalid"
 
 
 def test_prompt_result_and_screenshot_require_matching_per_submission_consent(
@@ -211,6 +285,30 @@ def test_authorized_attachments_are_redacted_and_validated(
         ),
     )
     assert invalid.status_code == 422
+
+
+def test_feedback_context_is_redacted_before_admin_access(
+    client: TestClient,
+    installation_headers: dict[str, str],
+    admin_headers: dict[str, str],
+):
+    payload = feedback_payload()
+    payload["context"] = {
+        **payload["context"],
+        "provider": "api_key=fixture-private-context-secret",
+        "request_id": "Bearer fixture-private-context-token",
+    }
+
+    created = client.post("/v1/feedback", headers=installation_headers, json=payload)
+    detail = client.get(
+        f"/v1/admin/feedback/{created.json()['id']}", headers=admin_headers
+    )
+
+    assert created.status_code == 201
+    assert detail.status_code == 200
+    assert "fixture-private-context" not in detail.text
+    assert detail.json()["context"]["provider"] == "<redacted>"
+    assert detail.json()["context"]["request_id"] == "<redacted>"
 
 
 def test_feedback_prompt_and_result_require_improvement_consent(

@@ -4,6 +4,7 @@
     WorkbenchInputHandler,
     WorkbenchPhase
   } from "./types";
+  import type { QuickAction } from "../../domain/productExperience";
 
   export let value = "";
   export let phase: WorkbenchPhase = "empty";
@@ -13,10 +14,13 @@
   export let maxLength = 100_000;
   export let disabled = false;
   export let clipboardBusy = false;
+  export let quickActions: ReadonlyArray<QuickAction> = [];
   export let onInput: WorkbenchInputHandler = () => undefined;
+  export let onQuickAction: ((actionId: string) => void) | undefined = undefined;
   export let onRun: WorkbenchActionHandler | undefined = undefined;
   export let onReadClipboard: WorkbenchActionHandler | undefined = undefined;
   export let onClear: WorkbenchActionHandler | undefined = undefined;
+  export let translate: (source: string, values?: Record<string, string | number>) => string = (source) => source;
 
   let textarea: HTMLTextAreaElement;
 
@@ -64,25 +68,43 @@
         <button
           type="button"
           disabled={locked || clipboardBusy}
-          aria-label="读取剪贴板"
-          title="读取系统剪贴板内容到输入框"
+          aria-label={translate("读取剪贴板")}
+          title={translate("读取系统剪贴板内容到输入框")}
           on:click={() => void onReadClipboard?.()}
         >
-          {clipboardBusy ? "读取中…" : "读取剪贴板"}
+          {clipboardBusy ? translate("读取中…") : translate("读取剪贴板")}
         </button>
       {/if}
       <button
         class="clear-button"
         type="button"
         disabled={locked || characterCount === 0}
-        aria-label="清空输入"
-        title="清空当前输入"
+        aria-label={translate("清空输入")}
+        title={translate("清空当前输入")}
         on:click={clearInput}
       >
-        清空
+        {translate("清空")}
       </button>
     </div>
   </header>
+
+  {#if quickActions.length > 0}
+    <div class="quick-actions" aria-label={translate("常用任务")}>
+      <span>{translate("常用任务")}</span>
+      {#each quickActions as action (action.id)}
+        <button
+          class="quick-action"
+          type="button"
+          disabled={locked || !onQuickAction}
+          title={translate(action.hint)}
+          on:click={() => onQuickAction?.(action.id)}
+        >
+          <strong>{translate(action.label)}</strong>
+          <small>{translate(action.hint)}</small>
+        </button>
+      {/each}
+    </div>
+  {/if}
 
   <div class:invalid={overLimit} class="editor-frame">
     <textarea
@@ -101,7 +123,7 @@
     <footer class="editor-footer">
       <span class:error={overLimit} id="workbench-input-help">{helpText}</span>
       <span class:error={overLimit} id="workbench-input-count" aria-live="polite">
-        {characterCount.toLocaleString()} 字
+        {translate("{count} 字", { count: characterCount.toLocaleString() })}
       </span>
     </footer>
   </div>
@@ -147,6 +169,37 @@
     justify-content: flex-end;
     gap: 2px;
   }
+
+  .quick-actions {
+    display: flex;
+    min-width: 0;
+    align-items: stretch;
+    gap: 6px;
+    padding: 0 12px 9px;
+    overflow-x: auto;
+  }
+
+  .quick-actions > span {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    color: var(--weak, #98a2b3);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .quick-action {
+    display: grid;
+    min-width: 98px;
+    height: auto;
+    flex: 1 1 0;
+    gap: 3px;
+    padding: 7px 9px;
+    text-align: left;
+  }
+
+  .quick-action strong { color: var(--text, #202535); font-size: 11px; font-weight: 650; }
+  .quick-action small { overflow: hidden; color: var(--muted, #697386); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 
   button {
     min-width: 30px;
@@ -283,6 +336,8 @@
       width: 100%;
       justify-content: flex-start;
     }
+
+    .quick-action { min-width: 116px; flex: 0 0 auto; }
 
     .editor-footer span:first-child {
       max-width: 70%;
