@@ -10,6 +10,12 @@ param(
 $ErrorActionPreference = "Stop"
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
+$powerShellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+if ($null -eq $powerShellCommand) {
+  $powerShellCommand = Get-Command powershell.exe -ErrorAction Stop
+}
+$powerShellExecutable = $powerShellCommand.Source
+
 if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
   $RepositoryRoot = Join-Path $PSScriptRoot ".."
 }
@@ -17,6 +23,7 @@ $repository = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
 if (-not (Test-Path -LiteralPath $repository -PathType Container)) {
   throw "invalid_repository_root"
 }
+. (Join-Path $PSScriptRoot "project_registry.ps1")
 
 $temporaryOutput = $false
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -28,24 +35,15 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 }
 $output = [System.IO.Path]::GetFullPath($OutputDirectory)
 
-$pythonComponents = @(
-  @{ Id = "python-reflex-core"; Name = "reflex-core"; Project = "packages\reflex-core"; Lock = "packages\reflex-core\uv.lock" },
-  @{ Id = "python-reflex-runtime"; Name = "reflex-runtime"; Project = "packages\reflex-runtime"; Lock = "packages\reflex-runtime\uv.lock" },
-  @{ Id = "python-reflex-cloud"; Name = "reflex-cloud"; Project = "services\reflex-cloud"; Lock = "services\reflex-cloud\uv.lock" },
-  @{ Id = "python-batch-runner"; Name = "reflex-batch-runner"; Project = "plugins\batch-runner"; Lock = "plugins\batch-runner\uv.lock" },
-  @{ Id = "python-history-sqlite"; Name = "reflex-history-sqlite"; Project = "plugins\history-sqlite"; Lock = "plugins\history-sqlite\uv.lock" },
-  @{ Id = "python-markdown-preview"; Name = "reflex-markdown-preview"; Project = "plugins\markdown-preview"; Lock = "plugins\markdown-preview\uv.lock" },
-  @{ Id = "python-provider-minimax"; Name = "reflex-provider-minimax"; Project = "plugins\provider-minimax"; Lock = "plugins\provider-minimax\uv.lock" },
-  @{ Id = "python-provider-native-protocols"; Name = "reflex-provider-native-protocols"; Project = "plugins\provider-native-protocols"; Lock = "plugins\provider-native-protocols\uv.lock" },
-  @{ Id = "python-provider-openai-compatible"; Name = "reflex-provider-openai-compatible"; Project = "plugins\provider-openai-compatible"; Lock = "plugins\provider-openai-compatible\uv.lock" },
-  @{ Id = "python-semantic-detector"; Name = "reflex-plugin-semantic-detector"; Project = "plugins\semantic-detector"; Lock = "plugins\semantic-detector\uv.lock" },
-  @{ Id = "python-translator"; Name = "reflex-translator"; Project = "plugins\translator"; Lock = "plugins\translator\uv.lock" }
-)
-$components = @($pythonComponents)
-$components += @(
-  @{ Id = "rust-tauri-host"; Name = "reflex-next-tauri-host"; Project = "apps\tauri-host\src-tauri"; Lock = "apps\tauri-host\src-tauri\Cargo.lock" },
-  @{ Id = "node-tauri-host"; Name = "tauri-host"; BomRefPrefix = "@reflex-next/tauri-host@"; DisplayName = "@reflex-next/tauri-host"; Project = "apps\tauri-host"; Lock = "apps\tauri-host\package-lock.json" }
-)
+$registry = Get-ReflexProjectRegistry -RepositoryRoot $repository
+$components = @(Get-ReflexSbomComponentCatalog -Registry $registry)
+$pythonComponents = @($components | Where-Object { [string]$_.Id -like "python-*" })
+$rustComponent = @($components | Where-Object { [string]$_.Id -eq "rust-tauri-host" })[0]
+$nodeComponent = @($components | Where-Object { [string]$_.Id -eq "node-tauri-host" })[0]
+if ($null -eq $rustComponent -or $null -eq $nodeComponent) {
+  throw "project_registry_native_sbom_components_missing"
+}
+$rustOutputBaseName = $rustComponent.Id + ".cdx"
 
 function Invoke-CapturedCommand {
   param(
@@ -154,7 +152,7 @@ function Invoke-SecretScan {
   if (-not (Test-Path -LiteralPath $scanner -PathType Leaf)) {
     throw "missing_secret_scanner"
   }
-  $result = Invoke-CapturedCommand -Executable "powershell" -Arguments @(
+  $result = Invoke-CapturedCommand -Executable $powerShellExecutable -Arguments @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", $scanner,
@@ -170,7 +168,7 @@ function Invoke-SecretScan {
   }
 }
 
-$rustGeneratedPath = Join-Path $repository "apps\tauri-host\src-tauri\rust-tauri-host.cdx.json"
+$rustGeneratedPath = Join-Path $repository (Join-Path $rustComponent.Project ($rustOutputBaseName + ".json"))
 try {
   $lockHashes = @{}
   foreach ($component in $components) {
@@ -232,27 +230,27 @@ try {
     }
     $rustResult = Invoke-CapturedCommand -Executable "cargo" -Arguments @(
       "cyclonedx",
-      "--manifest-path", (Join-Path $repository "apps\tauri-host\src-tauri\Cargo.toml"),
+      "--manifest-path", (Join-Path $repository (Join-Path $rustComponent.Project "Cargo.toml")),
       "--format", "json",
       "--spec-version", "1.5",
       "--target", "x86_64-pc-windows-msvc",
-      "--override-filename", "rust-tauri-host.cdx",
+      "--override-filename", $rustOutputBaseName,
       "--quiet"
     ) -WorkDir $repository
     Assert-CommandSucceeded -Result $rustResult -FailureCode "rust_sbom_generation_failed"
     if (-not (Test-Path -LiteralPath $rustGeneratedPath -PathType Leaf)) {
       throw "rust_sbom_output_missing"
     }
-    Move-Item -LiteralPath $rustGeneratedPath -Destination (Join-Path $output "rust-tauri-host.cdx.json")
+    Move-Item -LiteralPath $rustGeneratedPath -Destination (Join-Path $output ($rustComponent.Id + ".cdx.json"))
 
     $nodeResult = Invoke-CapturedCommand -Executable "npm" -Arguments @(
       "sbom",
       "--package-lock-only",
       "--omit=dev",
       "--sbom-format", "cyclonedx"
-    ) -WorkDir (Join-Path $repository "apps\tauri-host")
+    ) -WorkDir (Join-Path $repository $nodeComponent.Project)
     Assert-CommandSucceeded -Result $nodeResult -FailureCode "node_sbom_generation_failed"
-    [System.IO.File]::WriteAllText((Join-Path $output "node-tauri-host.cdx.json"), $nodeResult.Stdout + "`n", $utf8NoBom)
+    [System.IO.File]::WriteAllText((Join-Path $output ($nodeComponent.Id + ".cdx.json")), $nodeResult.Stdout + "`n", $utf8NoBom)
   }
   else {
     $fixture = (Resolve-Path -LiteralPath $FixtureDirectory -ErrorAction Stop).Path
@@ -280,7 +278,7 @@ try {
     $manifestComponents += [ordered]@{
       id = $component.Id
       ecosystem = $ecosystem
-      root_component = if ($component.DisplayName) { $component.DisplayName } else { $component.Name }
+       root_component = $component.Name
       source_lock = ($component.Lock -replace '\\', '/')
       source_lock_sha256 = $currentLockHash
       sbom_file = $filename

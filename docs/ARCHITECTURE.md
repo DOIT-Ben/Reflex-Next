@@ -1,6 +1,10 @@
 # Reflex Next 架构设计
 
-更新时间：2026-07-09
+更新时间：2026-08-29
+
+当前实现审计请先阅读 [架构审计](ARCHITECTURE-AUDIT.md) 和
+[架构债务登记](ARCHITECTURE-DEBT-REGISTER.md)。本文保留设计基线；实际发布状态以
+`workbench/backend-production-tasks.md` 和最新验证证据为准。
 
 ## 1. 设计结论
 
@@ -58,11 +62,14 @@ Reflex 的核心不是大窗口、设置页或历史列表，而是以下能力�
 ```text
 语言：Python 3.11 或 3.12
 数据模型：dataclasses 或 pydantic
-HTTP：httpx 或 requests
 测试：pytest
 插件发现：Python packaging entry points
 配置：TOML / JSON
 ```
+
+网络客户端（`httpx` / `requests`）只允许出现在 Provider、Host 或 Cloud
+适配层，不属于 `reflex-core` 的核心运行时依赖。Core 只定义请求模型、事件
+协议和纯业务用例，由外层适配器提供网络能力。
 
 核心层禁止依赖：
 
@@ -221,14 +228,28 @@ done: final_text
 Provider 插件只负责把统一模型请求转为供应商请求，并把响应转成事件。
 
 ```python
+from collections.abc import Iterable
+from typing import Any
+
+from reflex_core import CancellationToken, OptimizeRequest, ProviderEvent
+
+
 class ProviderPlugin:
     id: str
-    name: str
-    models: list[str]
+    model: str | None
 
-    def stream(self, request: ModelRequest, context: RuntimeContext) -> Iterator[Event]:
+    def stream_events(
+        self,
+        rendered_request: Any,
+        request: OptimizeRequest,
+        cancellation: CancellationToken,
+    ) -> Iterable[ProviderEvent]:
         ...
 ```
+
+Core 通过 `ProviderEvent` 统一承载开始、文本增量、用量、完成、错误和取消事件。
+旧版仅提供 `stream` 的第三方 Provider 只在 `iter_provider_events` 兼容边界转换，
+新的 Provider 不应再实现旧签名。
 
 Provider 插件必须遵守：
 

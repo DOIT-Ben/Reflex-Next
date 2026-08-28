@@ -90,7 +90,6 @@
 
   {#if quickActions.length > 0}
     <div class="quick-actions" aria-label={translate("常用任务")}>
-      <span>{translate("常用任务")}</span>
       {#each quickActions as action (action.id)}
         <button
           class="quick-action"
@@ -100,7 +99,6 @@
           on:click={() => onQuickAction?.(action.id)}
         >
           <strong>{translate(action.label)}</strong>
-          <small>{translate(action.hint)}</small>
         </button>
       {/each}
     </div>
@@ -155,7 +153,7 @@
     min-width: 0;
     margin: 0;
     overflow: hidden;
-    font-size: 13px;
+    font-size: var(--font-body);
     font-weight: 650;
     line-height: 1.4;
     text-overflow: ellipsis;
@@ -179,27 +177,18 @@
     overflow-x: auto;
   }
 
-  .quick-actions > span {
-    display: inline-flex;
-    flex: 0 0 auto;
-    align-items: center;
-    color: var(--weak, #98a2b3);
-    font-size: 11px;
-    white-space: nowrap;
-  }
-
   .quick-action {
-    display: grid;
+    display: flex;
     min-width: 98px;
     height: auto;
     flex: 1 1 0;
-    gap: 3px;
+    align-items: center;
+    justify-content: center;
     padding: 7px 9px;
-    text-align: left;
+    text-align: center;
   }
 
-  .quick-action strong { color: var(--text, #202535); font-size: 11px; font-weight: 650; }
-  .quick-action small { overflow: hidden; color: var(--muted, #697386); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+  .quick-action strong { color: var(--text, #202535); font-size: var(--font-meta); font-weight: 650; }
 
   button {
     min-width: 30px;
@@ -209,7 +198,7 @@
     background: transparent;
     border: 1px solid transparent;
     border-radius: 7px;
-    font-size: 12px;
+    font-size: var(--font-meta);
     font-weight: 560;
     line-height: 1;
     white-space: nowrap;
@@ -274,7 +263,7 @@
     background: transparent;
     border: 0;
     font: inherit;
-    font-size: 13px;
+    font-size: var(--font-body);
     line-height: 1.68;
     overflow-wrap: anywhere;
   }
@@ -303,7 +292,7 @@
     padding: 5px 9px;
     color: var(--muted, #697386);
     border-top: 1px solid color-mix(in srgb, var(--line, #e1e6ee) 74%, transparent);
-    font-size: 11px;
+    font-size: var(--font-meta);
     line-height: 1.4;
   }
 

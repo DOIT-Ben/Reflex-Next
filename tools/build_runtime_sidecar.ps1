@@ -5,9 +5,18 @@ param(
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$runtimeDir = Join-Path $root "packages\reflex-runtime"
+. (Join-Path $PSScriptRoot "project_registry.ps1")
+$registry = Get-ReflexProjectRegistry -RepositoryRoot $root
+$runtimeProject = Get-ReflexRegistryProject -Registry $registry -ProjectId "reflex-runtime"
+$runtimeDir = Join-Path $root ([string]$runtimeProject.path -replace "/", "\")
 $python = Join-Path $runtimeDir ".venv\Scripts\python.exe"
 $entry = Join-Path $root "tools\runtime_sidecar_entry.py"
+$sidecarProjects = @($registry.projects | Where-Object {
+    $_.kind -eq "python" -and $_.sidecar -eq $true
+  })
+if ($sidecarProjects.Count -eq 0) {
+  throw "Project registry has no Runtime Sidecar projects."
+}
 
 & uv sync --frozen --project $runtimeDir --extra dev --extra builtins
 if ($LASTEXITCODE -ne 0) {
@@ -30,47 +39,13 @@ Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $workDir -Force | Out-Null
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
-$paths = @(
-  (Join-Path $root "packages\reflex-runtime\src"),
-  (Join-Path $root "packages\reflex-core\src"),
-  (Join-Path $root "plugins\provider-minimax\src"),
-  (Join-Path $root "plugins\provider-native-protocols\src"),
-  (Join-Path $root "plugins\provider-openai-compatible\src"),
-  (Join-Path $root "plugins\provider-openai-responses\src"),
-  (Join-Path $root "plugins\history-sqlite\src"),
-  (Join-Path $root "plugins\translator\src"),
-  (Join-Path $root "plugins\markdown-preview\src"),
-  (Join-Path $root "plugins\batch-runner\src"),
-  (Join-Path $root "plugins\semantic-detector\src")
-)
+$paths = @($sidecarProjects | ForEach-Object {
+    Join-Path $root (([string]$_.path -replace "/", "\") + "\src")
+  })
 
-$collectModules = @(
-  "reflex_runtime",
-  "reflex_core",
-  "reflex_provider_minimax",
-  "reflex_provider_native_protocols",
-  "reflex_provider_openai_compatible",
-  "reflex_provider_openai_responses",
-  "reflex_history_sqlite",
-  "reflex_translator",
-  "reflex_markdown_preview",
-  "reflex_batch_runner",
-  "reflex_semantic_detector"
-)
+$collectModules = @($sidecarProjects | ForEach-Object { [string]$_.module })
 
-$metadata = @(
-  "reflex-runtime",
-  "reflex-core",
-  "reflex-provider-minimax",
-  "reflex-provider-native-protocols",
-  "reflex-provider-openai-compatible",
-  "reflex-provider-openai-responses",
-  "reflex-history-sqlite",
-  "reflex-translator",
-  "reflex-markdown-preview",
-  "reflex-batch-runner",
-  "reflex-plugin-semantic-detector"
-)
+$metadata = @($sidecarProjects | ForEach-Object { [string]$_.package_name })
 
 $arguments = @(
   "-m", "PyInstaller",

@@ -8,7 +8,9 @@ import queue
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from ipaddress import ip_address
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -60,7 +62,7 @@ class OptimizeRequest(BaseModel):
             "categories and scenes; unknown values are rejected with 422."
         ),
     )
-    scene_policy: str | None = Field(
+    scene_policy: Literal["auto", "manual", "ask"] | None = Field(
         default=None,
         description=(
             "Scene routing policy: \"auto\" (default, detect from text), "
@@ -86,13 +88,41 @@ def _safe_request_id(value: str) -> bool:
     )
 
 
-def _authorize(request: Request) -> None:
-    token = os.environ.get("REFLEX_HTTP_TOKEN")
-    if not token:
-        return
-    header = request.headers.get("Authorization", "")
-    if header != f"Bearer {token}":
-        raise HTTPException(status_code=401, detail="unauthorized")
+def _authorizer_for_token(token: str | None):
+    def authorize(request: Request) -> None:
+        if not token:
+            return
+        header = request.headers.get("Authorization", "")
+        if header != f"Bearer {token}":
+            raise HTTPException(status_code=401, detail="unauthorized")
+
+    return authorize
+
+
+def _gateway_error_status(error: GatewayError) -> int:
+    if error.code == "request_id_conflict":
+        return 409
+    return 503
+
+
+def _is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower().strip("[]")
+    if normalized == "localhost":
+        return True
+    try:
+        return ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_bind_security(host: str | None = None, token: str | None = None) -> None:
+    """Reject an unauthenticated HTTP host that would be externally reachable."""
+    bind_host = host or os.environ.get("REFLEX_HTTP_HOST", "127.0.0.1")
+    configured_token = os.environ.get("REFLEX_HTTP_TOKEN") if token is None else token
+    if not configured_token and not _is_loopback_host(bind_host):
+        raise RuntimeError(
+            "REFLEX_HTTP_TOKEN is required when REFLEX_HTTP_HOST is not loopback."
+        )
 
 
 def _valid_scene_value(pack: FileTemplatePack | None, value: str) -> bool:
@@ -109,8 +139,8 @@ def _valid_scene_value(pack: FileTemplatePack | None, value: str) -> bool:
     return value in pack.scene_ids or value in pack.category_ids
 
 
-def _stream_events(gateway: SidecarGateway, request_id: str):
-    subscription = gateway.subscribe(request_id)
+def _stream_events(gateway: SidecarGateway, request_id: str, subscription=None):
+    subscription = subscription or gateway.subscribe(request_id)
     deadline = time.monotonic() + gateway.request_timeout_seconds
     terminal = False
     try:
@@ -145,10 +175,27 @@ def _stream_events(gateway: SidecarGateway, request_id: str):
                 gateway.cancel(request_id)
             except GatewayError:
                 pass
-        gateway.unsubscribe(request_id)
+        gateway.unsubscribe(
+            request_id,
+            retire=not terminal,
+            subscription=subscription,
+        )
 
 
-def create_app(gateway: SidecarGateway | None = None) -> FastAPI:
+def create_app(
+    gateway: SidecarGateway | None = None,
+    *,
+    bind_host: str,
+) -> FastAPI:
+    """Build the HTTP host after validating the address it is meant to bind.
+
+    ``bind_host`` is intentionally required.  This prevents the function
+    from being safely mistaken for a no-argument Uvicorn factory whose CLI
+    ``--host`` could bypass the validation below.
+    """
+    resolved_token = os.environ.get("REFLEX_HTTP_TOKEN")
+    validate_bind_security(bind_host, token=resolved_token)
+    authorize = _authorizer_for_token(resolved_token)
     owned_gateway = gateway is None
     gateway = gateway or SidecarGateway()
 
@@ -160,13 +207,14 @@ def create_app(gateway: SidecarGateway | None = None) -> FastAPI:
         gateway.close()
 
     app = FastAPI(title="Reflex Next HTTP Host", version="0.7.0-alpha.8", lifespan=lifespan)
+    app.state.bind_host = bind_host
 
     @app.get("/v1/health")
-    def health(_: Request = Depends(_authorize)) -> dict[str, object]:
+    def health(_: Request = Depends(authorize)) -> dict[str, object]:
         return {"ok": gateway.is_alive()}
 
     @app.get("/v1/scenes")
-    def scene_catalog(_: Request = Depends(_authorize)) -> dict[str, object]:
+    def scene_catalog(_: Request = Depends(authorize)) -> dict[str, object]:
         """Scene library catalog grouped by first-level category."""
         pack = getattr(app.state, "template_pack", None)
         if pack is None:
@@ -194,9 +242,8 @@ def create_app(gateway: SidecarGateway | None = None) -> FastAPI:
         }
 
     @app.post("/v1/ping")
-    def ping(_: Request = Depends(_authorize)) -> dict[str, object]:
-        request_id = gateway.send_command("ping")
-        subscription = gateway.subscribe(request_id)
+    def ping(_: Request = Depends(authorize)) -> dict[str, object]:
+        request_id, subscription = gateway.send_command_with_subscription("ping")
         deadline = time.monotonic() + 5.0
         try:
             while True:
@@ -219,9 +266,8 @@ def create_app(gateway: SidecarGateway | None = None) -> FastAPI:
             gateway.unsubscribe(request_id)
 
     @app.get("/v1/providers")
-    def list_providers(_: Request = Depends(_authorize)) -> dict[str, object]:
-        request_id = gateway.send_command("list_providers")
-        subscription = gateway.subscribe(request_id)
+    def list_providers(_: Request = Depends(authorize)) -> dict[str, object]:
+        request_id, subscription = gateway.send_command_with_subscription("list_providers")
         deadline = time.monotonic() + 5.0
         try:
             while True:
@@ -245,7 +291,7 @@ def create_app(gateway: SidecarGateway | None = None) -> FastAPI:
     @app.post("/v1/optimize")
     def optimize(
         payload: OptimizeRequest,
-        _: Request = Depends(_authorize),
+        _: Request = Depends(authorize),
     ) -> StreamingResponse:
         command_payload: dict[str, object] = {"text": payload.text}
         if payload.style is not None:
@@ -276,15 +322,17 @@ def create_app(gateway: SidecarGateway | None = None) -> FastAPI:
                     ),
                 )
         try:
-            request_id = gateway.send_command(
+            request_id, subscription = gateway.send_command_with_subscription(
                 "optimize",
                 command_payload,
                 request_id=payload.request_id,
             )
         except GatewayError as error:
-            raise HTTPException(status_code=503, detail=error.safe_message) from error
+            raise HTTPException(
+                status_code=_gateway_error_status(error), detail=error.safe_message
+            ) from error
         return StreamingResponse(
-            _stream_events(gateway, request_id),
+            _stream_events(gateway, request_id, subscription),
             media_type="text/event-stream",
             headers=_SSE_HEADERS,
         )
@@ -292,12 +340,14 @@ def create_app(gateway: SidecarGateway | None = None) -> FastAPI:
     @app.post("/v1/requests/{request_id}/cancel")
     def cancel_request(
         request_id: str,
-        _: Request = Depends(_authorize),
+        _: Request = Depends(authorize),
     ) -> dict[str, object]:
         try:
             gateway.cancel(request_id)
         except GatewayError as error:
-            raise HTTPException(status_code=503, detail=error.safe_message) from error
+            raise HTTPException(
+                status_code=_gateway_error_status(error), detail=error.safe_message
+            ) from error
         return {"cancelled": True, "request_id": request_id}
 
     app.state.gateway = gateway

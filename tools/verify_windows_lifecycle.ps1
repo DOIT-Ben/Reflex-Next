@@ -195,6 +195,9 @@ function Invoke-HostProbe {
       $process.WaitForExit()
       $forcedTermination = $true
     }
+    if ($forcedTermination) {
+      throw "host_graceful_shutdown_timeout"
+    }
     $diagnostics = Join-Path $data "diagnostics\host-diagnostics.jsonl"
     if (-not (Test-Path -LiteralPath $diagnostics -PathType Leaf)) {
       throw "host_isolation_diagnostics_missing"
@@ -277,6 +280,7 @@ function Invoke-LegacyConfigProbe {
     if (-not $process.HasExited) {
       $process.Kill()
       $process.WaitForExit()
+      throw "legacy_config_graceful_shutdown_timeout"
     }
     if (-not (Test-Path -LiteralPath $diagnostics -PathType Leaf)) {
       throw "legacy_config_diagnostics_missing"

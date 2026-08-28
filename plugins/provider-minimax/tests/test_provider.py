@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from reflex_core import CancellationToken, OptimizeRequest
+from reflex_core import CancellationToken, OptimizeRequest, ProviderEvent
 from reflex_provider_minimax import plugin
 from reflex_provider_minimax import provider as provider_module
 from reflex_provider_minimax.provider import MiniMaxProvider, MiniMaxProviderError
@@ -113,6 +113,64 @@ def test_stream_maps_request_and_yields_incremental_content_without_repr_leakage
         "stream": True,
     }
     assert PRIVATE_SENTINEL not in repr(provider)
+
+
+def test_stream_events_exposes_core_provider_event_contract():
+    provider = MiniMaxProvider(
+        PRIVATE_SENTINEL,
+        provider_config(),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=STREAM_BYTES,
+            )
+        ),
+    )
+
+    events = list(
+        provider.stream_events(
+            {"text": "input"}, request(), CancellationToken()
+        )
+    )
+
+    assert [event.kind for event in events] == [
+        "request_started",
+        "text_delta",
+        "text_delta",
+        "completed",
+    ]
+    assert all(isinstance(event, ProviderEvent) for event in events)
+
+
+def test_stream_events_reports_the_effective_request_model(monkeypatch):
+    override_model = "fixture-model-override"
+    monkeypatch.setattr(
+        provider_module,
+        "SUPPORTED_MODELS",
+        (provider_module.DEFAULT_MODEL, override_model),
+    )
+    provider = MiniMaxProvider(
+        PRIVATE_SENTINEL,
+        provider_config(),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=STREAM_BYTES,
+            )
+        ),
+    )
+
+    events = list(
+        provider.stream_events(
+            {"text": "input"},
+            request(model=override_model),
+            CancellationToken(),
+        )
+    )
+
+    assert events[0].data["model"] == override_model
 
 
 def test_stream_accepts_minimax_finish_reason_without_done_marker():

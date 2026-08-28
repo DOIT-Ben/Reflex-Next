@@ -14,6 +14,8 @@ else {
   $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 }
 
+. (Join-Path $PSScriptRoot "project_registry.ps1")
+
 if ([string]::IsNullOrWhiteSpace($PolicyPath)) {
   $PolicyPath = Join-Path $PSScriptRoot "policies\dependency-audit-policy.json"
 }
@@ -259,7 +261,8 @@ function Read-FixtureInputs {
 function Invoke-LiveInputs {
   param(
     [string]$Root,
-    [object]$Policy
+    [object]$Policy,
+    [object]$Registry
   )
 
   Assert-ToolVersion -Executable "cargo" -Arguments @("audit", "--version") -ExpectedVersion ([string]$Policy.tools.cargo_audit) -WorkDir $Root
@@ -268,8 +271,12 @@ function Invoke-LiveInputs {
 
   $pythonVulnerabilities = [System.Collections.Generic.List[object]]::new()
   $pythonLicenses = [System.Collections.Generic.List[object]]::new()
-  foreach ($relativeProject in @($Policy.python_projects)) {
-    $projectPath = Join-Path $Root ([string]$relativeProject).Replace("/", "\")
+  $pythonProjects = @($Registry.projects | Where-Object {
+      $_.kind -eq "python" -and $_.verify -eq $true
+    })
+  foreach ($project in $pythonProjects) {
+    $relativeProject = ([string]$project.path).Replace("/", "\")
+    $projectPath = Join-Path $Root $relativeProject
     if (-not (Test-Path -LiteralPath (Join-Path $projectPath "uv.lock") -PathType Leaf)) {
       throw "missing_lock:python"
     }
@@ -361,8 +368,9 @@ try {
     throw "unsupported_policy_schema"
   }
 
+  $registry = Get-ReflexProjectRegistry -RepositoryRoot $RepositoryRoot
   if ([string]::IsNullOrWhiteSpace($FixtureDirectory)) {
-    $inputs = Invoke-LiveInputs -Root $RepositoryRoot -Policy $policy
+    $inputs = Invoke-LiveInputs -Root $RepositoryRoot -Policy $policy -Registry $registry
   }
   else {
     $inputs = Read-FixtureInputs -Directory (Resolve-Path -LiteralPath $FixtureDirectory).Path

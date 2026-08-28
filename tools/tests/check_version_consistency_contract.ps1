@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $checkScript = Join-Path $root "tools\check_version_consistency.ps1"
+$registryLoader = Join-Path $root "tools\project_registry.ps1"
 
 function Assert-True {
   param(
@@ -32,6 +33,8 @@ function New-VersionFixture {
   )
 
   New-Item -ItemType Directory -Path $Path -Force | Out-Null
+  New-Item -ItemType Directory -Path (Join-Path $Path "tools") -Force | Out-Null
+  Copy-Item -LiteralPath $registryLoader -Destination (Join-Path $Path "tools\project_registry.ps1") -Force
   Write-Utf8NoBom -Path (Join-Path $Path "VERSION") -Content $Version
   Write-Utf8NoBom -Path (Join-Path $Path "apps\tauri-host\package.json") -Content (@{
       name = "@reflex-next/tauri-host"
@@ -154,6 +157,77 @@ name = "reflex-core"
 version = "$Version"
 source = { editable = "../../packages/reflex-core" }
 "@
+
+  Write-Utf8NoBom -Path (Join-Path $Path "packages\reflex-extra-product\pyproject.toml") -Content @"
+[build-system]
+requires = ["setuptools>=68"]
+
+[project]
+name = "reflex-extra-product"
+version = "$Version"
+"@
+  Write-Utf8NoBom -Path (Join-Path $Path "packages\reflex-extra-product\uv.lock") -Content @"
+version = 1
+
+[[package]]
+name = "reflex-extra-product"
+version = "$Version"
+source = { editable = "." }
+"@
+
+  $registry = [ordered]@{
+    schema_version = 1
+    sbom_components = @(
+      [ordered]@{
+        id = "rust-tauri-host"; project = "apps/tauri-host/src-tauri";
+        root_component = "reflex-next-tauri-host"; source_lock = "apps/tauri-host/src-tauri/Cargo.lock";
+        bom_ref_prefix = ""
+      },
+      [ordered]@{
+        id = "node-tauri-host"; project = "apps/tauri-host";
+        root_component = "tauri-host"; source_lock = "apps/tauri-host/package-lock.json";
+        bom_ref_prefix = "@reflex-next/tauri-host@"
+      }
+    )
+    projects = @(
+      [ordered]@{
+        id = "reflex-core"; kind = "python"; path = "packages/reflex-core";
+        package_name = "reflex-core"; lock = "packages/reflex-core/uv.lock";
+        module = "reflex_core"; sidecar = $true;
+        version_lock_packages = @("reflex-core");
+        role = "core"; verify = $true; sbom = $false; version_policy = "product"
+      },
+      [ordered]@{
+        id = "reflex-runtime"; kind = "python"; path = "packages/reflex-runtime";
+        package_name = "reflex-runtime"; lock = "packages/reflex-runtime/uv.lock";
+        module = "reflex_runtime"; sidecar = $true;
+        version_lock_packages = @("reflex-runtime", "reflex-core");
+        role = "runtime"; verify = $true; sbom = $false; version_policy = "product"
+      },
+      [ordered]@{
+        id = "reflex-http-host"; kind = "python"; path = "packages/reflex-http-host";
+        package_name = "reflex-http-host"; lock = "packages/reflex-http-host/uv.lock";
+        module = "reflex_http_host"; sidecar = $false;
+        version_lock_packages = @("reflex-http-host", "reflex-runtime", "reflex-core");
+        role = "host"; verify = $true; sbom = $false; version_policy = "product"
+      },
+      [ordered]@{
+        id = "reflex-cloud"; kind = "python"; path = "services/reflex-cloud";
+        package_name = "reflex-cloud"; lock = "services/reflex-cloud/uv.lock";
+        module = "reflex_cloud"; sidecar = $false;
+        version_lock_packages = @("reflex-cloud", "reflex-core");
+        role = "service"; verify = $true; sbom = $false; version_policy = "product"
+      },
+      [ordered]@{
+        id = "reflex-extra-product"; kind = "python"; path = "packages/reflex-extra-product";
+        package_name = "reflex-extra-product"; lock = "packages/reflex-extra-product/uv.lock";
+        module = "reflex_extra_product"; sidecar = $false;
+        version_lock_packages = @("reflex-extra-product");
+        role = "product-extension"; verify = $true; sbom = $false; version_policy = "product"
+      }
+    )
+  }
+  Write-Utf8NoBom -Path (Join-Path $Path "tools\project-registry.json") -Content ($registry | ConvertTo-Json -Depth 10)
 
   # Independent workspace plugins intentionally have their own release cadence.
   Write-Utf8NoBom -Path (Join-Path $Path "plugins\example\pyproject.toml") -Content @"
@@ -283,6 +357,14 @@ try {
   Set-TomlSectionVersion -Path (Join-Path $consistentRoot "plugins\example\pyproject.toml") -Section "project" -Version "7.7.7"
   $independentPlugin = Invoke-Check -FixtureRoot $consistentRoot
   Assert-True ($independentPlugin.ExitCode -eq 0) "Independent plugin package versions must not be compared with the product release."
+
+  $extraProductManifest = Join-Path $consistentRoot "packages\reflex-extra-product\pyproject.toml"
+  $extraProductContent = Get-Content -Raw -Encoding UTF8 -LiteralPath $extraProductManifest
+  Set-TomlSectionVersion -Path $extraProductManifest -Section "project" -Version "1.2.4"
+  $extraProductMismatch = Invoke-Check -FixtureRoot $consistentRoot
+  Write-Utf8NoBom -Path $extraProductManifest -Content $extraProductContent
+  Assert-True ($extraProductMismatch.ExitCode -ne 0) "Registry-added product projects must be checked for version drift."
+  Assert-True (($extraProductMismatch.Output | Where-Object { $_ -match 'Python reflex-extra-product' }).Count -gt 0) "Registry-added product drift must identify the source."
 
   $mismatchCases = @(
     @{ Path = "apps\tauri-host\src-tauri\tauri.conf.json"; Kind = "json"; Label = "Tauri" },

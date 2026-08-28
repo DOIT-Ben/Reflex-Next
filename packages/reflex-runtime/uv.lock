@@ -544,6 +544,7 @@ version = "0.7.0a8"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
+    { name = "reflex-core" },
 ]
 
 [package.optional-dependencies]
@@ -569,6 +570,7 @@ requires-dist = [
     { name = "pyinstaller", marker = "extra == 'dev'", specifier = ">=6,<7" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "reflex-batch-runner", marker = "extra == 'builtins'", editable = "../../plugins/batch-runner" },
+    { name = "reflex-core", editable = "../reflex-core" },
     { name = "reflex-history-sqlite", marker = "extra == 'builtins'", editable = "../../plugins/history-sqlite" },
     { name = "reflex-markdown-preview", marker = "extra == 'builtins'", editable = "../../plugins/markdown-preview" },
     { name = "reflex-plugin-semantic-detector", marker = "extra == 'builtins'", editable = "../../plugins/semantic-detector" },

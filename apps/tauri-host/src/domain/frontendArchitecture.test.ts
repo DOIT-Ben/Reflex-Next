@@ -155,6 +155,14 @@ describe("production frontend architecture", () => {
     expect(appSource).toContain("const promptAvailable =");
     expect(appSource).toContain("createPromptFeedbackPayload({");
     expect(appSource).not.toContain('openFeedback(sentiment, "prompt", false)');
+    const mainStart = appSource.indexOf("<main");
+    const windowStart = appSource.indexOf('<section\n    class="window"');
+    expect(mainStart).toBeGreaterThanOrEqual(0);
+    expect(windowStart).toBeGreaterThan(mainStart);
+    expect(appSource.slice(mainStart, windowStart)).toContain("data-dialog-focus-fallback");
+    expect(appSource.slice(windowStart, windowStart + 220)).not.toContain(
+      "data-dialog-focus-fallback"
+    );
 
     const settingsSource = readFileSync(
       join(sourceRoot, "components", "settings", "SettingsDialog.svelte"),
@@ -162,6 +170,13 @@ describe("production frontend architecture", () => {
     );
     expect(settingsSource).not.toContain("手动固定");
     expect(settingsSource).toContain('releaseStatus === "experimental"');
+    expect(settingsSource).toContain('!element.closest("[inert]")');
+
+    const firstRunSource = readFileSync(
+      join(sourceRoot, "components", "onboarding", "FirstRunDialog.svelte"),
+      "utf8"
+    );
+    expect(firstRunSource).toContain('!element.closest("[inert]")');
 
     const promptSource = readFileSync(
       join(sourceRoot, "components", "feedback", "FeedbackPromptDialog.svelte"),
@@ -241,6 +256,42 @@ describe("production frontend architecture", () => {
     expect(appSource).not.toMatch(/class=["'](?:command|template|batch)-dialog["']/);
   });
 
+  it("keeps the workbench focused on one primary action", () => {
+    const inputSource = readFileSync(
+      join(sourceRoot, "components", "workbench", "InputPane.svelte"),
+      "utf8"
+    );
+    const configSource = readFileSync(
+      join(sourceRoot, "components", "workbench", "ConfigSummary.svelte"),
+      "utf8"
+    );
+    const titleBarSource = readFileSync(
+      join(sourceRoot, "components", "shell", "ReflexTitleBar.svelte"),
+      "utf8"
+    );
+
+    expect(inputSource).not.toContain('<span>{translate("常用任务")}</span>');
+    expect(inputSource).not.toContain('<small>{translate(action.hint)}</small>');
+    expect(configSource).toContain('<details class="advanced-config">');
+    expect(configSource).toContain('translate("更多设置")');
+    expect(titleBarSource).toContain('<details class="workspace-controls">');
+  });
+
+  it("uses one exposed outer window contour instead of nested workbench cards", () => {
+    const tauriConfig = JSON.parse(
+      readFileSync(join(frontendRoot, "src-tauri", "tauri.conf.json"), "utf8")
+    ) as { app: { windows: Array<{ transparent?: boolean }> } };
+    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+
+    expect(tauriConfig.app.windows[0]?.transparent).toBe(true);
+    expect(styles).toMatch(
+      /\.app-shell\.outer-contour\s*\{[^}]*padding:\s*0;[^}]*background:\s*transparent;[^}]*border-radius:\s*24px;[^}]*overflow:\s*hidden;/s
+    );
+    expect(styles).toMatch(
+      /\.app-shell\.outer-contour \.workbench-grid\s*\{[^}]*gap:\s*0;/s
+    );
+  });
+
   it("keeps the first-success loop in the host UI without leaking credentials", () => {
     const appSource = readFileSync(join(sourceRoot, "App.svelte"), "utf8");
     const inputSource = readFileSync(
@@ -251,10 +302,50 @@ describe("production frontend architecture", () => {
       join(sourceRoot, "components", "workbench", "ResultPane.svelte"),
       "utf8"
     );
+    const firstRunSource = readFileSync(
+      join(sourceRoot, "components", "onboarding", "FirstRunDialog.svelte"),
+      "utf8"
+    );
+    const settingsSource = readFileSync(
+      join(sourceRoot, "components", "settings", "SettingsDialog.svelte"),
+      "utf8"
+    );
 
     expect(appSource).toContain("first_run_activation");
     expect(appSource).toContain("availableActivationRoutes(cloudAvailability)");
     expect(appSource).toContain("completeFirstRunActivation()");
+    expect(appSource).toContain('inert={state.overlay === "settings" || activationOpen}');
+    expect(appSource).toContain("runtime_stream_failed");
+    expect(appSource).toMatch(
+      /try\s*\{[\s\S]{0,200}for await \(const event of coreBridge\.optimize[\s\S]{0,1600}\}\s*catch[\s\S]{0,600}\}\s*finally/
+    );
+    const postponeFirstRunBody = appSource.match(
+      /function postponeFirstRun\(\)\s*\{([\s\S]*?)\n  \}/
+    )?.[1] ?? "";
+    expect(postponeFirstRunBody).toContain("activationOpen = false");
+    expect(postponeFirstRunBody).toContain('activationNotice = ""');
+    expect(postponeFirstRunBody).not.toContain("completeActivation");
+    expect(postponeFirstRunBody).not.toContain("persistActivationState");
+    expect(appSource).toMatch(
+      /async function finishFirstRunFromSettings\(providerId: string \| null\)[\s\S]{0,280}completeFirstRunActivation\(\)[\s\S]{0,180}cancelSettingsView\(\)/
+    );
+    expect(appSource).toMatch(
+      /<\/section>[\s\S]{0,8000}\{#if activationOpen && state\.overlay !== "settings"\}[\s\S]{0,480}<FirstRunDialog/
+    );
+    expect(appSource).toMatch(
+      /<\/section>[\s\S]{0,1200}\{#if state\.overlay === "settings"\}[\s\S]{0,480}<SettingsDialog/
+    );
+    expect(firstRunSource).toContain("focusableSelector");
+    expect(firstRunSource).toContain("on:keydown={handleKeydown}");
+    expect(firstRunSource).toContain('data-dialog-focus-fallback');
+    expect(settingsSource).toContain("focusableSelector");
+    expect(settingsSource).toContain("onkeydown={handleKeydown}");
+    expect(settingsSource).toContain('data-dialog-focus-fallback');
+    expect(appSource).toContain("data-dialog-focus-fallback");
+    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+    expect(styles).toMatch(
+      /\.app-shell \.settings-layer\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0;/s
+    );
     expect(appSource).toContain("quickActions={quickActions}");
     expect(appSource).toContain("trustSummary={generationTrust}");
     expect(inputSource).toContain("onQuickAction");
@@ -277,5 +368,66 @@ describe("production frontend architecture", () => {
     expect(styles).toMatch(/@media\s*\(max-width:\s*760px\)[\s\S]*\.history-workspace/);
     expect(historySource).toContain("if (!config.history_enabled)");
     expect(historySource).toMatch(/event\.status === "error" \|\| event\.status === "cancelled"/);
+  });
+
+  it("keeps shared UI primitives as the single source for common materials", () => {
+    for (const component of ["BaseButton", "GlassPanel", "Field", "DialogShell", "EmptyState", "SelectField"]) {
+      expect(existsSync(join(sourceRoot, "components", "ui", `${component}.svelte`))).toBe(true);
+    }
+
+    const historyList = readFileSync(join(sourceRoot, "components", "history", "HistoryList.svelte"), "utf8");
+    const historyDetail = readFileSync(join(sourceRoot, "components", "history", "HistoryDetail.svelte"), "utf8");
+    expect(historyList).toContain('from "../ui/EmptyState.svelte"');
+    expect(historyDetail).toContain('from "../ui/EmptyState.svelte"');
+  });
+
+  it("uses one accessible custom select instead of browser-native option popups", () => {
+    const nativeSelectUsages = productionFiles
+      .filter(({ path }) => path.endsWith(".svelte"))
+      .filter(({ source }) => /<(?:select|option)\b/i.test(source))
+      .map(({ path }) => path);
+    expect(nativeSelectUsages).toEqual([]);
+
+    const selectSource = readFileSync(
+      join(sourceRoot, "components", "ui", "SelectField.svelte"),
+      "utf8"
+    );
+    expect(selectSource).toContain('role="combobox"');
+    expect(selectSource).toContain('role="listbox"');
+    expect(selectSource).toContain("ArrowDown");
+    expect(selectSource).toContain("aria-selected");
+    expect(selectSource).toContain("event.stopPropagation()");
+    expect(selectSource).toContain('tabindex="-1"');
+    expect(selectSource).toContain("scrollIntoView");
+    expect(selectSource).toContain("viewportZoom");
+  });
+
+  it("uses the three-level typography token scale everywhere", () => {
+    const styles = [
+      {
+        path: "src/styles.css",
+        source: readFileSync(join(sourceRoot, "styles.css"), "utf8")
+      },
+      ...productionFiles.filter(({ path }) => path.endsWith(".svelte"))
+    ];
+    const allowed = new Set([
+      "var(--font-meta)",
+      "var(--font-body)",
+      "var(--font-title)"
+    ]);
+    const declarations = styles.flatMap(({ path, source }) =>
+      [...source.matchAll(/font-size\s*:\s*([^;}\n]+)/g)].map((match) => ({
+        path,
+        value: match[1].replace(/\s*!important\s*$/, "").trim()
+      }))
+    );
+
+    expect(styles[0].source).toContain("--font-meta: 12px");
+    expect(styles[0].source).toContain("--font-body: 14px");
+    expect(styles[0].source).toContain("--font-title: 18px");
+    expect(styles[0].source).not.toMatch(
+      /(?:\.settings-head h2|\.settings-content h3)[^{]*\{[^}]*font-size:\s*var\(--font-title\)/s
+    );
+    expect(declarations.filter(({ value }) => !allowed.has(value))).toEqual([]);
   });
 });

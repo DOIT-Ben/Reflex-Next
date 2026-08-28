@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import queue
@@ -12,10 +13,11 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,9 +37,234 @@ MAX_TIMEOUT_SECONDS = 30.0
 MAX_DURATION_HOURS = 168.0
 MAX_RATE_PER_MINUTE = 6_000.0
 MAX_PROTOCOL_EVENTS = 4_096
+MAX_REPORT_INTEGER = 10**12
+MAX_STATUS_REPORT_BYTES = 2 * 1024 * 1024
 MAX_STDERR_BYTES = 8 * 1024 * 1024
 MAX_TERMINAL_HISTORY = 100_000
 FINAL_OBSERVATION_SECONDS = 0.5
+STATUS_HEARTBEAT_GRACE_SECONDS = 300.0
+
+_STATUS_PLAN_FIELDS = {
+    "minimum_iterations",
+    "minimum_duration_hours",
+    "batch_size",
+    "cancel_every",
+    "rate_per_minute",
+    "batch_timeout_seconds",
+}
+_STATUS_RESULT_FIELDS = {
+    "iterations",
+    "completed_requests",
+    "cancelled_requests",
+    "protocol_events",
+    "maximum_queue_depth",
+    "final_observation_events",
+    "elapsed_seconds",
+    "graceful_shutdown",
+    "failure_category",
+}
+_STATUS_ENVIRONMENT_FIELDS = {
+    "system",
+    "system_release",
+    "architecture",
+    "processor",
+    "logical_cpu_count",
+    "python_version",
+}
+
+
+def _is_status_report(report: Mapping[str, Any]) -> bool:
+    required = {
+        "schema_version",
+        "status",
+        "fixture",
+        "pid",
+        "process_started_at_utc",
+        "started_at_utc",
+        "finished_at_utc",
+        "last_heartbeat_utc",
+        "environment",
+        "plan",
+        "result",
+        "passed",
+    }
+    if set(report) != required:
+        return False
+    status = report.get("status")
+    if report.get("schema_version") != 1 or status not in {
+        "running",
+        "passed",
+        "failed",
+    }:
+        return False
+    if report.get("fixture") != "local_mock" or not isinstance(
+        report.get("passed"), bool
+    ):
+        return False
+    pid = report.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    if not _is_utc_timestamp(report.get("process_started_at_utc"), allow_none=True):
+        return False
+    started_at = _parse_utc_timestamp(report.get("started_at_utc"))
+    heartbeat_at = _parse_utc_timestamp(report.get("last_heartbeat_utc"))
+    if started_at is None or heartbeat_at is None:
+        return False
+    finished_at = _parse_utc_timestamp(report.get("finished_at_utc"))
+    if report.get("finished_at_utc") is not None and finished_at is None:
+        return False
+    process_started_at = _parse_utc_timestamp(report.get("process_started_at_utc"))
+    if process_started_at is not None and process_started_at > started_at:
+        return False
+    if heartbeat_at < started_at:
+        return False
+    if finished_at is not None and finished_at < started_at:
+        return False
+    if finished_at is not None and heartbeat_at > finished_at:
+        return False
+    now = datetime.now(timezone.utc)
+    if status != "running" and (started_at > now or heartbeat_at > now or (
+        finished_at is not None and finished_at > now
+    )):
+        return False
+    if not isinstance(report.get("environment"), dict) or set(
+        report["environment"]
+    ) != _STATUS_ENVIRONMENT_FIELDS:
+        return False
+    environment = report["environment"]
+    if any(
+        not isinstance(environment[field], str) or not environment[field]
+        for field in (
+            "system",
+            "system_release",
+            "architecture",
+            "processor",
+            "python_version",
+        )
+    ):
+        return False
+    if environment["logical_cpu_count"] is not None and (
+        not isinstance(environment["logical_cpu_count"], int)
+        or isinstance(environment["logical_cpu_count"], bool)
+        or environment["logical_cpu_count"] <= 0
+    ):
+        return False
+    plan = report.get("plan")
+    result = report.get("result")
+    if not isinstance(plan, dict) or set(plan) != _STATUS_PLAN_FIELDS:
+        return False
+    if not isinstance(result, dict) or set(result) != _STATUS_RESULT_FIELDS:
+        return False
+    if not isinstance(plan["minimum_iterations"], int) or isinstance(
+        plan["minimum_iterations"], bool
+    ) or not 1 <= plan["minimum_iterations"] <= MAX_ITERATIONS:
+        return False
+    if not _is_finite_number(plan["minimum_duration_hours"]) or not 0 <= plan[
+        "minimum_duration_hours"
+    ] <= MAX_DURATION_HOURS:
+        return False
+    if not isinstance(plan["batch_size"], int) or isinstance(
+        plan["batch_size"], bool
+    ) or not 1 <= plan["batch_size"] <= MAX_BATCH_SIZE:
+        return False
+    if not isinstance(plan["cancel_every"], int) or isinstance(
+        plan["cancel_every"], bool
+    ) or not 2 <= plan["cancel_every"] <= 100:
+        return False
+    if not _is_finite_number(plan["rate_per_minute"]) or not 0 <= plan[
+        "rate_per_minute"
+    ] <= MAX_RATE_PER_MINUTE:
+        return False
+    if not _is_finite_number(plan["batch_timeout_seconds"]) or not 0 < plan[
+        "batch_timeout_seconds"
+    ] <= MAX_TIMEOUT_SECONDS:
+        return False
+    for field in (
+        "iterations",
+        "completed_requests",
+        "cancelled_requests",
+        "protocol_events",
+        "maximum_queue_depth",
+        "final_observation_events",
+    ):
+        if (
+            not isinstance(result[field], int)
+            or isinstance(result[field], bool)
+            or not 0 <= result[field] <= MAX_REPORT_INTEGER
+        ):
+            return False
+    if result["maximum_queue_depth"] > MAX_PROTOCOL_EVENTS:
+        return False
+    if not _is_finite_number(result["elapsed_seconds"]) or result["elapsed_seconds"] < 0:
+        return False
+    if finished_at is not None and result["elapsed_seconds"] > (
+        finished_at - started_at
+    ).total_seconds() + 1.0:
+        return False
+    if not isinstance(result.get("graceful_shutdown"), bool):
+        return False
+    if result.get("failure_category") is not None and not isinstance(
+        result.get("failure_category"), str
+    ):
+        return False
+    passed = report.get("passed")
+    if status == "running":
+        return (
+            passed is False
+            and finished_at is None
+            and result["failure_category"] is None
+            and result["graceful_shutdown"] is False
+            and result["completed_requests"] + result["cancelled_requests"]
+            == result["iterations"]
+        )
+    if finished_at is None:
+        return False
+    if status == "passed":
+        return (
+            passed is True
+            and result["failure_category"] is None
+            and result["graceful_shutdown"] is True
+            and result["iterations"] >= plan["minimum_iterations"]
+            and result["completed_requests"] + result["cancelled_requests"]
+            == result["iterations"]
+            and result["completed_requests"] > 0
+            and result["cancelled_requests"] > 0
+            and result["final_observation_events"] == 0
+            and result["elapsed_seconds"]
+            >= plan["minimum_duration_hours"] * 3600.0
+        )
+    return (
+        passed is False
+        and isinstance(result["failure_category"], str)
+        and bool(result["failure_category"])
+    )
+
+
+def _is_finite_number(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    # ``math.isfinite`` converts integers to float and raises OverflowError for
+    # arbitrarily large values.  Status validation must reject those values
+    # deterministically through the explicit bounds below instead of escaping.
+    return isinstance(value, int) or math.isfinite(value)
+
+
+def _is_utc_timestamp(value: Any, *, allow_none: bool = False) -> bool:
+    if value is None and allow_none:
+        return True
+    return _parse_utc_timestamp(value) is not None
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        return None
+    return parsed.astimezone(timezone.utc)
 
 FIXTURE_INPUT = "reflex runtime soak fixture"
 CANCEL_FIXTURE_DELAY_MS = 100
@@ -117,6 +344,32 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def write_json_report(path: Path, report: Mapping[str, Any]) -> None:
+    """Persist a report atomically so status readers never see partial JSON."""
+    if path.suffix.lower() != ".json":
+        raise ValueError("json-output must use a .json suffix")
+    parent = path.parent.resolve()
+    parent.mkdir(parents=True, exist_ok=True)
+    serialized = (
+        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    )
+    temporary: Path | None = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=parent
+        )
+        temporary = Path(temporary_name)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(serialized)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 class RuntimeSoakSession:
     """One bounded Runtime process using only the development mock provider."""
 
@@ -127,6 +380,7 @@ class RuntimeSoakSession:
         )
         self._reader_failure = threading.Event()
         self._diagnostic_overflow = threading.Event()
+        self._diagnostic_failure = threading.Event()
         self._terminal_requests: dict[str, str] = {}
         self._terminal_order: deque[str] = deque()
         self._shutdown_sequence = 0
@@ -142,18 +396,26 @@ class RuntimeSoakSession:
             errors="replace",
             bufsize=1,
         )
-        self._stdout_thread = threading.Thread(
-            target=self._read_protocol,
-            name="soak-runtime-protocol",
-            daemon=True,
-        )
-        self._stderr_thread = threading.Thread(
-            target=self._drain_diagnostics,
-            name="soak-runtime-diagnostics",
-            daemon=True,
-        )
-        self._stdout_thread.start()
-        self._stderr_thread.start()
+        self._stdout_thread: threading.Thread | None = None
+        self._stderr_thread: threading.Thread | None = None
+        try:
+            self._stdout_thread = threading.Thread(
+                target=self._read_protocol,
+                name="soak-runtime-protocol",
+                daemon=True,
+            )
+            self._stderr_thread = threading.Thread(
+                target=self._drain_diagnostics,
+                name="soak-runtime-diagnostics",
+                daemon=True,
+            )
+            assert self._stdout_thread is not None and self._stderr_thread is not None
+            self._stdout_thread.start()
+            self._stderr_thread.start()
+        except BaseException:
+            self._force_stop()
+            self._close_streams_and_join_readers()
+            raise
 
     def __enter__(self) -> "RuntimeSoakSession":
         return self
@@ -261,6 +523,7 @@ class RuntimeSoakSession:
 
     def close(self) -> bool:
         graceful = False
+        interrupted = False
         if self._process.poll() is None:
             try:
                 self._shutdown_sequence += 1
@@ -274,31 +537,79 @@ class RuntimeSoakSession:
                 )
                 self._process.wait(timeout=min(2.0, self.timeout_seconds))
                 graceful = self._process.returncode == 0
-            except (SoakFailure, OSError, subprocess.TimeoutExpired):
-                self._process.terminate()
-                try:
-                    self._process.wait(timeout=1.0)
-                except subprocess.TimeoutExpired:
-                    self._process.kill()
-                    self._process.wait(timeout=1.0)
+            except (SoakFailure, OSError, subprocess.TimeoutExpired, KeyboardInterrupt) as error:
+                interrupted = isinstance(error, KeyboardInterrupt)
+                self._force_stop()
         else:
             graceful = self._process.returncode == 0
 
+        try:
+            readers_stopped = self._close_streams_and_join_readers()
+        except KeyboardInterrupt:
+            interrupted = True
+            self._force_stop()
+            readers_stopped = self._close_streams_and_join_readers()
+        process_stopped = self._process.poll() is not None
+        return (
+            graceful
+            and not interrupted
+            and not self._reader_failure.is_set()
+            and not self._diagnostic_overflow.is_set()
+            and not self._diagnostic_failure.is_set()
+            and process_stopped
+            and readers_stopped
+        )
+
+    def _close_streams_and_join_readers(self) -> bool:
+        cleanup_ok = True
         for stream in (
             self._process.stdin,
             self._process.stdout,
             self._process.stderr,
         ):
             if stream is not None:
-                stream.close()
-        self._stdout_thread.join(timeout=1.0)
-        self._stderr_thread.join(timeout=1.0)
-        return (
-            graceful
-            and not self._reader_failure.is_set()
-            and not self._diagnostic_overflow.is_set()
-            and self._process.poll() is not None
+                try:
+                    stream.close()
+                except Exception:
+                    cleanup_ok = False
+        for reader in (self._stdout_thread, self._stderr_thread):
+            if reader is None:
+                continue
+            is_alive = getattr(reader, "is_alive", None)
+            if callable(is_alive) and is_alive():
+                try:
+                    reader.join(timeout=1.0)
+                except Exception:
+                    cleanup_ok = False
+        readers_stopped = not any(
+            callable(getattr(reader, "is_alive", None)) and reader.is_alive()
+            for reader in (self._stdout_thread, self._stderr_thread)
+            if reader is not None
         )
+        return cleanup_ok and readers_stopped
+
+    def _force_stop(self) -> bool:
+        """Terminate a child even when shutdown itself was interrupted."""
+        if self._process.poll() is not None:
+            return True
+        try:
+            self._process.terminate()
+        except (KeyboardInterrupt, OSError):
+            pass
+        try:
+            self._process.wait(timeout=1.0)
+            return self._process.poll() is not None
+        except (KeyboardInterrupt, OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            self._process.kill()
+        except (KeyboardInterrupt, OSError):
+            pass
+        try:
+            self._process.wait(timeout=1.0)
+        except (KeyboardInterrupt, OSError, subprocess.TimeoutExpired):
+            pass
+        return self._process.poll() is not None
 
     def _apply_event(self, state: _RequestState, event: Mapping[str, Any]) -> None:
         event_type = event.get("type")
@@ -361,6 +672,8 @@ class RuntimeSoakSession:
                 raise SoakFailure("protocol_reader_failed")
             if self._diagnostic_overflow.is_set():
                 raise SoakFailure("diagnostic_output_too_large")
+            if self._diagnostic_failure.is_set():
+                raise SoakFailure("diagnostic_reader_failed")
             if self._process.poll() is not None and self._events.empty():
                 raise SoakFailure("runtime_exited")
             remaining = deadline - time.monotonic()
@@ -414,19 +727,22 @@ class RuntimeSoakSession:
                 if not isinstance(envelope, dict):
                     raise ValueError("invalid envelope")
                 self._events.put(envelope, timeout=self.timeout_seconds)
-        except (json.JSONDecodeError, ValueError, queue.Full):
+        except Exception:
             self._reader_failure.set()
 
     def _drain_diagnostics(self) -> None:
         stream = self._process.stderr
         if stream is None:
             return
-        total = 0
-        for line in stream:
-            total += len(line.encode("utf-8", errors="replace"))
-            if total > MAX_STDERR_BYTES:
-                self._diagnostic_overflow.set()
-                return
+        try:
+            total = 0
+            for line in stream:
+                total += len(line.encode("utf-8", errors="replace"))
+                if total > MAX_STDERR_BYTES:
+                    self._diagnostic_overflow.set()
+                    return
+        except Exception:
+            self._diagnostic_failure.set()
 
 
 def _sliced_sleep(
@@ -475,6 +791,7 @@ class SoakRunner:
         cancel_every: int,
         duration_hours: float,
         rate_per_minute: float,
+        report_path: Path | None = None,
     ) -> dict[str, Any]:
         validate_limits(
             iterations=iterations,
@@ -496,6 +813,51 @@ class SoakRunner:
         failure_category: str | None = None
         graceful_shutdown = False
         session: Any | None = None
+        environment = self._environment_factory()
+        last_heartbeat_utc = started_at_utc
+        process_started_at_utc = _process_start_time_utc(os.getpid())
+
+        def build_report(
+            *, status: str, finished_at_utc: str | None, passed: bool
+        ) -> dict[str, Any]:
+            elapsed_seconds = max(0.0, self._monotonic() - started_at)
+            return {
+                "schema_version": 1,
+                "status": status,
+                "fixture": "local_mock",
+                "pid": os.getpid(),
+                "process_started_at_utc": process_started_at_utc,
+                "started_at_utc": started_at_utc,
+                "finished_at_utc": finished_at_utc,
+                "last_heartbeat_utc": last_heartbeat_utc,
+                "environment": environment,
+                "plan": {
+                    "minimum_iterations": iterations,
+                    "minimum_duration_hours": duration_hours,
+                    "batch_size": batch_size,
+                    "cancel_every": cancel_every,
+                    "rate_per_minute": rate_per_minute,
+                    "batch_timeout_seconds": timeout_seconds,
+                },
+                "result": {
+                    "iterations": completed_iterations,
+                    "completed_requests": completed_requests,
+                    "cancelled_requests": cancelled_requests,
+                    "protocol_events": protocol_events,
+                    "maximum_queue_depth": maximum_queue_depth,
+                    "final_observation_events": final_observation_events,
+                    "elapsed_seconds": round(elapsed_seconds, 3),
+                    "graceful_shutdown": graceful_shutdown,
+                    "failure_category": failure_category,
+                },
+                "passed": passed,
+            }
+
+        if report_path is not None:
+            write_json_report(
+                report_path,
+                build_report(status="running", finished_at_utc=None, passed=False),
+            )
 
         try:
             session = self._session_factory(timeout_seconds)
@@ -517,6 +879,12 @@ class SoakRunner:
                 maximum_queue_depth = max(
                     maximum_queue_depth, result.maximum_queue_depth
                 )
+                last_heartbeat_utc = self._utc_clock()
+                if report_path is not None:
+                    write_json_report(
+                        report_path,
+                        build_report(status="running", finished_at_utc=None, passed=False),
+                    )
 
                 if rate_per_minute > 0:
                     target_batch_seconds = (60.0 / rate_per_minute) * count
@@ -526,16 +894,31 @@ class SoakRunner:
                     if remaining > 0:
                         self._sleeper(remaining)
             final_observation_events = session.observe_final_window()
+            if final_observation_events:
+                raise SoakFailure("late_protocol_event")
         except SoakFailure as error:
             failure_category = error.code
+        except KeyboardInterrupt:
+            # Preserve a terminal report when an operator stops the run.  A
+            # report left as ``running`` would be indistinguishable from a
+            # crashed or power-lost process.
+            failure_category = "interrupted"
         except Exception:
             failure_category = "unexpected_failure"
         finally:
             if session is not None:
                 try:
                     graceful_shutdown = bool(session.close())
+                except KeyboardInterrupt:
+                    graceful_shutdown = False
+                    if failure_category is None:
+                        failure_category = "interrupted"
                 except Exception:
                     graceful_shutdown = False
+                    if failure_category is None:
+                        failure_category = "graceful_shutdown_failed"
+            if not graceful_shutdown and failure_category is None:
+                failure_category = "graceful_shutdown_failed"
 
         elapsed_seconds = max(0.0, self._monotonic() - started_at)
         passed = (
@@ -546,34 +929,16 @@ class SoakRunner:
             and cancelled_requests > 0
             and completed_requests > 0
             and graceful_shutdown
+            and final_observation_events == 0
         )
-        return {
-            "schema_version": 1,
-            "fixture": "local_mock",
-            "started_at_utc": started_at_utc,
-            "finished_at_utc": self._utc_clock(),
-            "environment": self._environment_factory(),
-            "plan": {
-                "minimum_iterations": iterations,
-                "minimum_duration_hours": duration_hours,
-                "batch_size": batch_size,
-                "cancel_every": cancel_every,
-                "rate_per_minute": rate_per_minute,
-                "batch_timeout_seconds": timeout_seconds,
-            },
-            "result": {
-                "iterations": completed_iterations,
-                "completed_requests": completed_requests,
-                "cancelled_requests": cancelled_requests,
-                "protocol_events": protocol_events,
-                "maximum_queue_depth": maximum_queue_depth,
-                "final_observation_events": final_observation_events,
-                "elapsed_seconds": round(elapsed_seconds, 3),
-                "graceful_shutdown": graceful_shutdown,
-                "failure_category": failure_category,
-            },
-            "passed": passed,
-        }
+        report = build_report(
+            status="passed" if passed else "failed",
+            finished_at_utc=self._utc_clock(),
+            passed=passed,
+        )
+        if report_path is not None:
+            write_json_report(report_path, report)
+        return report
 
 
 def render_human_summary(report: Mapping[str, Any]) -> str:
@@ -596,6 +961,108 @@ def render_human_summary(report: Mapping[str, Any]) -> str:
     )
 
 
+def _process_start_time_utc(pid: int) -> str | None:
+    """Return a Windows process creation time for PID-reuse detection."""
+    if pid <= 0 or os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class FileTime(ctypes.Structure):
+        _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetProcessTimes.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(FileTime),
+        ctypes.POINTER(FileTime),
+        ctypes.POINTER(FileTime),
+        ctypes.POINTER(FileTime),
+    ]
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return None
+    try:
+        creation = FileTime()
+        exit_time = FileTime()
+        kernel_time = FileTime()
+        user_time = FileTime()
+        if not kernel32.GetProcessTimes(
+            handle,
+            ctypes.byref(creation),
+            ctypes.byref(exit_time),
+            ctypes.byref(kernel_time),
+            ctypes.byref(user_time),
+        ):
+            return None
+        ticks = (creation.high << 32) | creation.low
+        created = datetime(1601, 1, 1, tzinfo=timezone.utc) + timedelta(
+            microseconds=ticks // 10
+        )
+        return _utc_timestamp(created)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _utc_timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _process_is_alive(pid: int) -> bool:
+    """Probe a process without sending a termination signal on Windows."""
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        ]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        process_query_limited_information = 0x1000
+        still_active = 259
+        handle = kernel32.OpenProcess(
+            process_query_limited_information,
+            False,
+            pid,
+        )
+        if not handle:
+            return False
+        try:
+            exit_code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return exit_code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+
+    try:
+        os.kill(pid, 0)
+    except (OSError, ProcessLookupError):
+        return False
+    return True
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run a bounded request/cancel soak against the local mock Runtime."
@@ -608,12 +1075,92 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cancel-every", type=int, default=DEFAULT_CANCEL_EVERY)
     parser.add_argument("--duration-hours", type=float, default=0.0)
     parser.add_argument("--rate-per-minute", type=float, default=0.0)
-    parser.add_argument("--json-output", type=Path)
+    output = parser.add_mutually_exclusive_group(required=True)
+    output.add_argument("--json-output", type=Path)
+    output.add_argument(
+        "--status",
+        type=Path,
+        help="Read a running or completed JSON report without touching the soak process.",
+    )
     return parser
+
+
+def print_status(path: Path) -> int:
+    try:
+        if path.stat().st_size > MAX_STATUS_REPORT_BYTES:
+            raise ValueError("报告文件过大")
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError, RecursionError) as error:
+        print(f"无法读取浸泡状态: {error}", file=sys.stderr)
+        return 2
+    if not isinstance(report, dict):
+        print("无法读取浸泡状态: 报告格式或版本无效", file=sys.stderr)
+        return 2
+    observed = dict(report)
+    if not _is_status_report(observed):
+        print("无法读取浸泡状态: 报告格式或版本无效", file=sys.stderr)
+        return 2
+    status = observed.get("status")
+    if status == "running":
+        pid = observed.get("pid")
+        pid_alive = isinstance(pid, int) and _process_is_alive(pid)
+        expected_process_start = _parse_utc_timestamp(
+            observed.get("process_started_at_utc")
+        )
+        actual_process_start = (
+            _parse_utc_timestamp(_process_start_time_utc(pid))
+            if pid_alive and isinstance(pid, int)
+            else None
+        )
+        process_identity_mismatch = os.name == "nt" and pid_alive and (
+            expected_process_start is None
+            or actual_process_start is None
+            or actual_process_start != expected_process_start
+        )
+        heartbeat_age: float | None = None
+        heartbeat_stale = True
+        now = datetime.now(timezone.utc)
+        heartbeat_at = _parse_utc_timestamp(observed.get("last_heartbeat_utc"))
+        plan = observed["plan"]
+        heartbeat_grace_seconds = STATUS_HEARTBEAT_GRACE_SECONDS
+        if plan["rate_per_minute"] > 0:
+            expected_batch_seconds = (
+                60.0 / plan["rate_per_minute"] * plan["batch_size"]
+            )
+            heartbeat_grace_seconds = max(
+                heartbeat_grace_seconds, expected_batch_seconds + 60.0
+            )
+        if heartbeat_at is not None and heartbeat_at <= now:
+            heartbeat_age = (now - heartbeat_at).total_seconds()
+            heartbeat_stale = heartbeat_age > heartbeat_grace_seconds
+        started_at = _parse_utc_timestamp(observed.get("started_at_utc"))
+        clock_skew = started_at is None or started_at > now or heartbeat_at is None or heartbeat_at > now
+        observed["heartbeat_age_seconds"] = (
+            round(heartbeat_age, 3) if heartbeat_age is not None else None
+        )
+        observed["heartbeat_grace_seconds"] = round(heartbeat_grace_seconds, 3)
+        observed["heartbeat_stale"] = heartbeat_stale
+        observed["clock_skew"] = clock_skew
+        observed["process_identity_mismatch"] = process_identity_mismatch
+        observed["observed_pid_alive"] = pid_alive
+        observed["stale"] = (
+            not pid_alive
+            or heartbeat_stale
+            or clock_skew
+            or process_identity_mismatch
+        )
+    print(json.dumps(observed, ensure_ascii=False, indent=2))
+    if status == "passed" and observed.get("passed") is True:
+        return 0
+    if status == "running" and observed.get("observed_pid_alive") and not observed.get("stale"):
+        return 0
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.status is not None:
+        return print_status(args.status)
     try:
         validate_limits(
             iterations=args.iterations,
@@ -634,10 +1181,9 @@ def main(argv: list[str] | None = None) -> int:
         cancel_every=args.cancel_every,
         duration_hours=args.duration_hours,
         rate_per_minute=args.rate_per_minute,
+        report_path=args.json_output,
     )
     serialized = json.dumps(report, ensure_ascii=False, indent=2)
-    if args.json_output is not None:
-        args.json_output.write_text(serialized + "\n", encoding="utf-8")
     print(render_human_summary(report), file=sys.stderr)
     print(serialized)
     return 0 if report["passed"] else 1

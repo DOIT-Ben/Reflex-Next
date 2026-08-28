@@ -3,6 +3,7 @@
   import Plus from "@lucide/svelte/icons/plus";
   import X from "@lucide/svelte/icons/x";
   import { templateVariables, type PromptTemplate, type TemplateDraft } from "../../domain/templateLibrary";
+  import SelectField from "../ui/SelectField.svelte";
 
   interface Props {
     query: string;
@@ -49,6 +50,10 @@
     onApply,
     onClose
   }: Props = $props();
+  let categoryOptions = $derived([
+    { value: "", label: translate("全部分类") },
+    ...categories.map((item) => ({ value: item, label: item }))
+  ]);
 
   let closeButton: HTMLButtonElement;
   let variables = $derived(templateVariables(draft.content));
@@ -68,10 +73,7 @@
     <div class="template-layout">
       <aside class="template-list">
         <input aria-label={translate("搜索模板")} value={query} placeholder={translate("搜索名称、分类或标签")} oninput={(event) => onQueryChange(event.currentTarget.value)} />
-        <select aria-label={translate("模板分类")} value={category ?? ""} onchange={(event) => onCategoryChange(event.currentTarget.value || null)}>
-          <option value="">{translate("全部分类")}</option>
-          {#each categories as item}<option value={item}>{item}</option>{/each}
-        </select>
+        <SelectField ariaLabel={translate("模板分类")} value={category ?? ""} options={categoryOptions} size="compact" onValueChange={(value) => onCategoryChange(value || null)} />
         <button class="outline template-new" type="button" onclick={onNew}><Plus size={15} strokeWidth={2} />{translate("新建模板")}</button>
         <div class="template-list-items">
           {#each templates as template (template.id)}

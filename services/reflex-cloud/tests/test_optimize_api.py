@@ -22,6 +22,8 @@ def _client(
     *,
     request_limit: int = 2,
     ip_limit: int = 60,
+    output_limit: int = 200_000,
+    provider_chunks: tuple[str, ...] = ("优化", "结果"),
     global_request_limit: int = 0,
     daily_cost_budget_microusd: int = 0,
     budget_max_output_chars: int = 200_000,
@@ -34,6 +36,7 @@ def _client(
         token_pepper=SecretStr("p" * 32),
         free_requests_per_day=request_limit,
         free_ip_requests_per_hour=ip_limit,
+        free_output_chars_per_day=output_limit,
         provider_model="MiniMax-M2.7-highspeed",
         provider_pricing_version="minimax-2026-07-14",
         provider_input_usd_per_million_tokens=1.0,
@@ -45,7 +48,7 @@ def _client(
     use_case = OptimizeUseCase(
         scene_detector=FakeSceneDetector(),
         template_resolver=FakeTemplateResolver(),
-        provider=FakeProvider(("优化", "结果")),
+        provider=FakeProvider(provider_chunks),
     )
     optimizer = CloudOptimizer(settings, use_case)
     with TestClient(create_app(settings, optimizer)) as client:
@@ -140,6 +143,37 @@ def test_quota_exhaustion_stops_before_a_second_stream(tmp_path) -> None:
         blocked = client.post("/v1/optimize", headers=headers, json=_payload("request-102"))
         assert blocked.status_code == 429
         assert blocked.json()["error"]["code"] == "quota_exhausted"
+    finally:
+        client_context.close()
+
+
+def test_output_quota_stops_before_an_over_limit_chunk_is_streamed(tmp_path) -> None:
+    client_context = _client(
+        tmp_path,
+        output_limit=1_000,
+        provider_chunks=("a" * 600, "b" * 600),
+    )
+    client, _ = next(client_context)
+    try:
+        _, headers = _identity(client)
+        response = client.post(
+            "/v1/optimize",
+            headers=headers,
+            json=_payload("request-output-limit"),
+        )
+
+        events = _events(response)
+        assert response.status_code == 200
+        assert [event["event"]["type"] for event in events] == ["status", "scene", "request", "chunk", "error"]
+        assert events[-1]["event"]["data"]["code"] == "quota_exhausted"
+        streamed_text = "".join(
+            event["event"]["data"]["text"]
+            for event in events
+            if event["event"]["type"] == "chunk"
+        )
+        assert streamed_text == "a" * 600
+        quota = client.get("/v1/quota", headers=headers).json()
+        assert quota["output_chars_used"] == 600
     finally:
         client_context.close()
 

@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createCancelCommand,
   createDefaultCoreBridge,
+  CloudCoreBridge,
   createOptimizeCommand,
   DemoCoreBridge,
+  isSuccessfulCompletionEvent,
   parseNdjsonEnvelopes,
   parseNdjsonEvents,
   selectEventsForRequest,
@@ -16,6 +18,12 @@ import {
 import { createDraftRequest } from "./reflexSession";
 
 describe("core bridge", () => {
+  it("treats only a result event as successful completion", () => {
+    expect(isSuccessfulCompletionEvent({ type: "done", data: {} })).toBe(true);
+    expect(isSuccessfulCompletionEvent({ type: "status", data: { phase: "completed" } })).toBe(false);
+    expect(isSuccessfulCompletionEvent({ type: "status", data: { phase: "streaming" } })).toBe(false);
+  });
+
   it("parses sidecar NDJSON into CoreEvent objects", () => {
     const events = parseNdjsonEvents(
       [
@@ -185,7 +193,7 @@ describe("core bridge", () => {
             payload: {
               version: 1,
               request_id: "req-tauri",
-              event: { type: "metric", data: { save_status: "saved", history_id: "history-1" } }
+              event: { type: "metric", data: { save_status: "saved" } }
             }
           });
         });
@@ -213,9 +221,230 @@ describe("core bridge", () => {
     expect(events).toEqual([
       { type: "status", data: { message: "正在分析场景" } },
       { type: "done", data: { text: "完成" } },
-      { type: "metric", data: { save_status: "saved", history_id: "history-1" } }
+      { type: "metric", data: { save_status: "saved" } }
     ]);
     expect(unlistenCalled).toBe(true);
+  });
+
+  it("closes a done-only Runtime stream after a bounded fallback", async () => {
+    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    const host = {
+      invoke: async () => {
+        queueMicrotask(() => {
+          listener?.({
+            payload: {
+              version: 1,
+              request_id: "req-done-only",
+              event: { type: "done", data: { text: "完成" } }
+            }
+          });
+        });
+      },
+      listen: async (_eventName: string, handler: (event: TauriEvent<CoreEventEnvelope>) => void) => {
+        listener = handler;
+        return () => undefined;
+      }
+    };
+    const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-done-only" });
+
+    vi.useFakeTimers();
+    let events: Array<{ type: string; data: Record<string, unknown> }> = [];
+    try {
+      const run = (async () => {
+        for await (const event of bridge.optimize(createDraftRequest("只返回结果"))) {
+          events.push(event);
+        }
+      })();
+      await vi.runAllTimersAsync();
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(events).toEqual([{ type: "done", data: { text: "完成" } }]);
+  });
+
+  it("keeps a metric that arrives after the old short completion window", async () => {
+    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    const host = {
+      invoke: async () => {
+        queueMicrotask(() => {
+          listener?.({
+            payload: {
+              version: 1,
+              request_id: "req-delayed-metric",
+              event: { type: "done", data: { text: "完成" } }
+            }
+          });
+          setTimeout(() => {
+            listener?.({
+              payload: {
+                version: 1,
+                request_id: "req-delayed-metric",
+                event: { type: "metric", data: { save_status: "saved" } }
+              }
+            });
+          }, 300);
+        });
+      },
+      listen: async (_eventName: string, handler: (event: TauriEvent<CoreEventEnvelope>) => void) => {
+        listener = handler;
+        return () => undefined;
+      }
+    };
+    const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-delayed-metric" });
+    const events = [];
+    for await (const event of bridge.optimize(createDraftRequest("延迟元数据"))) events.push(event);
+
+    expect(events.map((event) => event.type)).toEqual(["done", "metric"]);
+  });
+
+  it("fails a Runtime stream that never emits an event instead of waiting forever", async () => {
+    const invoked: Array<{ command: string; args?: unknown }> = [];
+    const host = {
+      invoke: async (command: string, args?: unknown) => {
+        invoked.push({ command, args });
+        return undefined;
+      },
+      listen: async () => () => undefined
+    };
+    const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-no-events" });
+
+    vi.useFakeTimers();
+    const events: Array<{ type: string; data: Record<string, unknown> }> = [];
+    try {
+      const run = (async () => {
+        for await (const event of bridge.optimize(createDraftRequest("无事件"))) {
+          events.push(event);
+        }
+      })();
+      await vi.runAllTimersAsync();
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        data: {
+          code: "request_timeout",
+          message: "模型响应超时，请稍后重试。",
+          recoverable: true,
+          action: "retry"
+        }
+      }
+    ]);
+    expect(invoked).toEqual([
+      { command: "runtime_optimize", args: { command: createOptimizeCommand("req-no-events", createDraftRequest("无事件")) } },
+      { command: "runtime_cancel", args: { command: createCancelCommand("req-no-events") } }
+    ]);
+  });
+
+  it("unblocks when the Runtime invoke itself never settles", async () => {
+    const invoked: string[] = [];
+    const host = {
+      invoke: async (command: string) => {
+        invoked.push(command);
+        if (command === "runtime_optimize") return new Promise<never>(() => undefined);
+        return undefined;
+      },
+      listen: async () => () => undefined
+    };
+    const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-hung-invoke" });
+
+    vi.useFakeTimers();
+    const events: Array<{ type: string; data: Record<string, unknown> }> = [];
+    try {
+      const run = (async () => {
+        for await (const event of bridge.optimize(createDraftRequest("挂起调用"))) {
+          events.push(event);
+        }
+      })();
+      await vi.runAllTimersAsync();
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(events.map((event) => event.type)).toEqual(["error"]);
+    expect(invoked).toEqual(["runtime_optimize", "runtime_cancel"]);
+  });
+
+  it("unblocks when a terminal Runtime event arrives before a hanging invoke settles", async () => {
+    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    const host = {
+      invoke: async (command: string) => {
+        if (command === "runtime_optimize") {
+          queueMicrotask(() => {
+            listener?.({
+              payload: {
+                version: 1,
+                request_id: "req-terminal-first",
+                event: {
+                  type: "error",
+                  data: {
+                    code: "provider_error",
+                    message: "模型服务请求失败，请稍后重试。",
+                    recoverable: true,
+                    action: "retry"
+                  }
+                }
+              }
+            });
+          });
+          return new Promise<never>(() => undefined);
+        }
+        return undefined;
+      },
+      listen: async (_eventName: string, handler: (event: TauriEvent<CoreEventEnvelope>) => void) => {
+        listener = handler;
+        return () => undefined;
+      }
+    };
+    const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-terminal-first" });
+    const events = [];
+
+    for await (const event of bridge.optimize(createDraftRequest("先终止"))) events.push(event);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("error");
+  });
+
+  it("rejects a metric that arrives before the result event", async () => {
+    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    const host = {
+      invoke: async () => {
+        queueMicrotask(() => {
+          listener?.({
+            payload: {
+              version: 1,
+              request_id: "req-metric-first",
+              event: { type: "metric", data: { save_status: "saved" } }
+            }
+          });
+        });
+      },
+      listen: async (_eventName: string, handler: (event: TauriEvent<CoreEventEnvelope>) => void) => {
+        listener = handler;
+        return () => undefined;
+      }
+    };
+    const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-metric-first" });
+    const events = [];
+    for await (const event of bridge.optimize(createDraftRequest("乱序元数据"))) events.push(event);
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        data: {
+          code: "protocol_invalid",
+          message: "生成结果顺序异常，请重试。",
+          recoverable: true,
+          action: "retry"
+        }
+      }
+    ]);
   });
 
   it("routes Reflex Cloud requests through authenticated cloud commands only", async () => {
@@ -422,6 +651,83 @@ describe("core bridge", () => {
         args: { command: createCancelCommand("req-cancel") }
       }
     ]);
+  });
+
+  it("does not leak cancel rejection or buffered events after Runtime abort", async () => {
+    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    let resolveOptimize: (() => void) | null = null;
+    const controller = new AbortController();
+    const host = {
+      invoke: (command: string) => {
+        if (command === "runtime_optimize") {
+          return new Promise<void>((resolve) => {
+            resolveOptimize = resolve;
+          });
+        }
+        if (command === "runtime_cancel") return Promise.reject(new Error("cancel raced with shutdown"));
+        return Promise.resolve();
+      },
+      listen: async (_eventName: string, handler: (event: TauriEvent<CoreEventEnvelope>) => void) => {
+        listener = handler;
+        return () => undefined;
+      }
+    };
+    const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-abort-buffer" });
+    const iterator = bridge.optimize(createDraftRequest("写一封邮件"), { signal: controller.signal });
+    const pending = iterator.next();
+    await Promise.resolve();
+    listener?.({
+      payload: {
+        version: 1,
+        request_id: "req-abort-buffer",
+        event: { type: "chunk", data: { text: "不应在取消后返回" } }
+      }
+    });
+
+    controller.abort();
+    resolveOptimize?.();
+
+    await expect(pending).resolves.toEqual({ done: true, value: undefined });
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+  });
+
+  it("does not send Cloud cancel after the stream already reached a terminal metric", async () => {
+    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    const invoked: string[] = [];
+    const controller = new AbortController();
+    const host = {
+      invoke: async (command: string) => {
+        invoked.push(command);
+        if (command === "cloud_optimize") {
+          queueMicrotask(() => {
+            for (const event of [
+              { type: "done", data: { text: "云端结果" } },
+              { type: "metric", data: { save_status: "saved" } }
+            ] as const) {
+              listener?.({ payload: { version: 1, request_id: "req-cloud-terminal", event } });
+            }
+          });
+        }
+      },
+      listen: async (_eventName: string, handler: (event: TauriEvent<CoreEventEnvelope>) => void) => {
+        listener = handler;
+        return () => undefined;
+      }
+    };
+    const bridge = new CloudCoreBridge(host, { requestIdFactory: () => "req-cloud-terminal" });
+    const iterator = bridge.optimize(
+      { ...createDraftRequest("云端结果"), provider: "reflex-cloud" },
+      { signal: controller.signal }
+    );
+
+    const events = [];
+    for await (const event of iterator) {
+      events.push(event);
+      if (event.type === "metric") controller.abort();
+    }
+
+    expect(events.map((event) => event.type)).toEqual(["done", "metric"]);
+    expect(invoked).toEqual(["cloud_optimize"]);
   });
 
   it("turns Runtime launch failures into one safe recoverable error event", async () => {

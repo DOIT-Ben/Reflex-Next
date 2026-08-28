@@ -8,12 +8,14 @@ subprocess shared at module scope.
 from __future__ import annotations
 
 import json
+import os
 import queue
 
 import pytest
 from fastapi.testclient import TestClient
 
 from reflex_http_host.app import create_app
+from reflex_http_host.app import validate_bind_security
 from reflex_http_host.gateway import SidecarGateway
 
 from conftest import FakeSession
@@ -22,17 +24,25 @@ from conftest import FakeSession
 @pytest.fixture
 def client(fake_session):
     gateway = SidecarGateway(session_factory=lambda _: fake_session)
-    app = create_app(gateway)
+    app = create_app(gateway, bind_host="127.0.0.1")
     with TestClient(app) as test_client:
         yield test_client, fake_session
 
 
 @pytest.fixture(scope="module")
 def live_client():
-    gateway = SidecarGateway(request_timeout_seconds=10.0)
-    app = create_app(gateway)
-    with TestClient(app) as test_client:
-        yield test_client
+    previous_development = os.environ.get("REFLEX_RUNTIME_DEVELOPMENT")
+    try:
+        os.environ["REFLEX_RUNTIME_DEVELOPMENT"] = "1"
+        gateway = SidecarGateway(request_timeout_seconds=10.0)
+        app = create_app(gateway, bind_host="127.0.0.1")
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        if previous_development is None:
+            os.environ.pop("REFLEX_RUNTIME_DEVELOPMENT", None)
+        else:
+            os.environ["REFLEX_RUNTIME_DEVELOPMENT"] = previous_development
 
 
 def parse_sse(lines: list[str]) -> list[dict]:
@@ -77,6 +87,30 @@ def test_optimize_requires_text(client):
     assert response.status_code == 422
 
 
+def test_optimize_rejects_active_request_id_with_conflict(client):
+    test_client, _ = client
+    gateway = test_client.app.state.gateway
+    gateway.subscribe("req-active")
+    try:
+        response = test_client.post(
+            "/v1/optimize",
+            json={"text": "hello", "request_id": "req-active"},
+        )
+    finally:
+        gateway.unsubscribe("req-active")
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Request id is already active."
+
+
+def test_optimize_without_provider_reports_unconfigured(client):
+    test_client, _ = client
+    with test_client.stream(
+        "POST", "/v1/optimize", json={"text": "hello"}
+    ) as response:
+        envelopes = parse_sse(list(response.iter_lines()))
+    assert envelopes[-1]["event"]["data"]["code"] == "provider_unconfigured"
+
+
 def test_optimize_passes_scene_and_mode_fields(client):
     test_client, fake_session = client
     with test_client.stream(
@@ -105,7 +139,7 @@ def test_optimize_request_timeout_sends_cancel_and_error_event(fake_session):
         session_factory=lambda _: fake_session,
         request_timeout_seconds=0.2,
     )
-    app = create_app(gateway)
+    app = create_app(gateway, bind_host="127.0.0.1")
     with TestClient(app) as test_client:
         with test_client.stream(
             "POST",
@@ -121,20 +155,68 @@ def test_optimize_request_timeout_sends_cancel_and_error_event(fake_session):
     assert len(cancels) >= 1
 
 
-def test_auth_required_when_token_configured(client, monkeypatch):
-    test_client, _ = client
+def test_auth_required_when_token_configured(fake_session, monkeypatch):
     monkeypatch.setenv("REFLEX_HTTP_TOKEN", "fixture-token")
+    gateway = SidecarGateway(session_factory=lambda _: fake_session)
+    with TestClient(create_app(gateway, bind_host="127.0.0.1")) as test_client:
+        denied = test_client.get("/v1/health")
+        assert denied.status_code == 401
 
-    denied = test_client.get("/v1/health")
-    assert denied.status_code == 401
-
-    allowed = test_client.get("/v1/health", headers={"Authorization": "Bearer fixture-token"})
-    assert allowed.status_code == 200
+        allowed = test_client.get(
+            "/v1/health", headers={"Authorization": "Bearer fixture-token"}
+        )
+        assert allowed.status_code == 200
 
 
 def test_auth_optional_without_token(client):
     test_client, _ = client
     assert test_client.get("/v1/health").status_code == 200
+
+
+def test_non_loopback_host_requires_token(monkeypatch):
+    monkeypatch.delenv("REFLEX_HTTP_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="REFLEX_HTTP_TOKEN is required"):
+        validate_bind_security("0.0.0.0")
+
+
+def test_non_loopback_host_accepts_explicit_token(monkeypatch):
+    monkeypatch.delenv("REFLEX_HTTP_TOKEN", raising=False)
+    validate_bind_security("0.0.0.0", token="fixture-token")
+
+
+def test_create_app_validates_explicit_bind_host(monkeypatch, fake_session):
+    monkeypatch.delenv("REFLEX_HTTP_TOKEN", raising=False)
+    gateway = SidecarGateway(session_factory=lambda _: fake_session)
+    with pytest.raises(RuntimeError, match="REFLEX_HTTP_TOKEN is required"):
+        create_app(gateway, bind_host="0.0.0.0")
+
+
+def test_create_app_cannot_be_used_as_an_unvalidated_uvicorn_factory():
+    with pytest.raises(TypeError, match="bind_host"):
+        create_app()
+
+
+def test_create_app_records_validated_bind_host(monkeypatch, fake_session):
+    monkeypatch.setenv("REFLEX_HTTP_TOKEN", "fixture-token")
+    gateway = SidecarGateway(session_factory=lambda _: fake_session)
+    app = create_app(gateway, bind_host="192.0.2.10")
+    assert app.state.bind_host == "192.0.2.10"
+
+
+def test_create_app_freezes_token_for_request_authorization(monkeypatch, fake_session):
+    monkeypatch.setenv("REFLEX_HTTP_TOKEN", "fixture-token")
+    gateway = SidecarGateway(session_factory=lambda _: fake_session)
+    app = create_app(gateway, bind_host="192.0.2.10")
+    monkeypatch.delenv("REFLEX_HTTP_TOKEN")
+
+    with TestClient(app) as test_client:
+        assert test_client.get("/v1/health").status_code == 401
+        assert (
+            test_client.get(
+                "/v1/health", headers={"Authorization": "Bearer fixture-token"}
+            ).status_code
+            == 200
+        )
 
 
 def test_scene_catalog_returns_grouped_library(client):
@@ -194,6 +276,15 @@ def test_optimize_ignores_scene_under_auto_policy(client):
         json={"text": "hello", "scene": "no_such_scene_xyz"},
     ) as response:
         assert response.status_code == 200
+
+
+def test_optimize_rejects_unknown_scene_policy(client):
+    test_client, _ = client
+    response = test_client.post(
+        "/v1/optimize",
+        json={"text": "hello", "scene_policy": "unsupported"},
+    )
+    assert response.status_code == 422
 
 
 def test_live_ping_returns_pong(live_client):

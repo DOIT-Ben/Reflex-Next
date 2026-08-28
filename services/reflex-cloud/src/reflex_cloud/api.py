@@ -41,6 +41,11 @@ from .service import CloudService, CloudServiceError
 public_router = APIRouter(prefix="/v1")
 admin_router = APIRouter(prefix="/v1/admin")
 
+_STREAM_ERROR_MESSAGES = {
+    "quota_exhausted": "今日免费输出额度已用完，请明天再试或使用自备 Provider。",
+    "quota_unavailable": "免费额度服务暂时不可用，请稍后再试。",
+}
+
 
 def get_session(request: Request):
     yield from request.app.state.database.session()
@@ -190,8 +195,42 @@ def optimize(
                 if isinstance(event, dict) and event.get("type") == "chunk":
                     data = event.get("data")
                     if isinstance(data, dict) and isinstance(data.get("text"), str):
-                        output_chars += len(data["text"])
-                        output_chunks.append(data["text"])
+                        chunk_text = data["text"]
+                        if chunk_text:
+                            try:
+                                with request.app.state.database.sessions() as usage_session:
+                                    service.record_output_usage(
+                                        usage_session,
+                                        installation.id,
+                                        output_chars=len(chunk_text),
+                                    )
+                            except CloudServiceError as error:
+                                error_envelope = {
+                                    "version": 1,
+                                    "request_id": payload.request_id,
+                                    "event": {
+                                        "type": "error",
+                                        "data": {
+                                            "code": error.code,
+                                            "message": _STREAM_ERROR_MESSAGES.get(
+                                                error.code,
+                                                "请求未能完成，请稍后重试。",
+                                            ),
+                                        },
+                                    },
+                                }
+                                yield (
+                                    "data: "
+                                    + json.dumps(
+                                        error_envelope,
+                                        ensure_ascii=False,
+                                        separators=(",", ":"),
+                                    )
+                                    + "\n\n"
+                                )
+                                return
+                            output_chars += len(chunk_text)
+                            output_chunks.append(chunk_text)
                 if isinstance(event, dict) and event.get("type") == "done":
                     data = event.get("data")
                     if isinstance(data, dict):
@@ -206,10 +245,6 @@ def optimize(
             )
             try:
                 with request.app.state.database.sessions() as usage_session:
-                    if output_chars:
-                        service.record_output_usage(
-                            usage_session, installation.id, output_chars=output_chars
-                        )
                     service.record_provider_usage(
                         usage_session,
                         input_chars=len(payload.text),

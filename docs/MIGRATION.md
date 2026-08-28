@@ -1,6 +1,6 @@
 # Reflex Next 功能迁移文档
 
-更新时间：2026-07-09
+更新时间：2026-08-29
 
 状态：迁移设计基线。当前实现和发布门禁请查看
 `workbench/backend-production-tasks.md`，不要按本文阶段编号判断项目进度。

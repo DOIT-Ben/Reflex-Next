@@ -1,11 +1,8 @@
 # Self-hosted CI：作业由本机注册的 self-hosted runner（host-runner-win-3）执行，
 # 不消耗 GitHub 托管的 Actions 分钟数。
-name: Self-Hosted CI
+name: Self-Hosted Extended Checks (Manual)
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 jobs:

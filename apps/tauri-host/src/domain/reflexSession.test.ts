@@ -77,6 +77,24 @@ describe("reflex host session", () => {
     expect(session.output).toBe("优化结果");
   });
 
+  it("keeps a completed session complete when the sidecar emits terminal status", () => {
+    const session = applyCoreEvent(
+      applyCoreEvent(createInitialSession(), {
+        type: "done",
+        data: { text: "优化结果" }
+      }),
+      {
+        type: "status",
+        data: { phase: "completed", message: "已保存", elapsed_seconds: 1.4 }
+      }
+    );
+
+    expect(session.phase).toBe("complete");
+    expect(session.statusMessage).toBe("已保存");
+    expect(session.output).toBe("优化结果");
+    expect(session.elapsedSeconds).toBe(1.4);
+  });
+
   it("redacts visible provider errors before showing them in the host", () => {
     expect(redactVisibleError("Bearer sk-1234567890abcdef 请求失败")).toBe(
       "Bearer [已隐藏] 请求失败"

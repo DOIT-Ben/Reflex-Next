@@ -2,7 +2,11 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $scanScript = Join-Path $root "tools\scan_release_secrets.ps1"
-$powershell = Join-Path $PSHOME "powershell.exe"
+$powershellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+if ($null -eq $powershellCommand) {
+  $powershellCommand = Get-Command powershell.exe -ErrorAction Stop
+}
+$powershell = $powershellCommand.Source
 
 function Assert-True {
   param(

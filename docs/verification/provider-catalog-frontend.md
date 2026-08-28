@@ -1,6 +1,8 @@
-# Provider 动态目录前端接入验证
+# 历史记录：Provider 动态目录前端接入验证（2026-07-15）
 
 验证日期：2026-07-15
+
+> 历史证据提示：本文记录旧分支的前端目录接入验证，不代表当前工作树的完整发布门禁。
 验证分支：`codex/full-feature-parity`
 验证范围：Tauri Host Domain Bridge、设置页 Provider/模型选择、Runtime 目录请求关联
 

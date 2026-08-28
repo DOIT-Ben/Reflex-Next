@@ -1,4 +1,4 @@
-# Reflex Next alpha.8 Windows 发布与生命周期验证
+# 历史记录：Reflex Next alpha.8 Windows 发布与生命周期验证（2026-07-15）
 
 验证日期：2026-07-15
 验证提交：`8310736`

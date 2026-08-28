@@ -7,27 +7,28 @@ from pathlib import Path
 from typing import Any
 
 RUNTIME_PROTOCOL_VERSION = 1
-COMMAND_TYPES = frozenset(
-    {
-        "optimize",
-        "cancel",
-        "ping",
-        "shutdown",
-        "configure_provider",
-        "discover_provider_models",
-        "test_provider_connection",
-        "list_providers",
-        "list_plugins",
-        "plugin_call",
-        "configure_plugin",
-        "configure_history_keys",
-        "configure_history_policy",
-        "configure_history_path",
-        "plugin_admin_call",
-        "plugin_admin_call",
-    }
+COMMAND_TYPE_VALUES = (
+    "optimize",
+    "cancel",
+    "ping",
+    "shutdown",
+    "configure_provider",
+    "discover_provider_models",
+    "test_provider_connection",
+    "list_providers",
+    "list_plugins",
+    "plugin_call",
+    "configure_plugin",
+    "configure_history_keys",
+    "configure_history_policy",
+    "configure_history_path",
+    "plugin_admin_call",
 )
+if len(COMMAND_TYPE_VALUES) != len(set(COMMAND_TYPE_VALUES)):
+    raise RuntimeError("runtime command types must be unique")
+COMMAND_TYPES = frozenset(COMMAND_TYPE_VALUES)
 CONFIGURE_PROVIDER_FIELDS = frozenset({"provider_id", "secret", "config"})
+ALLOWED_SCENE_POLICIES = frozenset({"auto", "manual", "ask"})
 OPTIMIZE_FIELDS = frozenset(
     {
         "text",
@@ -164,6 +165,11 @@ def _validate_optimize(payload: dict[str, Any]) -> None:
     if "text" not in payload or not set(payload).issubset(OPTIMIZE_FIELDS):
         raise ProtocolError("invalid optimize command")
     if not isinstance(payload.get("text"), str):
+        raise ProtocolError("invalid optimize command")
+    scene_policy = payload.get("scene_policy")
+    if scene_policy is not None and (
+        not isinstance(scene_policy, str) or scene_policy not in ALLOWED_SCENE_POLICIES
+    ):
         raise ProtocolError("invalid optimize command")
 
 

@@ -58,7 +58,7 @@
     background: var(--surface, #fff);
     border-top: 1px solid var(--line, #e1e6ee);
     box-sizing: border-box;
-    font-size: 10px;
+    font-size: var(--font-meta);
     line-height: 1;
     user-select: none;
   }

@@ -44,15 +44,6 @@ class Provider(Protocol):
     id: str
     model: str | None
 
-    def stream(
-        self,
-        rendered_request: Any,
-        request: OptimizeRequest,
-        cancellation: CancellationToken,
-    ) -> Iterable[str]:
-        ...
-
-    # New protocol adapters can preserve wire metadata with this method.
     def stream_events(
         self,
         rendered_request: Any,

@@ -27,6 +27,20 @@ class FakeSession:
         if self.returncode is not None:
             raise GatewayError("runtime_exited", "Runtime process is not running.")
         self.sent.append(command)
+        if command["type"] == "optimize" and "provider" not in command["payload"]:
+            self.emit(
+                {
+                    "version": 1,
+                    "request_id": command["request_id"],
+                    "event": {
+                        "type": "error",
+                        "data": {
+                            "code": "provider_unconfigured",
+                            "message": "Provider is not configured.",
+                        },
+                    },
+                }
+            )
 
     def close(self) -> bool:
         self.closed = True

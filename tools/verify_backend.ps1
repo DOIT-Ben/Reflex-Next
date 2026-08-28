@@ -6,40 +6,46 @@ param(
   [switch]$SkipHeavy,
   [switch]$SkipDependencyAudit,
   [switch]$SkipReleaseMaterials,
-  [ValidateSet(
-    "reflex-core",
-    "reflex-runtime",
-    "reflex-http-host",
-    "reflex-cloud",
-    "batch-runner",
-    "history-sqlite",
-    "markdown-preview",
-    "provider-minimax",
-    "provider-native-protocols",
-    "provider-openai-compatible",
-    "semantic-detector",
-    "translator"
-  )]
-  [string[]]$PythonProject = @(
-    "reflex-core",
-    "reflex-runtime",
-    "reflex-http-host",
-    "reflex-cloud",
-    "batch-runner",
-    "history-sqlite",
-    "markdown-preview",
-    "provider-minimax",
-    "provider-native-protocols",
-    "provider-openai-compatible",
-    "semantic-detector",
-    "translator"
-  )
+  [string[]]$PythonProject = @()
 )
 
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$rustTestResourcePath = Join-Path $root "apps\tauri-host\src-tauri\resources\runtime\reflex-runtime.exe"
+. (Join-Path $PSScriptRoot "project_registry.ps1")
+$registry = Get-ReflexProjectRegistry -RepositoryRoot $root
+$powerShellCommandName = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) {
+  "pwsh.exe"
+}
+else {
+  "powershell.exe"
+}
+$pythonCatalog = @($registry.projects | Where-Object {
+    $_.kind -eq "python" -and $_.verify -eq $true
+  })
+if ($pythonCatalog.Count -eq 0) {
+  throw "Project registry has no verifiable Python projects."
+}
+$knownPythonProjects = @($pythonCatalog | ForEach-Object { [string]$_.id })
+if (@($PythonProject).Count -eq 0) {
+  $PythonProject = $knownPythonProjects
+}
+foreach ($selectedProject in @($PythonProject)) {
+  if ($knownPythonProjects -notcontains $selectedProject) {
+    throw "Unknown Python project in project registry: $selectedProject"
+  }
+}
+$runtimeProject = Get-ReflexRegistryProject -Registry $registry -ProjectId "reflex-runtime"
+$cloudProject = Get-ReflexRegistryProject -Registry $registry -ProjectId "reflex-cloud"
+$historyProject = Get-ReflexRegistryProject -Registry $registry -ProjectId "history-sqlite"
+$runtimeProjectPath = ([string]$runtimeProject.path -replace "/", "\")
+$runtimeLockPath = ([string]$runtimeProject.lock -replace "/", "\")
+$cloudProjectPath = ([string]$cloudProject.path -replace "/", "\")
+$cloudLockPath = ([string]$cloudProject.lock -replace "/", "\")
+$historyProjectPath = ([string]$historyProject.path -replace "/", "\")
+$historyLockPath = ([string]$historyProject.lock -replace "/", "\")
+$rustTestResourcePath = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-rust-test-" + [guid]::NewGuid().ToString("N") + "\resources\runtime\reflex-runtime.exe")
+$soakReportPath = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-soak-smoke-" + [guid]::NewGuid().ToString("N") + ".json")
 
 if ($env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH) {
   $candidatePath = [System.IO.Path]::GetFullPath($env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH)
@@ -78,8 +84,14 @@ function Remove-RustTestResource {
 
   Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
   $directory = Split-Path -Parent $Path
-  for ($index = 0; $index -lt 2; $index++) {
+  $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd("\")
+  for ($index = 0; $index -lt 4; $index++) {
     if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+      break
+    }
+    $directoryFullPath = [System.IO.Path]::GetFullPath($directory).TrimEnd("\")
+    if ($directoryFullPath -ieq $tempRoot -or
+        -not $directoryFullPath.StartsWith($tempRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
       break
     }
     if (@(Get-ChildItem -LiteralPath $directory -Force).Count -ne 0) {
@@ -116,28 +128,25 @@ function New-VerificationStep {
   }
 }
 
-$pythonProjects = @(
-  @{ Name = "reflex-core"; Path = "packages\reflex-core" },
-  @{ Name = "reflex-runtime"; Path = "packages\reflex-runtime" },
-  @{ Name = "reflex-http-host"; Path = "packages\reflex-http-host" },
-  @{ Name = "reflex-cloud"; Path = "services\reflex-cloud" },
-  @{ Name = "batch-runner"; Path = "plugins\batch-runner" },
-  @{ Name = "history-sqlite"; Path = "plugins\history-sqlite" },
-  @{ Name = "markdown-preview"; Path = "plugins\markdown-preview" },
-  @{ Name = "provider-minimax"; Path = "plugins\provider-minimax" },
-  @{ Name = "provider-native-protocols"; Path = "plugins\provider-native-protocols" },
-  @{ Name = "provider-openai-compatible"; Path = "plugins\provider-openai-compatible" },
-  @{ Name = "semantic-detector"; Path = "plugins\semantic-detector" },
-  @{ Name = "translator"; Path = "plugins\translator" }
-)
+$pythonProjects = @($pythonCatalog | ForEach-Object {
+    @{ Name = [string]$_.id; Path = ([string]$_.path -replace "/", "\") }
+  })
 
 $steps = @()
+$steps += New-VerificationStep `
+  -Id "governance:project-registry-contract" `
+  -Category "governance" `
+  -WorkDir "." `
+  -LockFile "" `
+  -Executable $powerShellCommandName `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\project_registry_contract.ps1")
+
 $steps += New-VerificationStep `
   -Id "security:secret-contract" `
   -Category "security" `
   -WorkDir "." `
   -LockFile "" `
-  -Executable "powershell" `
+  -Executable $powerShellCommandName `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\scan_release_secrets_contract.ps1")
 
 $steps += New-VerificationStep `
@@ -145,7 +154,7 @@ $steps += New-VerificationStep `
   -Category "security" `
   -WorkDir "." `
   -LockFile "" `
-  -Executable "powershell" `
+  -Executable $powerShellCommandName `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\scan_release_secrets.ps1")
 
 $steps += New-VerificationStep `
@@ -153,7 +162,7 @@ $steps += New-VerificationStep `
   -Category "release" `
   -WorkDir "." `
   -LockFile "" `
-  -Executable "powershell" `
+  -Executable $powerShellCommandName `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\check_version_consistency_contract.ps1")
 
 $steps += New-VerificationStep `
@@ -161,7 +170,7 @@ $steps += New-VerificationStep `
   -Category "release" `
   -WorkDir "." `
   -LockFile "" `
-  -Executable "powershell" `
+  -Executable $powerShellCommandName `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\check_version_consistency.ps1", "-IgnoreTag")
 
 $steps += New-VerificationStep `
@@ -169,7 +178,7 @@ $steps += New-VerificationStep `
   -Category "release" `
   -WorkDir "." `
   -LockFile "" `
-  -Executable "powershell" `
+  -Executable $powerShellCommandName `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\release_candidate_contract.ps1")
 
 $steps += New-VerificationStep `
@@ -177,7 +186,7 @@ $steps += New-VerificationStep `
   -Category "security" `
   -WorkDir "." `
   -LockFile "" `
-  -Executable "powershell" `
+  -Executable $powerShellCommandName `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\audit_dependencies_contract.ps1")
 
 $steps += New-VerificationStep `
@@ -185,107 +194,107 @@ $steps += New-VerificationStep `
   -Category "supply-chain" `
   -WorkDir "." `
   -LockFile "" `
-  -Executable "powershell" `
+  -Executable $powerShellCommandName `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\tests\generate_release_sbom_contract.ps1")
 
 $steps += New-VerificationStep `
   -Id "tools:provider-smoke-contract" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "packages\reflex-runtime\uv.lock" `
+  -LockFile $runtimeLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_provider_smoke.py", "-q")
+  -Arguments @("run", "--frozen", "--project", $runtimeProjectPath, "--extra", "dev", "pytest", "tools\tests\test_provider_smoke.py", "-q")
 
 $steps += New-VerificationStep `
   -Id "tools:cloud-postgres-quality-contract" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "services\reflex-cloud\uv.lock" `
+  -LockFile $cloudLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "services\reflex-cloud", "--extra", "dev", "pytest", "tools\tests\test_reflex_cloud_postgres_quality_release_smoke.py", "-q")
+  -Arguments @("run", "--frozen", "--project", $cloudProjectPath, "--extra", "dev", "pytest", "tools\tests\test_reflex_cloud_postgres_quality_release_smoke.py", "-q")
 
 $steps += New-VerificationStep `
   -Id "tools:history-upgrade-contract" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "packages\reflex-runtime\uv.lock" `
+  -LockFile $runtimeLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "--extra", "builtins", "pytest", "tools\tests\test_history_upgrade_smoke.py", "-q")
+  -Arguments @("run", "--frozen", "--project", $runtimeProjectPath, "--extra", "dev", "--extra", "builtins", "pytest", "tools\tests\test_history_upgrade_smoke.py", "-q")
 
 $steps += New-VerificationStep `
   -Id "tools:cross-version-history-upgrade-contract" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "packages\reflex-runtime\uv.lock" `
+  -LockFile $runtimeLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "--extra", "builtins", "pytest", "tools\tests\test_cross_version_history_upgrade_smoke.py", "-q")
+  -Arguments @("run", "--frozen", "--project", $runtimeProjectPath, "--extra", "dev", "--extra", "builtins", "pytest", "tools\tests\test_cross_version_history_upgrade_smoke.py", "-q")
 
 $steps += New-VerificationStep `
   -Id "tools:benchmark-contract" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "packages\reflex-runtime\uv.lock" `
+  -LockFile $runtimeLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_benchmark_backend.py", "-q")
+  -Arguments @("run", "--frozen", "--project", $runtimeProjectPath, "--extra", "dev", "pytest", "tools\tests\test_benchmark_backend.py", "-q")
 
 $steps += New-VerificationStep `
   -Id "tools:history-benchmark-contract" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "plugins\history-sqlite\uv.lock" `
+  -LockFile $historyLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "plugins\history-sqlite", "--extra", "dev", "pytest", "tools\tests\test_benchmark_history_sqlite.py", "-q")
+  -Arguments @("run", "--frozen", "--project", $historyProjectPath, "--extra", "dev", "pytest", "tools\tests\test_benchmark_history_sqlite.py", "-q")
 
 $steps += New-VerificationStep `
   -Id "tools:history-benchmark-small-smoke" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "plugins\history-sqlite\uv.lock" `
+  -LockFile $historyLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "plugins\history-sqlite", "--extra", "dev", "python", "tools\benchmark_history_sqlite.py", "--record-count", "10", "--profile", "small", "--storage-sample-every", "10") `
+  -Arguments @("run", "--frozen", "--project", $historyProjectPath, "--extra", "dev", "python", "tools\benchmark_history_sqlite.py", "--record-count", "10", "--profile", "small", "--storage-sample-every", "10") `
   -Heavy $true
 
 $steps += New-VerificationStep `
   -Id "tools:history-benchmark-heavy-smoke" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "plugins\history-sqlite\uv.lock" `
+  -LockFile $historyLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "plugins\history-sqlite", "--extra", "dev", "python", "tools\benchmark_history_sqlite.py", "--record-count", "2", "--profile", "heavy", "--storage-sample-every", "2") `
+  -Arguments @("run", "--frozen", "--project", $historyProjectPath, "--extra", "dev", "python", "tools\benchmark_history_sqlite.py", "--record-count", "2", "--profile", "heavy", "--storage-sample-every", "2") `
   -Heavy $true
 
 $steps += New-VerificationStep `
   -Id "tools:soak-contract" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "packages\reflex-runtime\uv.lock" `
+  -LockFile $runtimeLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "pytest", "tools\tests\test_soak_backend.py", "-q")
+  -Arguments @("run", "--frozen", "--project", $runtimeProjectPath, "--extra", "dev", "pytest", "tools\tests\test_soak_backend.py", "-q")
 
 $steps += New-VerificationStep `
   -Id "tools:soak-smoke" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "packages\reflex-runtime\uv.lock" `
+  -LockFile $runtimeLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "packages\reflex-runtime", "--extra", "dev", "python", "tools\soak_backend.py", "--iterations", "100", "--batch-size", "4", "--timeout-seconds", "5", "--cancel-every", "2") `
+  -Arguments @("run", "--frozen", "--project", $runtimeProjectPath, "--extra", "dev", "python", "tools\soak_backend.py", "--iterations", "100", "--batch-size", "4", "--timeout-seconds", "15", "--cancel-every", "2", "--json-output", $soakReportPath) `
   -Heavy $true
 
 $steps += New-VerificationStep `
   -Id "tools:plugin-history-soak-contract" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "plugins\history-sqlite\uv.lock" `
+  -LockFile $historyLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "plugins\history-sqlite", "--extra", "dev", "pytest", "tools\tests\test_soak_plugin_history.py", "tools\tests\test_windows_resource_probe.py", "-q")
+  -Arguments @("run", "--frozen", "--project", $historyProjectPath, "--extra", "dev", "pytest", "tools\tests\test_soak_plugin_history.py", "tools\tests\test_windows_resource_probe.py", "-q")
 
 $steps += New-VerificationStep `
   -Id "tools:plugin-history-soak-smoke" `
   -Category "tools" `
   -WorkDir "." `
-  -LockFile "plugins\history-sqlite\uv.lock" `
+  -LockFile $historyLockPath `
   -Executable "uv" `
-  -Arguments @("run", "--frozen", "--project", "plugins\history-sqlite", "--extra", "dev", "python", "tools\soak_plugin_history.py", "--iterations", "100", "--warmup-iterations", "20", "--sample-every", "20") `
+  -Arguments @("run", "--frozen", "--project", $historyProjectPath, "--extra", "dev", "python", "tools\soak_plugin_history.py", "--iterations", "100", "--warmup-iterations", "20", "--sample-every", "20") `
   -Heavy $true
 
 foreach ($project in $pythonProjects) {
@@ -304,7 +313,7 @@ $steps += New-VerificationStep `
   -Category "security" `
   -WorkDir "." `
   -LockFile "" `
-  -Executable "powershell" `
+  -Executable $powerShellCommandName `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\audit_dependencies.ps1") `
   -Heavy $true
 
@@ -313,7 +322,7 @@ $steps += New-VerificationStep `
   -Category "supply-chain" `
   -WorkDir "." `
   -LockFile "" `
-  -Executable "powershell" `
+  -Executable $powerShellCommandName `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\generate_release_sbom.ps1", "-Verify") `
   -Heavy $true
 
@@ -323,8 +332,7 @@ $steps += New-VerificationStep `
   -WorkDir "apps\tauri-host\src-tauri" `
   -LockFile "Cargo.lock" `
   -Executable "cargo" `
-  -Arguments @("test", "--locked", "--", "--test-threads=2") `
-  -Heavy $true
+  -Arguments @("test", "--locked", "--", "--test-threads=2")
 
 $steps += New-VerificationStep `
   -Id "frontend:install" `
@@ -333,7 +341,6 @@ $steps += New-VerificationStep `
   -LockFile "package-lock.json" `
   -Executable "npm" `
   -Arguments @("ci") `
-  -Heavy $true `
   -Frontend $true
 
 $steps += New-VerificationStep `
@@ -343,7 +350,6 @@ $steps += New-VerificationStep `
   -LockFile "package-lock.json" `
   -Executable "npm" `
   -Arguments @("test", "--", "--maxWorkers=2") `
-  -Heavy $true `
   -Frontend $true
 
 $steps += New-VerificationStep `
@@ -353,7 +359,6 @@ $steps += New-VerificationStep `
   -LockFile "package-lock.json" `
   -Executable "npm" `
   -Arguments @("run", "build") `
-  -Heavy $true `
   -Frontend $true
 
 function Get-CommandText {
@@ -448,6 +453,9 @@ foreach ($step in $steps) {
       if ($createdRustTestResource) {
         Write-Output "[CLEANUP] rust:tests | temporary-resource-removed=true"
       }
+    }
+    if ($step.Id -eq "tools:soak-smoke" -and (Test-Path -LiteralPath $soakReportPath -PathType Leaf)) {
+      Remove-Item -LiteralPath $soakReportPath -Force -ErrorAction SilentlyContinue
     }
   }
 

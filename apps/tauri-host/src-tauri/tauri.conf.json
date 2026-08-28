@@ -22,7 +22,7 @@
         "maxHeight": 720,
         "resizable": true,
         "center": true,
-        "transparent": false,
+        "transparent": true,
         "shadow": true,
         "decorations": false
       }

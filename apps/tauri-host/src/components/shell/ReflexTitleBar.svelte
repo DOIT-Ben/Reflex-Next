@@ -5,6 +5,7 @@
   import RectangleHorizontal from "@lucide/svelte/icons/rectangle-horizontal";
   import RectangleVertical from "@lucide/svelte/icons/rectangle-vertical";
   import Search from "@lucide/svelte/icons/search";
+  import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import X from "@lucide/svelte/icons/x";
   import ZoomIn from "@lucide/svelte/icons/zoom-in";
   import ZoomOut from "@lucide/svelte/icons/zoom-out";
@@ -64,9 +65,21 @@
     { id: "default", label: "默认尺寸" },
     { id: "wide", label: "宽屏尺寸" }
   ];
+
+  async function dragWindow(event: MouseEvent) {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("button, input, select, textarea, a, summary, details")) return;
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().startDragging();
+    } catch {
+      // Browser preview and non-Tauri tests do not expose window dragging.
+    }
+  }
 </script>
 
-<header class="title-bar" role="toolbar" aria-label="应用标题栏">
+<header class="title-bar" role="toolbar" tabindex="-1" aria-label="应用标题栏" onmousedown={dragWindow}>
   <div class="identity" title={appName} data-tauri-drag-region="true">
     <span class="app-mark" aria-hidden="true">R</span>
     <strong>{appName}</strong>
@@ -108,51 +121,58 @@
 
   <span class="bar-spacer" data-tauri-drag-region="true"></span>
 
-  <div class="control-cluster zoom-controls" role="group" aria-label="页面缩放">
-    <button
-      type="button"
-      aria-label="缩小页面"
-      title="缩小页面"
-      disabled={!onZoomOut || scale <= minimumScale}
-      onclick={onZoomOut}
-    ><ZoomOut size={14} strokeWidth={1.8} aria-hidden="true" /></button>
-    <button
-      class="scale-value"
-      type="button"
-      aria-label={`重置页面缩放，当前 ${Math.round(scale * 100)}%`}
-      title="重置页面缩放"
-      disabled={!onResetZoom}
-      onclick={onResetZoom}
-    >{Math.round(scale * 100)}%</button>
-    <button
-      type="button"
-      aria-label="放大页面"
-      title="放大页面"
-      disabled={!onZoomIn || scale >= maximumScale}
-      onclick={onZoomIn}
-    ><ZoomIn size={14} strokeWidth={1.8} aria-hidden="true" /></button>
-  </div>
+  <details class="workspace-controls">
+    <summary aria-label="工作区显示选项" title="工作区显示选项">
+      <SlidersHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
+    </summary>
+    <div class="workspace-control-popover">
+      <div class="control-cluster zoom-controls" role="group" aria-label="页面缩放">
+        <button
+          type="button"
+          aria-label="缩小页面"
+          title="缩小页面"
+          disabled={!onZoomOut || scale <= minimumScale}
+          onclick={onZoomOut}
+        ><ZoomOut size={14} strokeWidth={1.8} aria-hidden="true" /></button>
+        <button
+          class="scale-value"
+          type="button"
+          aria-label={`重置页面缩放，当前 ${Math.round(scale * 100)}%`}
+          title="重置页面缩放"
+          disabled={!onResetZoom}
+          onclick={onResetZoom}
+        >{Math.round(scale * 100)}%</button>
+        <button
+          type="button"
+          aria-label="放大页面"
+          title="放大页面"
+          disabled={!onZoomIn || scale >= maximumScale}
+          onclick={onZoomIn}
+        ><ZoomIn size={14} strokeWidth={1.8} aria-hidden="true" /></button>
+      </div>
 
-  <div class="control-cluster size-controls" role="group" aria-label="窗口尺寸">
-    {#each sizeOptions as option (option.id)}
-      <button
-        type="button"
-        aria-label={option.label}
-        aria-pressed={windowSize === option.id}
-        title={option.label}
-        disabled={!onWindowSizeChange}
-        onclick={() => onWindowSizeChange?.(option.id)}
-      >
-        {#if option.id === "compact"}
-          <RectangleVertical size={14} strokeWidth={1.8} aria-hidden="true" />
-        {:else if option.id === "default"}
-          <PanelTop size={14} strokeWidth={1.8} aria-hidden="true" />
-        {:else}
-          <RectangleHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
-        {/if}
-      </button>
-    {/each}
-  </div>
+      <div class="control-cluster size-controls" role="group" aria-label="窗口尺寸">
+        {#each sizeOptions as option (option.id)}
+          <button
+            type="button"
+            aria-label={option.label}
+            aria-pressed={windowSize === option.id}
+            title={option.label}
+            disabled={!onWindowSizeChange}
+            onclick={() => onWindowSizeChange?.(option.id)}
+          >
+            {#if option.id === "compact"}
+              <RectangleVertical size={14} strokeWidth={1.8} aria-hidden="true" />
+            {:else if option.id === "default"}
+              <PanelTop size={14} strokeWidth={1.8} aria-hidden="true" />
+            {:else}
+              <RectangleHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
+            {/if}
+          </button>
+        {/each}
+      </div>
+    </div>
+  </details>
 
   <div class="window-controls" role="group" aria-label="窗口控制">
     <button type="button" aria-label="最小化窗口" title="最小化" disabled={!onMinimize} onclick={onMinimize}>
@@ -202,7 +222,7 @@
   .identity strong {
     overflow: hidden;
     max-width: 112px;
-    font-size: 13px;
+    font-size: var(--font-body);
     font-weight: 650;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -217,7 +237,7 @@
     background: var(--accent, #5065c7);
     border-radius: 7px;
     box-shadow: 0 2px 6px rgb(39 49 96 / 18%);
-    font-size: 12px;
+    font-size: var(--font-meta);
     font-weight: 750;
   }
 
@@ -237,7 +257,7 @@
     color: var(--muted, #697386);
     background: transparent;
     border: 0;
-    font-size: 11px;
+    font-size: var(--font-meta);
   }
 
   .provider-dot {
@@ -319,7 +339,7 @@
     padding: 0 5px 0 7px;
     border: 1px solid var(--line, #e1e6ee);
     background: color-mix(in srgb, var(--surface, #fff) 72%, var(--accent-soft, #eef1ff));
-    font-size: 11px;
+    font-size: var(--font-meta);
   }
 
   .command-label {
@@ -335,7 +355,7 @@
     border: 1px solid var(--line, #e1e6ee);
     border-radius: 4px;
     font-family: inherit;
-    font-size: 9px;
+    font-size: var(--font-meta);
     line-height: 1;
     white-space: nowrap;
   }
@@ -354,11 +374,62 @@
     border-radius: 8px;
   }
 
+  .workspace-controls {
+    position: relative;
+    flex: 0 0 auto;
+  }
+
+  .workspace-controls summary {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    color: var(--muted, #697386);
+    border-radius: 7px;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .workspace-controls summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .workspace-controls summary:hover {
+    color: var(--text, #202535);
+    background: color-mix(in srgb, var(--accent-soft, #eef1ff) 70%, transparent);
+  }
+
+  .workspace-controls[open] summary {
+    color: var(--accent, #5065c7);
+    background: var(--accent-soft, #eef1ff);
+  }
+
+  .workspace-control-popover {
+    position: absolute;
+    z-index: 6;
+    top: calc(100% + 7px);
+    right: 0;
+    display: none;
+    gap: 6px;
+    min-width: max-content;
+    max-width: min(280px, calc(100vw - 16px));
+    box-sizing: border-box;
+    padding: 8px;
+    background: var(--surface, #fff);
+    border: 1px solid var(--line, #e1e6ee);
+    border-radius: 10px;
+    box-shadow: 0 10px 24px rgb(32 37 53 / 14%);
+  }
+
+  .workspace-controls[open] .workspace-control-popover {
+    display: grid;
+  }
+
   .control-cluster button {
     min-width: 25px;
     height: 24px;
     border-radius: 6px;
-    font-size: 12px;
+    font-size: var(--font-meta);
   }
 
   .control-cluster button[aria-pressed="true"] {
@@ -369,7 +440,7 @@
   .scale-value {
     min-width: 38px !important;
     padding: 0 4px !important;
-    font-size: 10px !important;
+    font-size: var(--font-meta) !important;
     font-variant-numeric: tabular-nums;
   }
 

@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -15,20 +16,38 @@ from threading import Barrier, BrokenBarrierError
 from typing import Any
 from uuid import uuid4
 
-from pydantic import SecretStr
-from sqlalchemy import create_engine, select, text
-from sqlalchemy.engine import URL, make_url
-
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "services" / "reflex-cloud" / "src"))
 
-from reflex_cloud.config import CloudSettings
-from reflex_cloud.database import Database, database_from_engine
-from reflex_cloud.models import FeedbackItem, QualityRelease
-from reflex_cloud.schemas import QualityReleaseCreate
-from reflex_cloud.service import CloudService, CloudServiceError
-from reflex_cloud.storage import AttachmentStore
+
+def _load_runtime_dependencies() -> None:
+    """Load database dependencies only after CLI arguments are validated."""
+    global AttachmentStore, CloudService, CloudServiceError, CloudSettings
+    global FeedbackItem, QualityRelease, QualityReleaseCreate
+    global SecretStr, create_engine, database_from_engine, select, text
+
+    from pydantic import SecretStr as _SecretStr
+    from sqlalchemy import create_engine as _create_engine, select as _select, text as _text
+
+    from reflex_cloud.config import CloudSettings as _CloudSettings
+    from reflex_cloud.database import database_from_engine as _database_from_engine
+    from reflex_cloud.models import FeedbackItem as _FeedbackItem, QualityRelease as _QualityRelease
+    from reflex_cloud.schemas import QualityReleaseCreate as _QualityReleaseCreate
+    from reflex_cloud.service import CloudService as _CloudService, CloudServiceError as _CloudServiceError
+    from reflex_cloud.storage import AttachmentStore as _AttachmentStore
+
+    SecretStr = _SecretStr
+    create_engine = _create_engine
+    database_from_engine = _database_from_engine
+    select = _select
+    text = _text
+    CloudSettings = _CloudSettings
+    FeedbackItem = _FeedbackItem
+    QualityRelease = _QualityRelease
+    QualityReleaseCreate = _QualityReleaseCreate
+    CloudService = _CloudService
+    CloudServiceError = _CloudServiceError
+    AttachmentStore = _AttachmentStore
 
 
 DATABASE_URL_ENV = "REFLEX_CLOUD_POSTGRES_TEST_URL"
@@ -100,6 +119,8 @@ def _emit(record: dict[str, Any]) -> None:
 def _validated_database_url(value: str, *, allow_remote: bool) -> URL:
     if not value or len(value) > 2_048:
         raise SmokeFailure("database_url_missing")
+    from sqlalchemy.engine import make_url
+
     try:
         url = make_url(value)
     except Exception as error:
@@ -242,15 +263,39 @@ def _run_pair(
     timeout_seconds: int,
 ) -> list[str]:
     barrier = Barrier(2)
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="quality-smoke") as pool:
-        futures = (
-            pool.submit(_run_operation, left_database, barrier, left_operation),
-            pool.submit(_run_operation, right_database, barrier, right_operation),
-        )
-        try:
-            return [future.result(timeout=timeout_seconds + 5) for future in futures]
-        except TimeoutError as error:
-            raise SmokeFailure("database_operation_timeout") from error
+    pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="quality-smoke")
+    futures = (
+        pool.submit(_run_operation, left_database, barrier, left_operation),
+        pool.submit(_run_operation, right_database, barrier, right_operation),
+    )
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        results: list[str] = []
+        for future in futures:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            results.append(future.result(timeout=remaining))
+        return results
+    except TimeoutError as error:
+        for future in futures:
+            future.cancel()
+        # ``Future.cancel`` cannot stop a thread that is already running.  The
+        # per-connection PostgreSQL statement timeout is the cooperative stop
+        # boundary; wait for every worker before the caller closes engines or
+        # drops the temporary schema, otherwise cleanup can race an in-flight
+        # transaction.  This timeout is therefore an operation deadline, not
+        # an unsafe promise that Python threads can be force-killed.
+        for future in futures:
+            if future.cancelled():
+                continue
+            try:
+                future.result()
+            except Exception:
+                pass
+        raise SmokeFailure("database_operation_timeout") from error
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def _published_release_id(database: Database) -> str:
@@ -316,11 +361,21 @@ def _assert_results(
 
 
 def _run_smoke(base_url: URL, timeout_seconds: int) -> dict[str, Any]:
+    _load_runtime_dependencies()
     schema = _new_schema_name()
     if not SCHEMA_NAME_PATTERN.fullmatch(schema):
         raise SmokeFailure("schema_name_invalid")
+    admin_timeout_ms = timeout_seconds * 1_000
     admin_engine = create_engine(
-        base_url.set(query={**dict(base_url.query), "connect_timeout": "5"}),
+        base_url.set(
+            query={
+                **dict(base_url.query),
+                "connect_timeout": "5",
+                "options": (
+                    f"-cstatement_timeout={admin_timeout_ms} -clock_timeout=5000"
+                ),
+            }
+        ),
         pool_pre_ping=True,
         pool_size=1,
         max_overflow=0,
@@ -331,6 +386,7 @@ def _run_smoke(base_url: URL, timeout_seconds: int) -> dict[str, Any]:
     right_database: Database | None = None
     metrics: dict[str, Any] = {}
     failure: SmokeFailure | None = None
+    database_close_ok = True
 
     try:
         with admin_engine.begin() as connection:
@@ -447,9 +503,15 @@ def _run_smoke(base_url: URL, timeout_seconds: int) -> dict[str, Any]:
         failure = SmokeFailure("postgres_smoke_failed")
     finally:
         if left_database is not None:
-            left_database.close()
+            try:
+                left_database.close()
+            except Exception:
+                database_close_ok = False
         if right_database is not None:
-            right_database.close()
+            try:
+                right_database.close()
+            except Exception:
+                database_close_ok = False
         if schema_created:
             try:
                 with admin_engine.begin() as connection:
@@ -461,6 +523,8 @@ def _run_smoke(base_url: URL, timeout_seconds: int) -> dict[str, Any]:
 
     if schema_created and not cleanup:
         failure = SmokeFailure("schema_cleanup_failed")
+    elif not database_close_ok and failure is None:
+        failure = SmokeFailure("database_cleanup_failed")
     if failure is not None:
         return _record(
             "error", schema_cleanup=cleanup, error_code=failure.code, **metrics

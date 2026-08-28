@@ -6,6 +6,7 @@
     WorkbenchPhase
   } from "./types";
   import type { WorkbenchModelOption } from "../../domain/providerCatalog";
+  import SelectField from "../ui/SelectField.svelte";
 
   export let items: ReadonlyArray<ConfigSummaryItem> = [];
   export let phase: WorkbenchPhase = "empty";
@@ -25,6 +26,10 @@
   export let translate: (source: string, values?: Record<string, string | number>) => string = (source) => source;
 
   $: running = phase === "running";
+  $: modelOptions = models.map((model) => ({
+    value: optionValue(model.providerId, model.id),
+    label: `${model.providerLabel} · ${translate(model.label)}${model.isDefault ? ` · ${translate("默认")}` : ""}`
+  }));
 
   function optionValue(providerId: string, modelId: string): string {
     return JSON.stringify([providerId, modelId]);
@@ -51,30 +56,36 @@
           <strong>{item.value}</strong>
         </span>
       {/each}
-      {#if models.length > 0 && onModelChange}
-        <label class="model-picker">
-          <span>{translate("模型")}</span>
-          <select
-            aria-label={translate("切换润色模型")}
-            disabled={running}
-            value={optionValue(selectedProvider ?? "", selectedModel ?? "")}
-            on:change={(event) => changeModel(event.currentTarget.value)}
-          >
-            {#each models as model (optionValue(model.providerId, model.id))}
-              <option value={optionValue(model.providerId, model.id)}>
-                {model.providerLabel} · {translate(model.label)}{model.isDefault ? ` · ${translate("默认")}` : ""}
-              </option>
-            {/each}
-          </select>
-        </label>
-      {/if}
     </div>
-    {#if onAdjust}
-      <button class="adjust-button" type="button" disabled={running} on:click={() => void onAdjust?.()}>
-        {adjustLabel}
-      </button>
-    {/if}
   </div>
+
+  {#if (models.length > 0 && onModelChange) || onAdjust}
+    <details class="advanced-config">
+      <summary>{translate("更多设置")}</summary>
+      <div class="advanced-config-content">
+        {#if models.length > 0 && onModelChange}
+          <label class="model-picker">
+            <span>{translate("模型")}</span>
+            <SelectField
+              ariaLabel={translate("切换润色模型")}
+              disabled={running}
+              value={optionValue(selectedProvider ?? "", selectedModel ?? "")}
+              options={modelOptions}
+              className="model-select"
+              size="compact"
+              fullWidth={false}
+              onValueChange={changeModel}
+            />
+          </label>
+        {/if}
+        {#if onAdjust}
+          <button class="adjust-button" type="button" disabled={running} on:click={() => void onAdjust?.()}>
+            {adjustLabel}
+          </button>
+        {/if}
+      </div>
+    </details>
+  {/if}
 
   <div class="action-row">
     {#if running}
@@ -133,7 +144,7 @@
   .trust-summary {
     margin: 0;
     color: var(--muted, #697386);
-    font-size: 11px;
+    font-size: var(--font-meta);
     line-height: 1.48;
     overflow-wrap: anywhere;
   }
@@ -144,6 +155,31 @@
     flex: 1 1 auto;
     flex-wrap: wrap;
     gap: 5px;
+  }
+
+  .advanced-config {
+    min-width: 0;
+  }
+
+  .advanced-config summary {
+    width: fit-content;
+    color: var(--muted, #697386);
+    cursor: pointer;
+    font-size: var(--font-meta);
+    font-weight: 600;
+  }
+
+  .advanced-config-content {
+    display: none;
+    min-width: 0;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 8px;
+  }
+
+  .advanced-config[open] .advanced-config-content {
+    display: flex;
   }
 
   .summary-chip {
@@ -158,7 +194,7 @@
     background: color-mix(in srgb, var(--accent-soft, #eef1ff) 38%, var(--surface, #fff));
     border: 1px solid var(--line, #e1e6ee);
     border-radius: 7px;
-    font-size: 11px;
+    font-size: var(--font-meta);
     line-height: 1.35;
     white-space: nowrap;
   }
@@ -187,25 +223,19 @@
     background: var(--surface, #fff);
     border: 1px solid var(--line, #e1e6ee);
     border-radius: 7px;
-    font-size: 11px;
+    font-size: var(--font-meta);
   }
 
-  .model-picker select {
+  .model-picker :global(.model-select) {
     min-width: 0;
     max-width: 230px;
-    height: 23px;
-    padding: 0 22px 0 2px;
-    color: var(--text, #202535);
-    background: transparent;
-    border: 0;
-    font: inherit;
-    font-weight: 620;
+    flex: 1 1 auto;
   }
 
   button {
     border-radius: 7px;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--font-meta);
     font-weight: 620;
     line-height: 1;
     white-space: nowrap;
@@ -273,7 +303,7 @@
     border: 1px solid rgb(255 255 255 / 22%);
     border-radius: 5px;
     font: inherit;
-    font-size: 10px;
+    font-size: var(--font-meta);
     font-weight: 500;
   }
 
@@ -306,7 +336,7 @@
     gap: 6px;
     overflow: hidden;
     color: var(--muted, #697386);
-    font-size: 11px;
+    font-size: var(--font-meta);
     line-height: 1.4;
   }
 

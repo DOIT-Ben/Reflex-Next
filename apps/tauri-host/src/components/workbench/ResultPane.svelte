@@ -277,7 +277,7 @@
 
   h2 {
     flex: 0 0 auto;
-    font-size: 13px;
+    font-size: var(--font-body);
     font-weight: 650;
     line-height: 1.4;
   }
@@ -289,7 +289,7 @@
     color: var(--accent, #5065c7);
     background: var(--accent-soft, #eef1ff);
     border-radius: 999px;
-    font-size: 10px;
+    font-size: var(--font-meta);
     font-weight: 620;
     line-height: 1.4;
     text-overflow: ellipsis;
@@ -299,7 +299,7 @@
   .elapsed {
     flex: 0 0 auto;
     color: var(--muted, #697386);
-    font-size: 10px;
+    font-size: var(--font-meta);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -343,7 +343,7 @@
   }
 
   .center-state h3 {
-    font-size: 13px;
+    font-size: var(--font-body);
     font-weight: 650;
     line-height: 1.45;
   }
@@ -352,7 +352,7 @@
     max-width: 360px;
     margin-top: 4px;
     color: var(--muted, #697386);
-    font-size: 11px;
+    font-size: var(--font-meta);
     line-height: 1.6;
     overflow-wrap: anywhere;
   }
@@ -396,7 +396,7 @@
     color: var(--danger, #dc2626);
     background: var(--danger-soft, #fff8f8);
     border: 1px solid var(--danger-line, #f4caca);
-    font-size: 18px;
+    font-size: var(--font-title);
     font-weight: 760;
   }
 
@@ -443,7 +443,7 @@
     min-height: 31px;
     padding: 0 11px;
     border-radius: 7px;
-    font-size: 11px;
+    font-size: var(--font-meta);
     font-weight: 620;
   }
 
@@ -462,16 +462,20 @@
   .secondary-tools summary {
     width: fit-content;
     color: var(--muted, #697386);
-    font-size: 11px;
+    font-size: var(--font-meta);
     cursor: pointer;
   }
 
   .secondary-tools-content {
-    display: flex;
+    display: none;
     align-items: center;
     flex-wrap: wrap;
     gap: 5px;
     padding-top: 7px;
+  }
+
+  .secondary-tools[open] .secondary-tools-content {
+    display: flex;
   }
 
   .primary-action:hover:not(:disabled),
@@ -501,7 +505,7 @@
     color: var(--muted, #697386);
     background: transparent;
     border: 0;
-    font-size: 10px;
+    font-size: var(--font-meta);
     font-weight: 500;
     overflow-wrap: anywhere;
     text-decoration: underline;
@@ -533,7 +537,7 @@
     overflow: auto;
     color: var(--text, #202535);
     font: inherit;
-    font-size: 13px;
+    font-size: var(--font-body);
     line-height: 1.72;
     overflow-wrap: anywhere;
     white-space: pre-wrap;
@@ -565,7 +569,7 @@
     gap: 7px;
     padding: 8px 10px;
     border-radius: 7px;
-    font-size: 11px;
+    font-size: var(--font-meta);
     line-height: 1.5;
     overflow-wrap: anywhere;
   }
@@ -624,7 +628,7 @@
     background: var(--surface, #fff);
     border: 1px solid var(--line, #e1e6ee);
     border-radius: 7px;
-    font-size: 10px;
+    font-size: var(--font-meta);
     font-weight: 600;
   }
 
@@ -673,7 +677,7 @@
     color: var(--muted, #697386);
     background: color-mix(in srgb, var(--surface, #fff) 76%, var(--page, #edf1f6));
     border-top: 1px solid color-mix(in srgb, var(--line, #e1e6ee) 72%, transparent);
-    font-size: 10px;
+    font-size: var(--font-meta);
     line-height: 1.4;
   }
 

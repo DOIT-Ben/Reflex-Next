@@ -34,7 +34,7 @@ signtool sign /fd SHA256 /td SHA256 /tr <已批准的时间戳服务> /a .\artif
 ```
 
 4. 使用 `Get-AuthenticodeSignature` 和 `signtool verify /pa /all` 检查三个文件的签名链、时间戳和用途。
-5. 重新生成 12 个组件 SBOM 和 6 份用户文档的候选物料。
+5. 重新生成 14 个组件 SBOM、6 份用户文档和 26 个文件的候选物料；其中 `SHA256SUMS.txt` 包含 24 条文件记录。
 6. 用发布候选验证器执行 `-RequireSigned -RequireTag -RequireClean`；任何一个门禁失败都不能发布。
 7. 在独立机器上验证安装、启动、生成、取消、历史读取和卸载，再公开校验和及来源说明。
 

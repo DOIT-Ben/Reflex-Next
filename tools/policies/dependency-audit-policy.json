@@ -13,19 +13,6 @@
     "cargo_license": "0.6.1",
     "npm": "10.9.2"
   },
-  "python_projects": [
-    "packages/reflex-core",
-    "packages/reflex-runtime",
-    "services/reflex-cloud",
-    "plugins/batch-runner",
-    "plugins/history-sqlite",
-    "plugins/markdown-preview",
-    "plugins/provider-minimax",
-    "plugins/provider-native-protocols",
-    "plugins/provider-openai-compatible",
-    "plugins/semantic-detector",
-    "plugins/translator"
-  ],
   "rust_advisory_exceptions": [
     {
       "id": "RUSTSEC-2026-0194",

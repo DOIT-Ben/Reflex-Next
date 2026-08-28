@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
+  import BaseButton from "../ui/BaseButton.svelte";
+  import DialogShell from "../ui/DialogShell.svelte";
 
   interface Props {
     notice: string | null;
@@ -10,19 +12,17 @@
   }
 
   let { notice, translate, onCancel, onConfirm }: Props = $props();
-  let cancelButton: HTMLButtonElement;
+  let cancelButton: { focus: () => void };
   onMount(() => cancelButton?.focus());
 </script>
 
 <div class="modal-layer" role="presentation">
-  <div class="clipboard-modal" role="dialog" aria-modal="true" aria-label={translate("替换剪贴板确认")}>
+  <DialogShell title={translate("替换当前剪贴板内容？")} description={translate("原剪贴板内容会被本次结果覆盖。首次使用需要确认，之后可在设置中修改。")}>
     <span class="confirm-icon" aria-hidden="true"><ClipboardPaste size={19} strokeWidth={2} /></span>
-    <h2>{translate("替换当前剪贴板内容？")}</h2>
-    <p>{translate("原剪贴板内容会被本次结果覆盖。首次使用需要确认，之后可在设置中修改。")}</p>
     {#if notice}<p class="clipboard-feedback" aria-live="polite">{translate(notice)}</p>{/if}
     <div>
-      <button class="outline" type="button" bind:this={cancelButton} onclick={onCancel}>{translate("取消")}</button>
-      <button class="primary small" type="button" onclick={onConfirm}>{translate("确认替换")}</button>
+      <BaseButton variant="secondary" bind:this={cancelButton} onclick={onCancel}>{translate("取消")}</BaseButton>
+      <BaseButton variant="primary" onclick={onConfirm}>{translate("确认替换")}</BaseButton>
     </div>
-  </div>
+  </DialogShell>
 </div>

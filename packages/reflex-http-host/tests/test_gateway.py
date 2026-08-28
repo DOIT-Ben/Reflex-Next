@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import queue
+import time
 
 import pytest
 
@@ -51,6 +52,25 @@ def test_send_command_requires_started_gateway():
     assert exc.value.code == "runtime_unavailable"
 
 
+def test_send_command_with_subscription_registers_before_send():
+    holder = {}
+
+    class InspectingSession(FakeSession):
+        def send(self, command):
+            assert command["request_id"] in holder["gateway"]._subscriptions
+            super().send(command)
+
+    session = InspectingSession(timeout_seconds=5.0)
+    gateway = SidecarGateway(session_factory=lambda _: session)
+    holder["gateway"] = gateway
+    gateway.start()
+
+    request_id, subscription = gateway.send_command_with_subscription("ping")
+
+    assert request_id in gateway._subscriptions
+    assert subscription is gateway._subscriptions[request_id]
+
+
 def test_dispatch_routes_events_by_request_id():
     gateway, session = make_gateway()
     gateway.start()
@@ -74,6 +94,71 @@ def test_dispatch_marks_terminal_and_ignores_later_events():
 
     session.emit({"version": 1, "request_id": "req-2", "event": {"type": "chunk", "data": {}}})
     assert subscription.queue.empty()
+
+
+def test_terminal_event_is_retained_when_subscription_buffer_is_full():
+    gateway, _ = make_gateway()
+    subscription = gateway.subscribe("req-terminal")
+
+    for index in range(subscription.queue.maxsize):
+        subscription.dispatch(
+            {
+                "version": 1,
+                "request_id": "req-terminal",
+                "event": {"type": "chunk", "data": {"index": index}},
+            }
+        )
+    subscription.dispatch(
+        {
+            "version": 1,
+            "request_id": "req-terminal",
+            "event": {"type": "metric", "data": {}},
+        }
+    )
+
+    events = [subscription.queue.get_nowait() for _ in range(subscription.queue.qsize())]
+    assert events[-1]["event"]["type"] == "metric"
+    assert subscription.terminal is True
+    assert subscription.dropped == 1
+
+
+def test_duplicate_subscription_id_is_rejected():
+    gateway, _ = make_gateway()
+    gateway.subscribe("req-duplicate")
+
+    with pytest.raises(GatewayError) as error:
+        gateway.subscribe("req-duplicate")
+
+    assert error.value.code == "request_id_conflict"
+
+
+def test_incomplete_request_id_is_tombstoned_until_runtime_terminal_event():
+    gateway, session = make_gateway()
+    gateway.start()
+    subscription = gateway.subscribe("req-tombstone")
+    gateway.unsubscribe("req-tombstone", retire=True, subscription=subscription)
+
+    with pytest.raises(GatewayError) as error:
+        gateway.send_command_with_subscription("ping", request_id="req-tombstone")
+    assert error.value.code == "request_id_conflict"
+
+    session.emit(
+        {
+            "version": 1,
+            "request_id": "req-tombstone",
+            "event": {"type": "status", "data": {"phase": "cancelled"}},
+        }
+    )
+    deadline = time.monotonic() + 1.0
+    while "req-tombstone" in gateway._request_id_tombstones:
+        if time.monotonic() >= deadline:
+            pytest.fail("runtime terminal event did not release request id tombstone")
+        time.sleep(0.01)
+
+    request_id, _ = gateway.send_command_with_subscription(
+        "ping", request_id="req-tombstone"
+    )
+    assert request_id == "req-tombstone"
 
 
 def test_unsubscribe_stops_routing():
@@ -148,5 +233,11 @@ def test_runtime_environment_does_not_inherit_credentials(monkeypatch):
 
 def test_runtime_environment_development_can_be_disabled(monkeypatch):
     monkeypatch.setenv("REFLEX_RUNTIME_DEVELOPMENT", "0")
+    child_environment = runtime_environment()
+    assert "REFLEX_RUNTIME_DEVELOPMENT" not in child_environment
+
+
+def test_runtime_environment_is_not_development_by_default(monkeypatch):
+    monkeypatch.delenv("REFLEX_RUNTIME_DEVELOPMENT", raising=False)
     child_environment = runtime_environment()
     assert "REFLEX_RUNTIME_DEVELOPMENT" not in child_environment

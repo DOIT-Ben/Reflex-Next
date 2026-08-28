@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -101,6 +102,30 @@ class ReflexCloudPostgresQualityReleaseSmokeContractTests(unittest.TestCase):
         self.assertNotIn(private_value, result.stdout + result.stderr)
         self.assertEqual(json.loads(result.stdout)["error_code"], "invalid_arguments")
 
+    def test_pair_waits_for_running_workers_before_returning_timeout(self):
+        class Sessions:
+            def __enter__(self):
+                return object()
+
+            def __exit__(self, *_):
+                return False
+
+        class Database:
+            def sessions(self):
+                return Sessions()
+
+        completed = []
+
+        def operation(_session):
+            time.sleep(0.1)
+            completed.append(True)
+
+        with self.assertRaises(smoke.SmokeFailure) as failure:
+            smoke._run_pair(Database(), Database(), operation, operation, 0)
+
+        self.assertEqual(failure.exception.code, "database_operation_timeout")
+        self.assertEqual(len(completed), 2)
+
     def test_windows_wrapper_enforces_resource_and_cleanup_guards(self):
         source = WRAPPER.read_text(encoding="utf-8")
         for required in (
@@ -114,6 +139,11 @@ class ReflexCloudPostgresQualityReleaseSmokeContractTests(unittest.TestCase):
             '--frozen',
             'docker stop --time 10',
             'existing_container_interrupted',
+            'Start-Process',
+            'smokeWatchdogSeconds = 90',
+            'taskkill.exe /PID',
+            'postgres_smoke_timeout',
+            '"--timeout-seconds"',
         ):
             self.assertIn(required, source)
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { HistoryState, HistorySummary } from "../../domain/historyState";
+  import EmptyState from "../ui/EmptyState.svelte";
 
   interface Props {
     state: HistoryState;
@@ -15,8 +16,8 @@
 
 <aside class="history-list" aria-label={translate("历史记录列表")}>
   {#if state.phase === "loading"}<p class="history-state">{translate("正在加载历史记录...")}</p>
-  {:else if state.phase === "empty"}<p class="history-state">{translate("暂无历史记录。")}</p>
-  {:else if state.phase === "error"}<p class="history-state error">{translate(state.error ?? "历史记录暂时不可用，请稍后重试。")}</p>
+  {:else if state.phase === "empty"}<EmptyState title={translate("暂无历史记录。")} detail={translate("完成一次处理后，记录会出现在这里。")} />
+  {:else if state.phase === "error"}<EmptyState tone="error" title={translate("历史记录尚未开启")} detail={translate(state.error ?? "历史记录暂时不可用，请稍后重试。")} />
   {:else}
     {#each state.items as item (item.id)}
       <button class:active={item.id === state.selectedId} class="history-row" type="button" onclick={() => onSelect(item)}>

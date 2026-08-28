@@ -27,6 +27,7 @@ MAX_QUEUED_EVENTS = 4_096
 MAX_STDERR_BYTES = 8 * 1024 * 1024
 DEFAULT_SESSION_TIMEOUT_SECONDS = 5.0
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
+MAX_REQUEST_ID_TOMBSTONES = 4_096
 
 TERMINAL_STATUS_PHASES = frozenset({"completed", "cancelled", "error"})
 TERMINAL_EVENT_TYPES = frozenset(
@@ -85,10 +86,10 @@ def runtime_environment() -> dict[str, str]:
     env = {name: os.environ[name] for name in _ALLOWED_ENV_NAMES if name in os.environ}
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONPATH"] = os.pathsep.join((str(RUNTIME_SOURCE), str(CORE_SOURCE)))
-    if os.environ.get("REFLEX_RUNTIME_DEVELOPMENT") == "0":
-        env.pop("REFLEX_RUNTIME_DEVELOPMENT", None)
-    else:
+    if os.environ.get("REFLEX_RUNTIME_DEVELOPMENT") == "1":
         env["REFLEX_RUNTIME_DEVELOPMENT"] = "1"
+    else:
+        env.pop("REFLEX_RUNTIME_DEVELOPMENT", None)
     return env
 
 
@@ -103,12 +104,29 @@ class _Subscription:
     def dispatch(self, envelope: dict[str, Any]) -> None:
         if self.terminal:
             return
-        if is_terminal_event(envelope):
+        terminal = is_terminal_event(envelope)
+        if terminal:
             self.terminal = True
-        try:
-            self.queue.put_nowait(envelope)
-        except queue.Full:
-            self.dropped += 1
+        if not terminal:
+            try:
+                self.queue.put_nowait(envelope)
+            except queue.Full:
+                self.dropped += 1
+            return
+
+        # A terminal event must always remain observable.  If the bounded
+        # buffer is full, evict the oldest buffered event until the terminal
+        # event has a slot instead of making consumers wait for a timeout.
+        while True:
+            try:
+                self.queue.put_nowait(envelope)
+                return
+            except queue.Full:
+                try:
+                    self.queue.get_nowait()
+                except queue.Empty:
+                    continue
+                self.dropped += 1
 
 
 class RuntimeSession:
@@ -252,6 +270,7 @@ class SidecarGateway:
         self.request_timeout_seconds = request_timeout_seconds
         self._lock = threading.Lock()
         self._subscriptions: dict[str, _Subscription] = {}
+        self._request_id_tombstones: dict[str, float] = {}
         self._session: RuntimeSession | None = None
         self._dispatch_thread: threading.Thread | None = None
         self._closed = False
@@ -294,15 +313,77 @@ class SidecarGateway:
         )
         return request_id
 
+    def send_command_with_subscription(
+        self,
+        command_type: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        request_id: str | None = None,
+    ) -> tuple[str, _Subscription]:
+        """Register an event subscription before sending a fast command.
+
+        The runtime may answer synchronously (especially for ping and catalog
+        commands). Keeping registration and dispatch under the same lock makes
+        the ordering explicit and prevents the dispatcher from dropping a
+        response between ``send`` and ``subscribe``.
+        """
+        request_id = request_id or new_request_id()
+        subscription = _Subscription()
+        with self._lock:
+            session = self._session
+            if session is None:
+                raise GatewayError("runtime_unavailable", "Runtime is not started.")
+            if (
+                request_id in self._subscriptions
+                or request_id in self._request_id_tombstones
+            ):
+                raise GatewayError(
+                    "request_id_conflict", "Request id is already active."
+                )
+            self._subscriptions[request_id] = subscription
+            try:
+                session.send(
+                    {
+                        "version": RUNTIME_PROTOCOL_VERSION,
+                        "request_id": request_id,
+                        "type": command_type,
+                        "payload": dict(payload or {}),
+                    }
+                )
+            except Exception:
+                self._subscriptions.pop(request_id, None)
+                raise
+        return request_id, subscription
+
     def subscribe(self, request_id: str) -> _Subscription:
         subscription = _Subscription()
         with self._lock:
+            if (
+                request_id in self._subscriptions
+                or request_id in self._request_id_tombstones
+            ):
+                raise GatewayError(
+                    "request_id_conflict", "Request id is already active."
+                )
             self._subscriptions[request_id] = subscription
         return subscription
 
-    def unsubscribe(self, request_id: str) -> None:
+    def unsubscribe(
+        self,
+        request_id: str,
+        *,
+        retire: bool = False,
+        subscription: _Subscription | None = None,
+    ) -> None:
         with self._lock:
-            self._subscriptions.pop(request_id, None)
+            existing = self._subscriptions.pop(request_id, None)
+            observed_subscription = subscription or existing
+            if retire and not (
+                observed_subscription and observed_subscription.terminal
+            ):
+                self._request_id_tombstones[request_id] = time.monotonic()
+                while len(self._request_id_tombstones) > MAX_REQUEST_ID_TOMBSTONES:
+                    self._request_id_tombstones.pop(next(iter(self._request_id_tombstones)))
 
     def cancel(self, request_id: str) -> None:
         self.send_command("cancel", request_id=request_id)
@@ -315,6 +396,7 @@ class SidecarGateway:
             session = self._session
             subscriptions = dict(self._subscriptions)
             self._subscriptions.clear()
+            self._request_id_tombstones.clear()
         for request_id in subscriptions:
             try:
                 self.cancel(request_id)
@@ -341,5 +423,7 @@ class SidecarGateway:
                 continue
             with self._lock:
                 subscription = self._subscriptions.get(request_id)
+                if is_terminal_event(envelope):
+                    self._request_id_tombstones.pop(request_id, None)
             if subscription is not None:
                 subscription.dispatch(envelope)

@@ -21,7 +21,10 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 def test_capability_plugins_are_only_explicit_local_builtin_extras():
     config = tomllib.loads((RUNTIME_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert config["project"]["dependencies"] == ["httpx>=0.28,<0.29"]
+    assert config["project"]["dependencies"] == [
+        "httpx>=0.28,<0.29",
+        "reflex-core==0.7.0-alpha.8",
+    ]
     assert config["project"]["optional-dependencies"]["builtins"] == [
         "reflex-history-sqlite",
         "reflex-batch-runner",

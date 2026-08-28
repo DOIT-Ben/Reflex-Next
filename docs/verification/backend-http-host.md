@@ -1,6 +1,6 @@
 # Reflex Next 本地 HTTP 宿主（SSE）验证记录
 
-更新时间：2026-08-14
+更新时间：2026-08-28
 
 ## 1. 目的
 
@@ -23,16 +23,18 @@
 - 十大一级分类：business 商务沟通 / marketing 营销文案 / market_analysis 市场分析 /
   tech_doc 技术文档 / code 代码工程 / diagnosis 问题诊断 / academic 学术研究 /
   education 学习教育 / creative 创意写作 / translation 翻译本地化；
-- 42 个二级子场景全部映射到十大分类；`scene_policy: manual` 时使用手动指定场景，
+- 49 个场景中有 42 个二级子场景映射到十大分类；`scene_policy: manual` 时使用手动指定场景，
   `auto`（默认）时由内置规则检测器自动识别并输出 `category` 元数据；
-- `scene` 事件新增 `category` 字段（附加字段，旧客户端可忽略）；未知场景回退 `general`。
+- `scene` 事件新增 `category` 字段（附加字段，旧客户端可忽略）；场景处理按策略区分：
+  `manual`/`ask` 提供未知场景时返回 422，`auto` 时忽略手动场景并交给检测器，只有自动检测失败才回退 `general`。
 - `POST /v1/requests/{request_id}/cancel`：发送取消命令。
 - `POST /v1/ping`、`GET /v1/providers`、`GET /v1/health`。
 - `GET /v1/scenes`：场景库目录（10 个一级分类分组 + 49 个场景清单 + 未分类项），
   客户端可据此构建场景选择 UI；模板包路径可用 `REFLEX_TEMPLATE_PACK_ROOT` 覆盖。
 - 默认绑定 `127.0.0.1:8790`；`REFLEX_HTTP_TOKEN` 非空时所有端点要求 `Authorization: Bearer <token>`。
-- 子进程环境为白名单（不继承 Provider 凭据），默认启用开发 Mock（`REFLEX_RUNTIME_DEVELOPMENT=1`，
-  设 `0` 关闭）。
+  绑定到非 loopback 地址时必须配置 Token，否则宿主拒绝启动。
+- 子进程环境为白名单（不继承 Provider 凭据），默认关闭开发 Mock；仅显式设置
+  `REFLEX_RUNTIME_DEVELOPMENT=1` 才启用。
 
 启动：
 
@@ -43,13 +45,14 @@ uv run --frozen reflex-http-host
 
 ## 3. 契约测试证据
 
-- 包内测试 `packages/reflex-http-host/tests/`：23 项，覆盖 SidecarGateway 路由/终态判定/关闭链/
+- 包内测试 `packages/reflex-http-host/tests/`：44 项，覆盖 SidecarGateway 路由/终态判定/关闭链/
   凭据不继承，FastAPI 端点/SSE 帧/取消/超时/鉴权，以及 4 项真实子进程集成测试
   （ping/providers/完整事件序列/未配置 Provider 错误）。
 - 压力工具契约 `tools/tests/test_http_soak_backend.py`：17 项，覆盖完成/取消计数、busy 计数、
   串线检测、缺终态检测、取消缺失判定、http_error 单次重试、限值拒绝、报告无正文。
-- 命令：`uv run --frozen --project packages\reflex-http-host --extra dev pytest tools/tests/test_http_soak_backend.py packages/reflex-http-host/tests -q`
-- 结果：`40 passed`。
+- 当前包级命令：`uv run --frozen --project packages\reflex-http-host --extra dev pytest packages\reflex-http-host\tests -q`
+- 当前结果（2026-08-28）：`44 passed, 1 warning`。
+- 压力工具契约仍为历史独立门禁：`tools/tests/test_http_soak_backend.py` 17 项；当前包级测试与压力工具契约分开统计，不再使用历史合并命令的 `40 passed` 作为结果。
 - 统一门禁：`verify_backend.ps1 -PythonProject reflex-http-host` → `Backend verification passed.`；
   `check_version_consistency.ps1` 通过（0.7.0-alpha.8）。
 
@@ -81,6 +84,8 @@ uv run --frozen --project packages\reflex-http-host --extra dev python tools/htt
   `runtime_busy` 稳定错误语义表达（工具按 busy 计数而非失败）。
 
 ## 5. 边界与后续
+
+- 2026-08-28 回归：HTTP Host 的命令订阅已统一为“先订阅、后发送”，并新增非 loopback 无 Token 拒绝、显式开发 Mock 和快速响应回归；当前实现仍需与 Rust Host 做完整事件/取消/超时等价性发布验证。
 
 - 本形态未改变 P3-002 等现有门禁状态；7 天正式浸泡继续按文档配置运行；
 - 后续方向：WebSocket 通道、并发参数化（`max_active_optimize` 可配置）、远程部署适配层。

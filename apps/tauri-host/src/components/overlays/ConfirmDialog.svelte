@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
+  import BaseButton from "../ui/BaseButton.svelte";
+  import DialogShell from "../ui/DialogShell.svelte";
 
   interface Props {
     title: string;
@@ -13,7 +15,7 @@
   }
 
   let { title, description, confirmLabel, cancelLabel, danger = false, onCancel, onConfirm }: Props = $props();
-  let cancelButton = $state<HTMLButtonElement>();
+  let cancelButton = $state<{ focus: () => void }>();
   onMount(() => {
     cancelButton?.focus();
     const handleKeydown = (event: KeyboardEvent) => {
@@ -28,13 +30,11 @@
 </script>
 
 <div class="modal-layer confirm-layer" role="presentation">
-  <div class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description">
+  <DialogShell title={title} description={description}>
     <span class="confirm-icon warning" aria-hidden="true"><TriangleAlert size={19} strokeWidth={2} /></span>
-    <h2 id="confirm-title">{title}</h2>
-    <p id="confirm-description">{description}</p>
     <div class="confirm-actions">
-      <button class="outline" type="button" bind:this={cancelButton} onclick={onCancel}>{cancelLabel}</button>
-      <button class:danger-button={danger} class="primary small" type="button" onclick={onConfirm}>{confirmLabel}</button>
+      <BaseButton variant="secondary" bind:this={cancelButton} onclick={onCancel}>{cancelLabel}</BaseButton>
+      <BaseButton variant={danger ? "danger" : "primary"} onclick={onConfirm}>{confirmLabel}</BaseButton>
     </div>
-  </div>
+  </DialogShell>
 </div>

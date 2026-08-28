@@ -3,14 +3,16 @@
 Configuration (environment variables):
   REFLEX_HTTP_HOST            bind address (default 127.0.0.1)
   REFLEX_HTTP_PORT            bind port (default 8790)
-  REFLEX_HTTP_TOKEN           optional bearer token; empty disables auth
+  REFLEX_HTTP_TOKEN           bearer token; required when binding beyond loopback
   REFLEX_HTTP_REQUEST_TIMEOUT per-request SSE timeout in seconds (default 120)
-  REFLEX_RUNTIME_DEVELOPMENT  set to "0" to disable the development mock
+  REFLEX_RUNTIME_DEVELOPMENT  set to "1" to enable the development mock
 """
 
 from __future__ import annotations
 
 import os
+
+from .app import create_app
 
 
 def main() -> int:
@@ -18,9 +20,9 @@ def main() -> int:
 
     host = os.environ.get("REFLEX_HTTP_HOST", "127.0.0.1")
     port = int(os.environ.get("REFLEX_HTTP_PORT", "8790"))
+    app = create_app(bind_host=host)
     uvicorn.run(
-        "reflex_http_host.app:create_app",
-        factory=True,
+        app,
         host=host,
         port=port,
         log_level="warning",

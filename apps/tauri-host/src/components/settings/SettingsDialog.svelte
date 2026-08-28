@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, tick } from "svelte";
   import Settings2 from "@lucide/svelte/icons/settings-2";
   import X from "@lucide/svelte/icons/x";
   import type { DesktopStatus } from "../../domain/desktopBridge";
@@ -12,6 +13,7 @@
   import type { OptimizeMode, OptimizeStyle } from "../../domain/reflexSession";
   import type { SecretStatus } from "../../domain/settingsApi";
   import type { SemanticModelState } from "../../domain/semanticModelState";
+  import SelectField from "../ui/SelectField.svelte";
   import { settingsSections, type SettingsSection } from "./types";
 
   interface Props {
@@ -127,6 +129,59 @@
     onCloudRefresh,
     onCloudDeleteData
   }: Props = $props();
+  let dialog: HTMLDivElement | undefined;
+  let restoreFocus: HTMLElement | null = null;
+  const focusableSelector =
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+
+  function focusableElements(): HTMLElement[] {
+    return Array.from(dialog?.querySelectorAll<HTMLElement>(focusableSelector) ?? []).filter(
+      (element) => element.offsetWidth > 0 || element.offsetHeight > 0
+    );
+  }
+
+  function canRestoreFocus(element: HTMLElement | null): element is HTMLElement {
+    return Boolean(
+      element?.isConnected &&
+        element !== document.body &&
+        element !== document.documentElement &&
+        !element.closest("[inert]")
+    );
+  }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const elements = focusableElements();
+    if (elements.length === 0) return;
+    const first = elements[0];
+    const last = elements[elements.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  onMount(() => {
+    restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    void tick().then(() => focusableElements()[0]?.focus());
+    return () => {
+      const fallback = document.querySelector<HTMLElement>("[data-dialog-focus-fallback]");
+      if (canRestoreFocus(restoreFocus)) {
+        restoreFocus.focus();
+      } else {
+        fallback?.focus();
+      }
+    };
+  });
+
   let selectedProvider = $derived(
     providers.find((provider) => provider.id === (draft.default_provider ?? "minimax"))
   );
@@ -137,6 +192,15 @@
     currentProviderId === "reflex-cloud" || (
       providerCredentialReady && Boolean((draft.provider_endpoints[currentProviderId] ?? "").trim())
     )
+  );
+  let providerSelectOptions = $derived(
+    providers.map((provider) => ({
+      value: provider.id,
+      label: `${translate(provider.label)}${provider.releaseStatus === "experimental" ? ` ${translate("（实验）")}` : ""}`
+    }))
+  );
+  let modelSelectOptions = $derived(
+    models.map((model) => ({ value: model.id, label: translate(model.label) }))
   );
 
   const scenePolicies: Array<{ id: HostSettingsDraft["scene_policy"]; label: string }> = [
@@ -204,12 +268,20 @@
 </script>
 
 <div class="settings-layer" role="presentation">
-  <div class="settings-dialog" role="dialog" aria-modal="true" aria-label={translate("设置")}>
+  <div
+    bind:this={dialog}
+    class="settings-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="settings-title"
+    tabindex="-1"
+    onkeydown={handleKeydown}
+  >
     <header class="settings-head">
       <div class="settings-title">
         <span class="settings-title-icon" aria-hidden="true"><Settings2 size={18} strokeWidth={2} /></span>
         <div>
-          <h2>{translate("设置")}</h2>
+          <h2 id="settings-title">{translate("设置")}</h2>
           <p>{translate("管理模型、默认行为和本地隐私。")}</p>
         </div>
       </div>
@@ -236,19 +308,24 @@
           <div class="settings-grid">
             <label>
               <span>{translate("默认 Provider")}</span>
-              <select value={draft.default_provider ?? "minimax"} disabled={busy} onchange={(event) => onProviderChange(event.currentTarget.value)}>
-                {#each providers as provider}
-                  <option value={provider.id}>
-                    {translate(provider.label)}{provider.releaseStatus === "experimental" ? ` ${translate("（实验）")}` : ""}
-                  </option>
-                {/each}
-              </select>
+              <SelectField
+                value={draft.default_provider ?? "minimax"}
+                options={providerSelectOptions}
+                ariaLabel={translate("默认 Provider")}
+                disabled={busy}
+                onValueChange={onProviderChange}
+              />
             </label>
             <label>
               <span>{translate("默认模型")}</span>
-              <select value={draft.default_model ?? ""} disabled={busy} onchange={(event) => patchDraft({ default_model: event.currentTarget.value })}>
-                {#each models as model}<option value={model.id}>{translate(model.label)}</option>{/each}
-              </select>
+              <SelectField
+                value={draft.default_model ?? ""}
+                options={modelSelectOptions}
+                ariaLabel={translate("默认模型")}
+                placeholder={translate("暂无可用模型")}
+                disabled={busy || !models.length}
+                onValueChange={(value) => patchDraft({ default_model: value })}
+              />
             </label>
             {#if supportsCustomModel}
               <label>

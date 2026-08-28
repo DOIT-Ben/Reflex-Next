@@ -1,6 +1,6 @@
 # Reflex Next 后端生产化任务账本
 
-更新时间：2026-07-15
+更新时间：2026-08-29
 长期路线图：`docs/BACKEND-PRODUCTION-ROADMAP.md`
 
 ## 状态说明
@@ -21,7 +21,7 @@
 | P0-003 | Provider/Runtime 可靠性审查 | 完成 | 无 | 任务图、协议风险、上线门禁 |
 | P0-004 | 性能/资源/可观测性审查 | 完成 | 无 | SLO、基准和浸泡方案 |
 | P0-005 | 测试/CI/发布工程审查 | 完成 | 无 | 统一入口、CI 和发布门禁 |
-| P0-006 | 建立统一后端验证脚本 | 完成 | P0-005 | 单命令运行 10 个 Python 包、Rust 和前端契约 |
+| P0-006 | 建立统一后端验证脚本 | 完成 | P0-005 | 单命令运行注册表覆盖的 Python 项目、Rust 和前端契约 |
 | P0-007 | 建立 Windows 后端 CI | 完成 | P0-006 | GitHub Windows Run `29255203782` 全门禁通过 |
 | P0-008 | 建立版本一致性检查 | 完成 | P0-005 | 日常元数据、锁文件和发布标签模式契约通过 |
 | P0-009 | 建立发布前敏感信息扫描 | 完成 | P0-002 | 扫描器契约、受控夹具和当前跟踪文件实扫通过，并已接入统一 CI |
@@ -36,7 +36,7 @@
 |---|---|---|---|---|
 | P1-001 | Runtime 输出 Provider/模型可信目录 | 完成 | P0-010 | `provider_catalog` 契约、插件隔离和脱敏测试通过 |
 | P1-002 | Rust Host 暴露只读 Provider 目录命令 | 完成 | P1-001 | 主窗口只读命令、严格解析、有界 stdout/stderr 和重启测试通过 |
-| P1-003 | 前端 Domain Bridge 消费动态目录 | 完成 | P1-002 | Runtime 请求 ID 关联、严格目录解析、错误脱敏、设置页接入；前端 163 项与 Rust 191 项通过，见 `docs/verification/provider-catalog-frontend.md` |
+| P1-003 | 前端 Domain Bridge 消费动态目录 | 完成 | P1-002 | Runtime 请求 ID 关联、严格目录解析、错误脱敏、设置页接入；历史前端 163 项与 Rust 191 项记录见 `docs/verification/provider-catalog-frontend.md`，当前基线以最新工作台记录为准 |
 | P1-004 | 冻结重试、超时、取消和错误分类 | 完成 | P0-003 | MiniMax/OpenAI-compatible 负向夹具、主动取消和安全错误测试通过 |
 | P1-005 | 增强 SSE/JSON 断流与超大响应防护 | 完成 | P1-004 | 两类 Provider 均完成 2 MiB/50,000 上限、截断和非法 UTF-8 测试 |
 | P1-006 | Sidecar 崩溃和并发恢复验证 | 完成 | P1-004 | 唯一安全终态、路由清理、进程终止和下一请求重启测试通过 |
@@ -58,7 +58,7 @@
 | P2-003 | 历史损坏、恢复和轮换中断演练 | 完成 | P0-002 | 7 项灾难恢复夹具、索引/AEAD/记录一致性和幂等恢复通过 |
 | P2-004 | Markdown/CSV/路径/协议攻击性夹具 | 完成 | P0-002 | Markdown、CSV、WebView、历史路径、自定义 CA 路径与私有字段负向夹具通过 |
 | P2-005 | Python/Rust/npm 依赖漏洞和许可证门禁 | 完成 | P0-007 | 全 lockfile 漏洞、许可证 allowlist、稳定退出码和真实审计通过 |
-| P2-006 | 构建产物敏感信息扫描和 SBOM | 完成 | P0-009 | `cf45530` 干净工作树的前端构建、敏感扫描、12 组件 SBOM 和哈希复核通过；本地证据为合并门禁，远端 workflow 仅手动触发 |
+| P2-006 | 构建产物敏感信息扫描和 SBOM | 完成 | P0-009 | 历史 `cf45530` 干净工作树的前端构建、敏感扫描和 12 组件 SBOM 哈希复核通过；当前组件集合由注册表驱动，远端 workflow 已支持 push、pull request 和手动触发，分支保护强制关系仍需仓库设置核验 |
 
 ## 阶段 2.5：云端反馈闭环与质量发布
 
@@ -75,7 +75,7 @@
 | ID | 任务 | 状态 | 依赖 | 验证 |
 |---|---|---|---|---|
 | P3-001 | 建立冷启动与首状态基准 | 完成 | P0-006 | 本地 Mock P50/P95/P99、失败计数、环境元数据和 9 项契约通过 |
-| P3-002 | 建立 10,000 次请求/取消浸泡 | 进行中 | P1-006 | 工具、100 次 CI、10,000 次本机门禁通过；上一轮 72 小时门禁因 10ms 夹具竞态提前失败，100ms 修复后 2,000 次复验通过，待重新运行正式门禁 |
+| P3-002 | 建立 10,000 次请求/取消浸泡 | 进行中 | P1-006 | 工具契约、当前本机 100 次短门禁和历史 10,000 次记录通过；默认 CI 仅运行契约，实时短浸泡由手动 heavy 门禁执行；上一轮 72 小时门禁因 10ms 夹具竞态提前失败，100ms 修复后 2,000 次复验通过，待重新运行正式门禁 |
 | P3-003 | 建立插件和历史资源浸泡 | 完成 | P2-003 | 三轮 1,000 次、Private Bytes/句柄/线程/SQLite 连接预算通过 |
 | P3-004 | 审查请求 ID、线程、队列和缓冲上限 | 完成 | P0-004 | Runtime/插件/Host 硬上限、唯一终态、会话轮转和连接归零通过 |
 | P3-005 | 建立轮转脱敏诊断 | 完成 | P0-004、P0-002 | Runtime/Host 请求与生命周期、配置恢复、历史修复/恢复终态、轮转上限和隐私负向测试通过 |
@@ -92,7 +92,7 @@
 | P4-003 | 安装、覆盖安装、卸载和重装生命周期 | 待验证 | P4-002 | Windows 11 已通过，Windows 10 待验证；见 `docs/verification/release-alpha8-windows-lifecycle.md` |
 | P4-004 | 配置和历史升级兼容 | 进行中 | P4-002 | 配置 11 项、History 迁移回归、v0 Host 启动、beta.11 到 alpha.8 安装目录覆盖，以及旧 Runtime 实际历史库到当前 Runtime 的读写/备份迁移通过；官方旧版包/真实旧数据 Host 全链路待验证 |
 | P4-005 | 签名、更新与回滚方案 | 进行中 | 用户采购决策 | `docs/RELEASE-SIGNING.md` 已冻结签名、时间戳、更新和回滚流程；实际证书、签名实跑和回滚演练待完成 |
-| P4-006 | 发布清单、校验和、SBOM 和恢复手册 | 进行中 | P4-003、P4-005 | 当前门禁要求 schema 2、24 文件哈希、12 项 SBOM 和 6 份用户文档；正式签名、标签、回滚包和最终 RC 审计待完成 |
+| P4-006 | 发布清单、校验和、SBOM 和恢复手册 | 进行中 | P4-003、P4-005 | 当前门禁要求 schema 2、24 条文件哈希记录、14 项 SBOM、26 个候选文件和 6 份用户文档；正式签名、标签、回滚包和最终 RC 审计待完成 |
 
 ## 阶段 5：受控试用与正式发布
 
@@ -100,36 +100,41 @@
 |---|---|---|---|---|
 | P5-001 | 受控试用和问题分级 | 待办 | RC1 | 无未处理 P0/P1 |
 | P5-002 | 全量回归、冒烟、浸泡和安装复验 | 待办 | P5-001 | 四类证据齐全 |
-| P5-003 | 隐私、依赖、支持范围和故障文档 | 完成 | P5-001 | `PRIVACY.md`、`THIRD-PARTY-NOTICES.md`、`SUPPORT.md`、`TROUBLESHOOTING.md`；链接、敏感扫描、用户可见层和候选包来源绑定通过 |
+| P5-003 | 隐私、依赖、支持范围和故障文档 | 完成 | P0-002、P0-005 | `PRIVACY.md`、`THIRD-PARTY-NOTICES.md`、`SUPPORT.md`、`TROUBLESHOOTING.md`；链接、敏感扫描、用户可见层和候选包来源绑定通过 |
 | P5-004 | 生成签名安装包和回滚包 | 待办 | P5-002 | 包校验通过 |
 | P5-005 | 创建并验证 `v1.0.0` | 待办 | 全部门禁 | 标签、发布物、校验和一致 |
 
 ## 当前验证基线
 
-- Python：10 个包全部通过，本轮 Reflex Cloud 48 项通过；
-- Rust/Tauri Host：194 项通过，3 项 Windows Credential Manager 实机测试默认忽略且已单独实跑通过；
-- 生产工具：Provider 冒烟 8 项加 2 个子用例、性能基准 9 项、History 基准 38 项、插件/历史资源工具 40 项通过；
-- Runtime 浸泡：工具契约 14 项、CI 100 次短门禁通过；本机 10,000 次中 5,000 完成、5,000 取消、65,002 个协议事件、迟到事件 0、安全退出；
-- 72 小时 Runtime 门禁最近一轮已提前结束：报告 `workbench\runtime-soak-72h-alpha8-20260715-045742.json` 记录 824 次（完成 412、取消 412），因 `completed_instead_of_cancelled` 失败，未达到 10,000 次/72 小时门槛；P3-002 继续保持进行中；
+- 2026-08-28 架构治理增量：13 个 Python 项目统一登记于 `tools/project-registry.json`，注册表契约、版本/SBOM/依赖清单联动契约通过；Runtime 依赖、HTTP Host 安全默认值与事件订阅竞态、Cloud 输出结算上限已补回归。高风险宿主拆分和 Windows 全生命周期仍保持开放，见 `docs/ARCHITECTURE-DEBT-REGISTER.md`。
+
+- Python 注册表：13 个项目；本轮实际回归 Core 109 项、Runtime 333 项、HTTP Host 44 项、Reflex Cloud 86 项、MiniMax Provider 32 项。其余注册项目仍由统一门禁和发布矩阵负责覆盖，不在本行虚报“全部通过”；
+- Rust/Tauri Host：197 项通过，3 项 Windows Credential Manager 实机测试默认忽略；
+- 生产工具：Provider 冒烟 9 项加 2 个子用例、性能基准 9 项、History 基准 38 项、插件/历史资源工具 40 项通过；
+- Runtime 浸泡工具：契约测试 57 项通过，本机 100 次短门禁报告 `workbench\runtime-soak-smoke-20260829.json` 通过（完成 50、取消 50、650 个协议事件、终态观察残留 0、安全退出）；默认 CI 不运行实时浸泡，手动 heavy 门禁保留该步骤；历史 10,000 次记录（完成 5,000、取消 5,000、65,002 个协议事件、迟到事件 0、安全退出）仅作为历史证据，不替代当前工作树门禁；
+- 72 小时 Runtime 门禁仍未关闭：历史记录包括 2026-07-15 的 824 次、2026-08-17 的 2,920 次和 2026-08-18 的 76 次，前两类因 `completed_instead_of_cancelled` 失败，另有两轮因 `batch_timeout` 提前结束；均未达到 10,000 次/72 小时门槛，P3-002 继续保持进行中，详见 `docs\verification\backend-runtime-soak.md`；
 - 取消浸泡夹具已将首 chunk 后的处理窗口从 10ms 调整为 100ms，严格终态断言不变；修复后 2,000 次中完成/取消各 1,000 次、13,000 个协议事件、迟到事件 0，并安全退出；
 - 插件/历史浸泡：三轮各 1,000 次均通过，Private Bytes 最大增量 454,656 B，三轮句柄/线程增量均为 0，SQLite 最终活动连接 0、峰值 1；统一门禁保留 100 次短烟测；
-- TypeScript Domain Bridge 与前端架构契约：26 个文件、168 项测试通过，最大 2 workers；
+- TypeScript Domain Bridge 与前端架构契约：30 个文件、222 项测试通过，最大 2 workers；
 - Provider/模型目录：Tauri Host 先订阅 `reflex://provider-catalog`，再调用 `runtime_list_providers`，按 Rust 返回的请求 ID关联结果；设置页和调整页使用 Runtime 目录，目录异常只显示固定用户提示并保留浏览器安全回退；
-- 前端生产构建：本轮 Vite 构建通过，242 个模块，主包约 270.39 kB、gzip 约 84.29 kB；
-- `cf45530` 本机供应链复验：干净安装 0 个 npm 漏洞，26 个测试文件、168 项测试通过（最多 2 workers），Vite 242 个模块构建和 `dist` 敏感扫描通过；12 个 CycloneDX 1.5 BOM、源锁文件和清单哈希独立复核错误为 0；
+- 前端生产构建：本轮 Vite 构建通过，267 个模块，主包 345.88 kB、gzip 105.95 kB；
+
+### 历史证据（不可替代当前门禁）
+
+- `cf45530` 本机供应链复验（历史记录）：干净安装 0 个 npm 漏洞，26 个测试文件、168 项测试通过（最多 2 workers），Vite 242 个模块构建和 `dist` 敏感扫描通过；本轮发布材料已切换为注册表驱动的 14 个 CycloneDX 1.5 BOM 组件、源锁文件和清单哈希联动校验；
 - `cf45530` 远端历史状态：Run `29422634887` 因 GitHub Billing 在 Runner 分配前失败，执行步骤和 Artifact 均为 0；该失败不是代码门禁失败，也不再作为合并门禁；
 - 前端视觉与交互：680x480、760x540、920x720 无页面溢出或控件裁切，Demo Core 生成、命令面板、设置导航和悬浮反馈实跑通过；
 - 发布前敏感扫描：契约测试与当前受版本控制文件实扫通过；
-- 依赖门禁：10 个 Python 环境（含 Reflex Cloud）、RustSec、Rust/npm 许可证和 npm 全 lockfile 真实审计通过；`cryptography` 已升至 `48.0.1`；
+- 依赖门禁（既有记录）：10 个 Python 环境（含 Reflex Cloud）、RustSec、Rust/npm 许可证和 npm 全 lockfile 真实审计通过；本轮 Python 覆盖改由 13 项注册表驱动；`cryptography` 已升至 `48.0.1`；
 - RustSec 临时例外：`quick-xml 0.39.4` 两项公告仅存在于非 Windows Wayland 依赖图，例外在 2026-10-01 到期，进入 Windows 依赖图会立即失败；
 - Windows CI：Run `29377826885` 完成安全扫描、干净依赖安装、全量测试、100 次 Runtime 浸泡、生产构建、构建物扫描和 SBOM 上传，结论为 `success`；
 - 版本一致性检查：14 个产品版本来源统一为 `0.7.0-alpha.8`；Python/uv 的 PEP 440 规范化形式 `0.7.0a8` 经过等价校验；
-- alpha.8 干净 Windows 构建：从提交 `8310736` 的干净副本完成冻结依赖、Runtime 单文件、Rust release 和 NSIS 构建；该历史证据包含 11 项 SBOM，不能替代当前含 Cloud 的 12 项 SBOM 门禁；
+- alpha.8 干净 Windows 构建：从提交 `8310736` 的干净副本完成冻结依赖、Runtime 单文件、Rust release 和 NSIS 构建；该历史证据包含 11 项 SBOM，不能替代当前注册表驱动的 14 项 SBOM 门禁；
 - alpha.8 隔离生命周期：首次安装、Sidecar ping/shutdown、同版本覆盖安装、卸载、重装和最终清理通过；详见 `docs/verification/release-alpha8-windows-lifecycle.md`；
 - 生命周期工具：`tools\verify_windows_lifecycle.ps1` 已固化隔离安装、覆盖、卸载、重装、Sidecar 协议和 Host 启动检查，契约测试与 alpha.8 实跑均通过；
 - 真实 Provider：MiniMax 目录、流式成功和定时取消实机通过，结果只保留分类和时延；详见 `docs/verification/provider-smoke-2026-07-15.md`；
 - 配置与历史升级契约：Rust 配置迁移 11 项、History 旧库夹具与全套回归、v0 Host 启动、beta.11 到 alpha.8 安装目录覆盖，以及旧 Runtime 实际生成库到当前 Runtime 的详情/列表/新写入/`migration-v1` 备份迁移通过；官方旧版包/真实旧数据 Host 全链路仍由 P4-004 继续验证；
-- 发布候选物料：旧 alpha.8 审查物料包含 3 个可执行物、11 份 SBOM 和 19 个文件，已标记为历史证据；当前 `new_release_candidate.ps1` / `verify_release_candidate.ps1` 使用 schema 2，固定要求 12 份 SBOM、6 份用户文档和 24 个文件，旧物料不能继续作为当前 RC；
+- 发布候选物料：旧 alpha.8 审查物料包含 3 个可执行物、11 份 SBOM 和 19 个文件，已标记为历史证据；当前 `new_release_candidate.ps1` / `verify_release_candidate.ps1` 使用 schema 2，按注册表要求 14 份 SBOM、24 条哈希记录、6 份用户文档和 26 个文件，旧物料不能继续作为当前 RC；
 - 本轮供应链增量门禁（2026-07-15）：在隔离工作树执行 `verify_backend.ps1 -SkipFrontend`，10 个 Python 项目、工具契约、真实依赖审计、Rust `192 passed, 3 ignored`、短浸泡和真实 SBOM 全部通过；真实 SBOM 为 12 个组件、13 个物料文件，锁文件和组件哈希全部一致；
 - 统一验证脚本契约：步骤、锁文件、失败码、Rust/Vitest 并发上限通过；
 - 当前已知测试工程缺口：根目录一次性收集全部 pytest 会因同名测试模块冲突，必须按包隔离或改用 importlib 模式；
@@ -459,7 +464,7 @@
 ## 2026-08-22 P3-002 正式浸泡重新启动
 
 - 浸泡夹具契约 `tools\tests\test_soak_backend.py` 本轮 `16 passed`，4 次最小烟测完成/取消各 2 次、安全退出；
-- 正式任务已于 13:55:57（Asia/Shanghai）后台启动：至少 10,000 次、最低 168 小时、批量 4、每 2 次取消、每分钟 3 次；驱动 PID `26208`，启动后复核驱动与 Runtime 子进程均存活；
+- 历史探索任务曾于 13:55:57（Asia/Shanghai）后台启动：至少 10,000 次、最低 168 小时、批量 4、每 2 次取消、每分钟 3 次；驱动 PID `26208`，启动后复核驱动与 Runtime 子进程均存活；该记录不改变当前正式 72 小时目标；
 - 结果报告待任务自然完成或失败退出后生成：`workbench\runtime-soak-168h-alpha8-20260822-135557.json`；当前仅表示已启动，不表示 P3-002 已通过。
 
 ## 2026-08-24 P3-002 状态复核

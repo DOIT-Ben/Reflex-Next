@@ -8,7 +8,12 @@ from typing import Any
 
 import httpx
 
-from reflex_core import CancellationToken, OperationCancelled, OptimizeRequest
+from reflex_core import (
+    CancellationToken,
+    OperationCancelled,
+    OptimizeRequest,
+    ProviderEvent,
+)
 
 from .sse import (
     SseProtocolError,
@@ -139,6 +144,26 @@ class MiniMaxProvider:
 
     def __repr__(self) -> str:
         return f"MiniMaxProvider(id={self.id!r}, model={self.model!r})"
+
+    def stream_events(
+        self,
+        rendered_request: Any,
+        request: OptimizeRequest,
+        cancellation: CancellationToken,
+    ) -> Iterator[ProviderEvent]:
+        """Expose MiniMax through Core's structured provider stream."""
+
+        yield ProviderEvent.started(
+            provider=self.id,
+            model=request.model or self.model,
+            protocol="openai_chat_completions",
+        )
+        for chunk in self.stream(rendered_request, request, cancellation):
+            yield ProviderEvent.text(chunk)
+        if cancellation.is_cancelled:
+            yield ProviderEvent.cancelled()
+            return
+        yield ProviderEvent.completed(finish_reason="stop")
 
     def stream(
         self,

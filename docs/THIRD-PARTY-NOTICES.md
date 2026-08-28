@@ -14,7 +14,7 @@ Reflex 包含 Python、Rust 和 JavaScript 生态的第三方开源软件。本�
 
 每个发布候选目录中的 `sbom` 文件夹是当前构建的完整机器可读依赖清单：
 
-- `sbom-manifest.json` 记录 12 个产品组件、源锁文件及 SHA-256；
+- `sbom-manifest.json` 记录由 `tools/project-registry.json` 注册的产品组件、源锁文件及 SHA-256；
 - 每个 `*.cdx.json` 文件使用 CycloneDX 1.5 格式记录对应组件的依赖；
 - `SHA256SUMS.txt` 用于验证 SBOM、用户文档和可执行物没有被替换。
 

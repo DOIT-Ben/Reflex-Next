@@ -7,6 +7,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "project_registry.ps1")
+
+$powerShellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+if ($null -eq $powerShellCommand) {
+  $powerShellCommand = Get-Command powershell.exe -ErrorAction Stop
+}
+$powerShellExecutable = $powerShellCommand.Source
 
 function Get-Sha256 {
   param([string]$Path)
@@ -66,7 +73,7 @@ function Invoke-SecretScan {
   if (-not (Test-Path -LiteralPath $scanner -PathType Leaf)) {
     throw "missing_secret_scanner"
   }
-  $output = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $scanner `
+  $output = @(& $powerShellExecutable -NoProfile -ExecutionPolicy Bypass -File $scanner `
       -RepositoryRoot $Repository -SkipTrackedFiles -ReleasePath $Path 2>&1)
   if ($LASTEXITCODE -ne 0) {
     throw "release_secret_scan_failed"
@@ -78,7 +85,26 @@ try {
     $RepositoryRoot = Join-Path $PSScriptRoot ".."
   }
   $repository = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
+  $packageInput = Get-Item -LiteralPath $PackageDirectory -Force -ErrorAction Stop
+  if ($packageInput.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+    throw "package_reparse_point_forbidden"
+  }
   $package = (Resolve-Path -LiteralPath $PackageDirectory -ErrorAction Stop).Path.TrimEnd('\')
+  $registry = Get-ReflexProjectRegistry -RepositoryRoot $repository
+  $expectedSbomComponents = @(Get-ReflexSbomComponentCatalog -Registry $registry | ForEach-Object {
+      [PSCustomObject]@{
+        Id = [string]$_.Id
+        RootComponent = [string]$_.Name
+        SourceLock = ([string]$_.Lock -replace "\\", "/")
+      }
+    })
+  $expectedSbomById = @{}
+  foreach ($expected in $expectedSbomComponents) {
+    if ($expectedSbomById.ContainsKey([string]$expected.Id)) {
+      throw "project_registry_duplicate_sbom_id"
+    }
+    $expectedSbomById[[string]$expected.Id] = $expected
+  }
   if (-not (Test-Path -LiteralPath $package -PathType Container)) {
     throw "invalid_package_directory"
   }
@@ -130,7 +156,7 @@ try {
   ) {
     throw "release_source_commit_mismatch"
   }
-  $trackedStatus = @(& git -C $repository status --porcelain --untracked-files=no 2>$null)
+  $trackedStatus = @(& git -C $repository status --porcelain --untracked-files=all 2>$null)
   if ($LASTEXITCODE -ne 0) {
     throw "release_source_status_unavailable"
   }
@@ -164,6 +190,9 @@ try {
   }
 
   $checksumsRelative = [string]$manifest.checksums.path
+  if ($checksumsRelative -cne "SHA256SUMS.txt") {
+    throw "invalid_checksums_path"
+  }
   $checksumsPath = Resolve-PackagePath -Root $package -Relative $checksumsRelative -Code "invalid_checksums_path"
   if (
     [string]$manifest.checksums.sha256 -cnotmatch '^[a-f0-9]{64}$' -or
@@ -198,7 +227,15 @@ try {
   foreach ($artifact in @($manifest.artifacts)) {
     $id = [string]$artifact.id
     $relative = [string]$artifact.path
+    $expectedArtifactPath = @{
+      installer = "artifacts/Reflex_${sourceVersion}_x64-setup.exe"
+      host = "artifacts/Reflex.exe"
+      runtime = "artifacts/reflex-runtime.exe"
+    }[$id]
     if ($id -notin @("installer", "host", "runtime") -or -not $artifactIds.Add($id)) {
+      throw "invalid_artifact_manifest"
+    }
+    if ($relative -cne $expectedArtifactPath) {
       throw "invalid_artifact_manifest"
     }
     $path = Resolve-PackagePath -Root $package -Relative $relative -Code "invalid_artifact_path"
@@ -214,18 +251,24 @@ try {
   }
 
   $documents = [ordered]@{
-    release_notes = [string]$manifest.documents.release_notes
-    recovery_guide = [string]$manifest.documents.recovery_guide
-    privacy_notice = [string]$manifest.documents.privacy_notice
-    third_party_notices = [string]$manifest.documents.third_party_notices
-    support_guide = [string]$manifest.documents.support_guide
-    troubleshooting_guide = [string]$manifest.documents.troubleshooting_guide
+    release_notes = "RELEASE_NOTES.md"
+    recovery_guide = "RECOVERY.md"
+    privacy_notice = "PRIVACY.md"
+    third_party_notices = "THIRD-PARTY-NOTICES.md"
+    support_guide = "SUPPORT.md"
+    troubleshooting_guide = "TROUBLESHOOTING.md"
   }
   if (
     @($manifest.documents.PSObject.Properties).Count -ne $documents.Count -or
-    @($documents.Values | Sort-Object -Unique).Count -ne $documents.Count
+    @($documents.Values | Sort-Object -Unique).Count -ne $documents.Count -or
+    @($manifest.documents.PSObject.Properties | ForEach-Object { [string]$_.Value } | Sort-Object -Unique).Count -ne $documents.Count
   ) {
     throw "document_manifest_mismatch"
+  }
+  foreach ($key in @($documents.Keys)) {
+    if ([string]$manifest.documents.($key) -cne [string]$documents[$key]) {
+      throw "document_manifest_mismatch"
+    }
   }
   foreach ($document in @($documents.Values)) {
     if ([string]::IsNullOrWhiteSpace($document) -or -not $checksumMap.ContainsKey($document)) {
@@ -253,11 +296,14 @@ try {
   }
 
   $sbomRelative = [string]$manifest.sbom.manifest_path
+  if ($sbomRelative -cne "sbom/sbom-manifest.json") {
+    throw "sbom_manifest_mismatch"
+  }
   $sbomManifestPath = Resolve-PackagePath -Root $package -Relative $sbomRelative -Code "sbom_manifest_missing"
   if (
     -not $checksumMap.ContainsKey($sbomRelative) -or
     [string]$manifest.sbom.manifest_sha256 -cne $checksumMap[$sbomRelative] -or
-    [int]$manifest.sbom.component_count -ne 13
+    [int]$manifest.sbom.component_count -ne $expectedSbomComponents.Count
   ) {
     throw "sbom_manifest_mismatch"
   }
@@ -270,10 +316,13 @@ try {
   catch {
     throw "invalid_sbom_manifest"
   }
-  if (@($sbomManifest.components).Count -ne 13) {
+  if (@($sbomManifest.components).Count -ne $expectedSbomComponents.Count) {
     throw "invalid_sbom_manifest"
   }
+  $seenSbomIds = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+  $seenSbomFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
   foreach ($component in @($sbomManifest.components)) {
+    $componentId = [string]$component.id
     $fileName = [string]$component.sbom_file
     $sourceLock = [string]$component.source_lock
     if (
@@ -283,6 +332,21 @@ try {
       $sourceLock.Contains(":") -or
       $sourceLock.StartsWith("/", [System.StringComparison]::Ordinal) -or
       @($sourceLock.Split('/') | Where-Object { $_ -in @("", ".", "..") }).Count -ne 0
+    ) {
+      throw "invalid_sbom_component"
+    }
+    if (
+      -not $expectedSbomById.ContainsKey($componentId) -or
+      -not $seenSbomIds.Add($componentId) -or
+      $fileName -cne "$componentId.cdx.json" -or
+      -not $seenSbomFiles.Add($fileName)
+    ) {
+      throw "invalid_sbom_component"
+    }
+    $expected = $expectedSbomById[$componentId]
+    if (
+      [string]$component.root_component -cne [string]$expected.RootComponent -or
+      ($sourceLock -replace "\\", "/") -cne [string]$expected.SourceLock
     ) {
       throw "invalid_sbom_component"
     }
@@ -318,17 +382,36 @@ try {
       [string]$bom.bomFormat -cne "CycloneDX" -or
       [string]$bom.specVersion -cne "1.5" -or
       [int]$bom.version -lt 1 -or
-      [string]::IsNullOrWhiteSpace([string]$bom.metadata.component.name)
+      [string]$bom.metadata.component.name -cne [string]$expected.RootComponent
     ) {
       throw "invalid_sbom_component"
     }
+  }
+  if (
+    $seenSbomIds.Count -ne $expectedSbomComponents.Count -or
+    @($expectedSbomComponents | Where-Object {
+        -not $seenSbomIds.Contains([string]$_.Id)
+      }).Count -ne 0
+  ) {
+    throw "invalid_sbom_component"
   }
 
   $expectedFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
   [void]$expectedFiles.Add("release-manifest.json")
   [void]$expectedFiles.Add($checksumsRelative)
-  foreach ($relative in $checksumMap.Keys) {
+  foreach ($relative in @(
+      "artifacts/Reflex_${sourceVersion}_x64-setup.exe",
+      "artifacts/Reflex.exe",
+      "artifacts/reflex-runtime.exe"
+    )) {
     [void]$expectedFiles.Add($relative)
+  }
+  foreach ($relative in $documents.Values) {
+    [void]$expectedFiles.Add([string]$relative)
+  }
+  [void]$expectedFiles.Add("sbom/sbom-manifest.json")
+  foreach ($expected in $expectedSbomComponents) {
+    [void]$expectedFiles.Add("sbom/$([string]$expected.Id).cdx.json")
   }
   $actualFiles = @(
     Get-ChildItem -LiteralPath $package -File -Recurse -Force | ForEach-Object {

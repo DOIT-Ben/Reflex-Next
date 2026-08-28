@@ -30,6 +30,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+. (Join-Path $PSScriptRoot "project_registry.ps1")
+
+$powerShellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+if ($null -eq $powerShellCommand) {
+  $powerShellCommand = Get-Command powershell.exe -ErrorAction Stop
+}
+$powerShellExecutable = $powerShellCommand.Source
 
 function Resolve-RequiredFile {
   param([string]$Path, [string]$Code)
@@ -98,7 +105,7 @@ function Invoke-SecretScan {
   if (-not (Test-Path -LiteralPath $scanner -PathType Leaf)) {
     throw "missing_secret_scanner"
   }
-  $output = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $scanner `
+  $output = @(& $powerShellExecutable -NoProfile -ExecutionPolicy Bypass -File $scanner `
       -RepositoryRoot $Repository -SkipTrackedFiles -ReleasePath $Path 2>&1)
   if ($LASTEXITCODE -ne 0) {
     throw "release_secret_scan_failed"
@@ -107,6 +114,23 @@ function Invoke-SecretScan {
 
 function Read-SbomManifest {
   param([string]$Directory, [string]$Repository)
+
+  $registry = Get-ReflexProjectRegistry -RepositoryRoot $Repository
+  $expectedComponents = @(Get-ReflexSbomComponentCatalog -Registry $registry | ForEach-Object {
+      [PSCustomObject]@{
+        Id = [string]$_.Id
+        RootComponent = [string]$_.Name
+        SourceLock = ([string]$_.Lock -replace "\\", "/")
+      }
+    })
+  $expectedComponentCount = $expectedComponents.Count
+  $expectedById = @{}
+  foreach ($expected in $expectedComponents) {
+    if ($expectedById.ContainsKey([string]$expected.Id)) {
+      throw "duplicate_project_registry_sbom_id"
+    }
+    $expectedById[[string]$expected.Id] = $expected
+  }
 
   $manifestPath = Join-Path $Directory "sbom-manifest.json"
   if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
@@ -126,7 +150,7 @@ function Read-SbomManifest {
     [string]$manifest.format -cne "CycloneDX" -or
     [string]$manifest.spec_version -cne "1.5" -or
     [string]$manifest.target -cne "x86_64-pc-windows-msvc" -or
-    @($manifest.components).Count -ne 13
+    @($manifest.components).Count -ne $expectedComponentCount
   ) {
     throw "invalid_sbom_manifest"
   }
@@ -139,14 +163,23 @@ function Read-SbomManifest {
     $sourceLock = [string]$component.source_lock
     if (
       [string]::IsNullOrWhiteSpace($componentId) -or
+      -not $expectedById.ContainsKey($componentId) -or
       -not $seenIds.Add($componentId) -or
       -not (Test-SafeLeafName -Value $fileName) -or
+      $fileName -cne "$componentId.cdx.json" -or
       -not $seen.Add($fileName) -or
       [string]::IsNullOrWhiteSpace($sourceLock) -or
       $sourceLock.Contains("\") -or
       $sourceLock.Contains(":") -or
       $sourceLock.StartsWith("/", [System.StringComparison]::Ordinal) -or
       @($sourceLock.Split('/') | Where-Object { $_ -in @("", ".", "..") }).Count -ne 0
+    ) {
+      throw "invalid_sbom_manifest"
+    }
+    $expected = $expectedById[$componentId]
+    if (
+      ($sourceLock -replace "\\", "/") -cne [string]$expected.SourceLock -or
+      [string]$component.root_component -cne [string]$expected.RootComponent
     ) {
       throw "invalid_sbom_manifest"
     }
@@ -184,15 +217,23 @@ function Read-SbomManifest {
       [string]$bom.bomFormat -cne "CycloneDX" -or
       [string]$bom.specVersion -cne "1.5" -or
       [int]$bom.version -lt 1 -or
-      [string]::IsNullOrWhiteSpace([string]$bom.metadata.component.name)
+      [string]$bom.metadata.component.name -cne [string]$expected.RootComponent
     ) {
       throw "invalid_sbom_component"
     }
   }
+  if (
+    $seenIds.Count -ne $expectedComponentCount -or
+    @($expectedComponents | Where-Object {
+        -not $seenIds.Contains([string]$_.Id)
+      }).Count -ne 0
+  ) {
+    throw "invalid_sbom_manifest"
+  }
 
   $files = @(Get-ChildItem -LiteralPath $Directory -File -Force)
   $directories = @(Get-ChildItem -LiteralPath $Directory -Directory -Force)
-  if ($files.Count -ne 14 -or $directories.Count -ne 0) {
+  if ($files.Count -ne ($expectedComponentCount + 1) -or $directories.Count -ne 0) {
     throw "unexpected_sbom_material"
   }
   return [PSCustomObject]@{
@@ -295,7 +336,7 @@ try {
   if ($commitExitCode -ne 0 -or $commit -cnotmatch '^[a-f0-9]{40}$') {
     throw "git_commit_unavailable"
   }
-  $trackedStatus = @(& git -C $repository status --porcelain --untracked-files=no 2>$null)
+  $trackedStatus = @(& git -C $repository status --porcelain --untracked-files=all 2>$null)
   if ($LASTEXITCODE -ne 0) {
     throw "git_status_unavailable"
   }
@@ -434,8 +475,8 @@ try {
   [System.IO.Directory]::Move($staging, $output)
   $staging = $null
   Write-Output (
-    "Release candidate material passed: version={0}; artifacts=3; sbom=13; release_ready={1}" -f
-    $version, $releaseReady.ToString().ToLowerInvariant()
+    "Release candidate material passed: version={0}; artifacts=3; sbom={1}; release_ready={2}" -f
+    $version, @($sbomState.Manifest.components).Count, $releaseReady.ToString().ToLowerInvariant()
   )
 }
 catch {

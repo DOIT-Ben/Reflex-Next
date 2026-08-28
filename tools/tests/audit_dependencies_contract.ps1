@@ -3,7 +3,11 @@ $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $auditScript = Join-Path $root "tools\audit_dependencies.ps1"
 $policyPath = Join-Path $root "tools\policies\dependency-audit-policy.json"
-$powershell = Join-Path $PSHOME "powershell.exe"
+$powershellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+if ($null -eq $powershellCommand) {
+  $powershellCommand = Get-Command powershell.exe -ErrorAction Stop
+}
+$powershell = $powershellCommand.Source
 
 function Assert-True {
   param([bool]$Condition, [string]$Message)
@@ -53,14 +57,17 @@ function Invoke-AuditFixture {
 Assert-True (Test-Path -LiteralPath $auditScript -PathType Leaf) "Dependency audit script is missing."
 Assert-True (Test-Path -LiteralPath $policyPath -PathType Leaf) "Dependency audit policy is missing."
 $policy = Get-Content -Raw -Encoding UTF8 $policyPath | ConvertFrom-Json
+$registryPath = Join-Path $root "tools\project-registry.json"
+Assert-True (Test-Path -LiteralPath $registryPath -PathType Leaf) "Project registry is missing."
+$registry = Get-Content -Raw -Encoding UTF8 -LiteralPath $registryPath | ConvertFrom-Json
 $auditSource = [System.IO.File]::ReadAllText($auditScript, [System.Text.Encoding]::UTF8)
 Assert-True (@($policy.licenses.allowed_expressions.python).Count -gt 0) "Python licenses require an explicit allowlist."
 Assert-True (@($policy.licenses.allowed_expressions.rust).Count -gt 0) "Rust licenses require an explicit allowlist."
 Assert-True (@($policy.licenses.allowed_expressions.npm).Count -gt 0) "npm licenses require an explicit allowlist."
 Assert-True (@($policy.rust_advisory_exceptions).Count -gt 0) "Rust advisory exceptions must be explicit and reviewable."
-Assert-True (@($policy.python_projects).Count -eq 11) "Dependency audit must cover every Python product and cloud project."
-Assert-True (@($policy.python_projects) -contains "services/reflex-cloud") "Dependency audit must include Reflex Cloud."
-Assert-True (@($policy.python_projects) -contains "plugins/provider-native-protocols") "Dependency audit must include native-protocol Providers."
+Assert-True (@($registry.projects | Where-Object {
+    $_.kind -eq "python" -and $_.verify -eq $true
+  }).Count -gt 0) "Project registry must contain verifiable Python projects."
 $expectedPythonLicenseOverrides = @{
   "annotated-doc@0.0.4" = "MIT"
   "annotated-types@0.7.0" = "MIT"
@@ -108,6 +115,8 @@ Assert-True ($auditSource -match '\$previousErrorActionPreference = \$ErrorActio
 Assert-True ($auditSource -match '\$ErrorActionPreference = "Continue"') "Native stderr must not turn a successful tool exit into a PowerShell exception."
 Assert-True ($auditSource -notmatch '--omit=dev') "npm auditing must include devDependencies from the full lockfile."
 Assert-True ($auditSource -match 'npm@.*audit.*--json') "npm auditing must use the pinned npm tool against the full lockfile."
+Assert-True ($auditSource -match 'project_registry\.ps1' -and $auditSource -match 'Get-ReflexProjectRegistry') "Dependency auditing must resolve Python projects from the central project registry loader."
+Assert-True ($auditSource -notmatch '\$policy\.python_projects') "Dependency auditing must not maintain a second Python project list in policy."
 
 $probeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-dependency-audit-contract-" + [guid]::NewGuid().ToString("N"))
 try {

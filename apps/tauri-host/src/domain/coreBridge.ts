@@ -20,6 +20,9 @@ export type CoreEventEnvelope = {
   event: CoreEvent;
 };
 
+const REQUEST_WATCHDOG_MS = 120_000;
+const COMPLETION_WATCHDOG_MS = 10_000;
+
 export type TauriEvent<T> = {
   payload: T;
 };
@@ -89,10 +92,29 @@ export class TauriRuntimeBridge implements CoreBridge {
     const requestId = this.requestIdFactory();
     const queue = createAsyncEventQueue();
     let unlisten = () => undefined;
+    let cancelSent = false;
+    let terminalSeen = false;
+    let resultSeen = false;
+    let resolveRequestTimeout = () => undefined;
+    const requestTimeout = new Promise<void>((resolve) => {
+      resolveRequestTimeout = resolve;
+    });
+    let resolveAbort = () => undefined;
+    const aborted = new Promise<void>((resolve) => {
+      resolveAbort = resolve;
+    });
+    let resolveTerminal = () => undefined;
+    const terminal = new Promise<void>((resolve) => {
+      resolveTerminal = resolve;
+    });
     const abort = () => {
+      if (cancelSent || terminalSeen) return;
+      cancelSent = true;
+      resolveAbort();
+      queue.abort();
       void this.host
         .invoke("runtime_cancel", { command: createCancelCommand(requestId) })
-        .finally(() => queue.close());
+        .catch(() => undefined);
     };
 
     try {
@@ -100,14 +122,19 @@ export class TauriRuntimeBridge implements CoreBridge {
         "reflex://core-event",
         ({ payload }) => {
           if (payload.request_id !== requestId) return;
-          queue.push(payload.event);
-          if (
-            payload.event.type === "metric" ||
-            payload.event.type === "error" ||
-            (payload.event.type === "status" &&
-              (payload.event.data.phase === "cancelled" || payload.event.data.phase === "error"))
-          ) {
+          const event =
+            payload.event.type === "metric" && !resultSeen
+              ? protocolOrderErrorEvent()
+              : payload.event;
+          queue.push(event);
+          if (event.type === "done") resultSeen = true;
+          if (isTerminalCoreEvent(event, resultSeen)) {
+            terminalSeen = true;
+            resolveTerminal();
             queue.close();
+          } else if (event.type === "done" || (event.type === "status" && event.data.phase === "completed")
+          ) {
+            queue.scheduleCompletionFallback();
           }
         }
       );
@@ -116,9 +143,24 @@ export class TauriRuntimeBridge implements CoreBridge {
         return;
       }
       options.signal?.addEventListener("abort", abort, { once: true });
-      await this.host.invoke("runtime_optimize", {
-        command: createOptimizeCommand(requestId, request)
+      queue.scheduleRequestFallback(() => {
+        if (cancelSent || terminalSeen) return;
+        cancelSent = true;
+        terminalSeen = true;
+        resolveRequestTimeout();
+        void this.host
+          .invoke("runtime_cancel", { command: createCancelCommand(requestId) })
+          .catch(() => undefined);
       });
+      await Promise.race([
+        this.host.invoke("runtime_optimize", {
+          command: createOptimizeCommand(requestId, request)
+        }),
+        requestTimeout,
+        aborted,
+        terminal
+      ]);
+      if (options.signal?.aborted) return;
 
       while (true) {
         const item = await queue.next();
@@ -126,6 +168,7 @@ export class TauriRuntimeBridge implements CoreBridge {
         yield item.value;
       }
     } catch {
+      if (options.signal?.aborted) return;
       yield {
         type: "error",
         data: {
@@ -136,6 +179,7 @@ export class TauriRuntimeBridge implements CoreBridge {
         }
       };
     } finally {
+      queue.close();
       options.signal?.removeEventListener("abort", abort);
       unlisten();
     }
@@ -159,10 +203,29 @@ export class CloudCoreBridge implements CoreBridge {
     const requestId = this.requestIdFactory();
     const queue = createAsyncEventQueue();
     let unlisten = () => undefined;
+    let cancelSent = false;
+    let terminalSeen = false;
+    let resultSeen = false;
+    let resolveRequestTimeout = () => undefined;
+    const requestTimeout = new Promise<void>((resolve) => {
+      resolveRequestTimeout = resolve;
+    });
+    let resolveAbort = () => undefined;
+    const aborted = new Promise<void>((resolve) => {
+      resolveAbort = resolve;
+    });
+    let resolveTerminal = () => undefined;
+    const terminal = new Promise<void>((resolve) => {
+      resolveTerminal = resolve;
+    });
     const abort = () => {
+      if (cancelSent || terminalSeen) return;
+      cancelSent = true;
+      resolveAbort();
+      queue.abort();
       void this.host
         .invoke("cloud_cancel", { payload: { request_id: requestId } })
-        .finally(() => queue.close());
+        .catch(() => undefined);
     };
 
     try {
@@ -170,14 +233,20 @@ export class CloudCoreBridge implements CoreBridge {
         "reflex://cloud-event",
         ({ payload }) => {
           if (payload.request_id !== requestId) return;
-          queue.push(presentCloudEvent(payload.event));
-          if (
-            payload.event.type === "metric" ||
-            payload.event.type === "error" ||
-            (payload.event.type === "status" &&
-              (payload.event.data.phase === "cancelled" || payload.event.data.phase === "error"))
-          ) {
+          const presented = presentCloudEvent(payload.event);
+          const event =
+            presented.type === "metric" && !resultSeen
+              ? protocolOrderErrorEvent()
+              : presented;
+          queue.push(event);
+          if (event.type === "done") resultSeen = true;
+          if (isTerminalCoreEvent(event, resultSeen)) {
+            terminalSeen = true;
+            resolveTerminal();
             queue.close();
+          } else if (event.type === "done" || (event.type === "status" && event.data.phase === "completed")
+          ) {
+            queue.scheduleCompletionFallback();
           }
         }
       );
@@ -186,17 +255,32 @@ export class CloudCoreBridge implements CoreBridge {
         return;
       }
       options.signal?.addEventListener("abort", abort, { once: true });
-      await this.host.invoke("cloud_optimize", {
-        payload: {
-          request_id: requestId,
-          text: request.text,
-          mode: request.mode,
-          style: request.style,
-          scene: request.scene,
-          scene_policy: request.scene_policy,
-          language: request.metadata.language
-        }
+      queue.scheduleRequestFallback(() => {
+        if (cancelSent || terminalSeen) return;
+        cancelSent = true;
+        terminalSeen = true;
+        resolveRequestTimeout();
+        void this.host
+          .invoke("cloud_cancel", { payload: { request_id: requestId } })
+          .catch(() => undefined);
       });
+      await Promise.race([
+        this.host.invoke("cloud_optimize", {
+          payload: {
+            request_id: requestId,
+            text: request.text,
+            mode: request.mode,
+            style: request.style,
+            scene: request.scene,
+            scene_policy: request.scene_policy,
+            language: request.metadata.language
+          }
+        }),
+        requestTimeout,
+        aborted,
+        terminal
+      ]);
+      if (options.signal?.aborted) return;
 
       while (true) {
         const item = await queue.next();
@@ -204,11 +288,13 @@ export class CloudCoreBridge implements CoreBridge {
         yield item.value;
       }
     } catch (error) {
+      if (options.signal?.aborted) return;
       yield {
         type: "error",
         data: cloudErrorPresentation(error)
       };
     } finally {
+      queue.close();
       options.signal?.removeEventListener("abort", abort);
       unlisten();
     }
@@ -357,6 +443,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function isSuccessfulCompletionEvent(event: CoreEvent): boolean {
+  return event.type === "done";
+}
+
+function isTerminalCoreEvent(event: CoreEvent, resultSeen = false): boolean {
+  return (
+    (event.type === "metric" && resultSeen) ||
+    event.type === "error" ||
+    (event.type === "status" && ["cancelled", "error"].includes(String(event.data.phase)))
+  );
+}
+
+function protocolOrderErrorEvent(): CoreEvent {
+  return {
+    type: "error",
+    data: {
+      code: "protocol_invalid",
+      message: "生成结果顺序异常，请重试。",
+      recoverable: true,
+      action: "retry"
+    }
+  };
+}
+
 function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -455,6 +565,30 @@ function createAsyncEventQueue() {
   const values: CoreEvent[] = [];
   const waiters: Array<(item: IteratorResult<CoreEvent>) => void> = [];
   let closed = false;
+  let requestFallback: ReturnType<typeof setTimeout> | null = null;
+  let completionFallback: ReturnType<typeof setTimeout> | null = null;
+
+  const clearRequestFallback = () => {
+    if (requestFallback === null) return;
+    clearTimeout(requestFallback);
+    requestFallback = null;
+  };
+
+  const clearCompletionFallback = () => {
+    if (completionFallback === null) return;
+    clearTimeout(completionFallback);
+    completionFallback = null;
+  };
+
+  const closeQueue = () => {
+    if (closed) return;
+    clearRequestFallback();
+    clearCompletionFallback();
+    closed = true;
+    while (waiters.length > 0) {
+      waiters.shift()?.({ done: true, value: undefined });
+    }
+  };
 
   return {
     push(value: CoreEvent) {
@@ -467,11 +601,49 @@ function createAsyncEventQueue() {
       values.push(value);
     },
     close() {
+      closeQueue();
+    },
+    abort() {
       if (closed) return;
+      clearRequestFallback();
+      clearCompletionFallback();
+      values.length = 0;
       closed = true;
       while (waiters.length > 0) {
         waiters.shift()?.({ done: true, value: undefined });
       }
+    },
+    scheduleRequestFallback(onTimeout: () => void) {
+      if (closed || requestFallback !== null) return;
+      requestFallback = setTimeout(() => {
+        requestFallback = null;
+        if (closed) return;
+        onTimeout();
+        const waiter = waiters.shift();
+        const timeoutEvent = protocolTimeoutEvent();
+        if (waiter) {
+          waiter({ done: false, value: timeoutEvent });
+        } else {
+          values.push(timeoutEvent);
+        }
+        closeQueue();
+      }, REQUEST_WATCHDOG_MS);
+    },
+    scheduleCompletionFallback() {
+      if (closed || completionFallback !== null) return;
+      // Core normally emits metric after done so history metadata can be
+      // attached. This watchdog is only for malformed streams; normal
+      // completion is closed by metric/error/cancelled. The long bound keeps
+      // WebView scheduling and host persistence out of the normal race.
+      completionFallback = setTimeout(() => {
+        completionFallback = null;
+        if (!closed) {
+          closed = true;
+          while (waiters.length > 0) {
+            waiters.shift()?.({ done: true, value: undefined });
+          }
+        }
+      }, COMPLETION_WATCHDOG_MS);
     },
     next(): Promise<IteratorResult<CoreEvent>> {
       const value = values.shift();
@@ -482,6 +654,18 @@ function createAsyncEventQueue() {
         return Promise.resolve({ done: true, value: undefined });
       }
       return new Promise((resolve) => waiters.push(resolve));
+    }
+  };
+}
+
+function protocolTimeoutEvent(): CoreEvent {
+  return {
+    type: "error",
+    data: {
+      code: "request_timeout",
+      message: "模型响应超时，请稍后重试。",
+      recoverable: true,
+      action: "retry"
     }
   };
 }

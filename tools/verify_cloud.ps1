@@ -2,12 +2,15 @@
 param(
   [switch]$DryRun,
   [switch]$SkipDocker,
+  [switch]$SkipTests,
   [switch]$NoSync
 )
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$cloudProject = Join-Path $root "services\reflex-cloud"
+. (Join-Path $PSScriptRoot "project_registry.ps1")
+$registry = Get-ReflexProjectRegistry -RepositoryRoot $root
+$cloudProject = Join-Path $root (([string](Get-ReflexRegistryProject -Registry $registry -ProjectId "reflex-cloud").path -replace "/", "\"))
 $contract = Join-Path $root "tools\tests\reflex_cloud_ops_contract.ps1"
 
 function Invoke-Step {
@@ -44,7 +47,8 @@ function Invoke-Step {
   Write-Output "[PASS] $Name"
 }
 
-Invoke-Step -Name "cloud:operations-contract" -WorkDir $root -Executable "powershell" -Arguments @(
+$powerShellCommand = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
+Invoke-Step -Name "cloud:operations-contract" -WorkDir $root -Executable $powerShellCommand -Arguments @(
   "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $contract
 )
 $cloudTestArguments = @("run", "--frozen")
@@ -52,7 +56,7 @@ if ($NoSync) {
   $cloudTestArguments += "--no-sync"
 }
 $cloudTestArguments += @("--extra", "dev", "pytest", "-q")
-Invoke-Step -Name "cloud:tests" -WorkDir $cloudProject -Executable "uv" -Arguments $cloudTestArguments
+Invoke-Step -Name "cloud:tests" -WorkDir $cloudProject -Executable "uv" -Arguments $cloudTestArguments -Skip:$SkipTests
 
 $composeArguments = @("compose", "--profile", "public", "-f", "services/reflex-cloud/docker-compose.yml", "config", "--quiet")
 if ($SkipDocker) {

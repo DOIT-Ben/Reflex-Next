@@ -1,6 +1,6 @@
 # Reflex Next 文档导航
 
-更新时间：2026-07-15
+更新时间：2026-08-28
 
 本页是项目文档入口。文档之间出现状态差异时，按下列顺序判断：
 
@@ -15,6 +15,8 @@
 ## 架构与迁移
 
 - [架构设计](ARCHITECTURE.md)
+- [架构审计](ARCHITECTURE-AUDIT.md)
+- [架构债务登记](ARCHITECTURE-DEBT-REGISTER.md)
 - [Provider 适配层策略](PROVIDER-ADAPTER-STRATEGY.md)
 - [功能迁移](MIGRATION.md)
 - [旧版参考映射](CLASSIC-REFERENCE.md)

@@ -1,7 +1,8 @@
-"""Structured events emitted by protocol adapters.
+"""Structured events emitted by provider protocol adapters.
 
-Adapters may expose these through ``stream_events`` while retaining the
-legacy text-only ``stream`` method for older plugins.
+``ProviderEvent`` is the Core-facing stream contract.  The iterator helper
+keeps the legacy text-only provider shape at one compatibility boundary while
+all optimization orchestration consumes the same event model.
 """
 
 from __future__ import annotations
@@ -79,3 +80,34 @@ class ProviderEvent:
     @classmethod
     def cancelled(cls, reason: str = "user") -> "ProviderEvent":
         return cls("cancelled", {"reason": reason})
+
+
+def iter_provider_events(
+    provider: Any,
+    rendered_request: Any,
+    request: Any,
+    cancellation: Any,
+):
+    """Yield the single Core provider event stream.
+
+    First-party adapters implement ``stream_events``.  Older third-party
+    adapters may still expose ``stream``; conversion is deliberately kept
+    here so the use case does not carry two provider protocols.
+    """
+
+    event_stream = getattr(provider, "stream_events", None)
+    if callable(event_stream):
+        yield from event_stream(rendered_request, request, cancellation)
+        return
+
+    provider_id = getattr(provider, "id", "legacy")
+    model = getattr(provider, "model", "legacy") or "legacy"
+    protocol = getattr(provider, "protocol", "legacy") or "legacy"
+    yield ProviderEvent.started(
+        provider=str(provider_id),
+        model=str(model),
+        protocol=str(protocol),
+    )
+    for chunk in provider.stream(rendered_request, request, cancellation):
+        yield ProviderEvent.text(chunk)
+    yield ProviderEvent.completed(finish_reason="stop")

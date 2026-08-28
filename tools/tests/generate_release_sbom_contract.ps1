@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $generator = Join-Path $root "tools\generate_release_sbom.ps1"
+. (Join-Path $root "tools\project_registry.ps1")
 $probeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-sbom-contract-" + [guid]::NewGuid().ToString("N"))
 $fixtures = Join-Path $probeRoot "fixtures"
 $output = Join-Path $probeRoot "output"
@@ -9,21 +10,18 @@ $safeRelease = Join-Path $probeRoot "safe-release"
 $unsafeRelease = Join-Path $probeRoot "unsafe-release"
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
-$components = [ordered]@{
-  "python-reflex-core" = "reflex-core"
-  "python-reflex-runtime" = "reflex-runtime"
-  "python-reflex-cloud" = "reflex-cloud"
-  "python-batch-runner" = "reflex-batch-runner"
-  "python-history-sqlite" = "reflex-history-sqlite"
-  "python-markdown-preview" = "reflex-markdown-preview"
-  "python-provider-minimax" = "reflex-provider-minimax"
-  "python-provider-native-protocols" = "reflex-provider-native-protocols"
-  "python-provider-openai-compatible" = "reflex-provider-openai-compatible"
-  "python-semantic-detector" = "reflex-plugin-semantic-detector"
-  "python-translator" = "reflex-translator"
-  "rust-tauri-host" = "reflex-next-tauri-host"
-  "node-tauri-host" = "tauri-host"
+$registryPath = Join-Path $root "tools\project-registry.json"
+if (-not (Test-Path -LiteralPath $registryPath -PathType Leaf)) { throw "Project registry is missing." }
+$registry = Get-ReflexProjectRegistry -RepositoryRoot $root
+$components = [ordered]@{}
+foreach ($component in @(Get-ReflexSbomComponentCatalog -Registry $registry)) {
+  $components[[string]$component.Id] = [string]$component.Name
 }
+$powershellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+if ($null -eq $powershellCommand) {
+  $powershellCommand = Get-Command powershell.exe -ErrorAction Stop
+}
+$powershell = $powershellCommand.Source
 
 function Assert-True {
   param(
@@ -57,7 +55,7 @@ function Invoke-Generator {
   $previousErrorActionPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = "Continue"
-    & powershell @arguments 1> $stdoutPath 2> $stderrPath
+    & $powershell @arguments 1> $stdoutPath 2> $stderrPath
     return [PSCustomObject]@{
       ExitCode = $LASTEXITCODE
       Stdout = if (Test-Path $stdoutPath) { [System.IO.File]::ReadAllText($stdoutPath) } else { "" }
@@ -111,11 +109,11 @@ try {
 
   $success = Invoke-Generator -OutputPath $output -FixturePath $fixtures -ReleasePaths @($safeRelease)
   Assert-True ($success.ExitCode -eq 0) "Valid component BOMs and a clean release path must pass."
-  Assert-True ($success.Stdout -match '13 component BOMs; 1 release paths scanned') "Success output must report bounded component and release counts."
+  Assert-True ($success.Stdout -match ("$($components.Count) component BOMs; 1 release paths scanned")) "Success output must report bounded component and release counts."
   $manifestPath = Join-Path $output "sbom-manifest.json"
   Assert-True (Test-Path -LiteralPath $manifestPath -PathType Leaf) "SBOM manifest must be emitted."
   $manifest = [System.IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json
-  Assert-True (@($manifest.components).Count -eq 13) "Manifest must enumerate every product component."
+  Assert-True (@($manifest.components).Count -eq $components.Count) "Manifest must enumerate every product component."
   Assert-True (($manifest.components | Where-Object { $_.source_lock_sha256 -notmatch '^[a-f0-9]{64}$' }).Count -eq 0) "Every source lock must have a SHA-256 digest."
   Assert-True (($manifest.components | Where-Object { $_.sbom_sha256 -notmatch '^[a-f0-9]{64}$' }).Count -eq 0) "Every component BOM must have a SHA-256 digest."
   Assert-True ((Get-Content -Raw -Encoding UTF8 $manifestPath) -notmatch [regex]::Escape($root)) "Manifest must not leak absolute workspace paths."

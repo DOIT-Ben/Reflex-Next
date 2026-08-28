@@ -8,7 +8,7 @@ from math import ceil
 from threading import Lock
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -361,18 +361,32 @@ class CloudService:
         if output_chars < 0:
             raise CloudServiceError("quota_output_invalid", 400)
         with self._quota_lock:
-            usage = session.scalar(
-                select(DailyUsage)
-                .where(
-                    DailyUsage.installation_id == installation_id,
-                    DailyUsage.usage_date == date.today(),
+            try:
+                today = date.today()
+                result = session.execute(
+                    update(DailyUsage)
+                    .where(
+                        DailyUsage.installation_id == installation_id,
+                        DailyUsage.usage_date == today,
+                        DailyUsage.output_chars + output_chars
+                        <= self.settings.free_output_chars_per_day,
+                    )
+                    .values(output_chars=DailyUsage.output_chars + output_chars)
                 )
-                .with_for_update()
-            )
-            if usage is None:
-                raise CloudServiceError("quota_unavailable", 409)
-            usage.output_chars += output_chars
-            session.commit()
+                if result.rowcount != 1:
+                    usage_exists = session.scalar(
+                        select(DailyUsage.id).where(
+                            DailyUsage.installation_id == installation_id,
+                            DailyUsage.usage_date == today,
+                        )
+                    )
+                    if usage_exists is None:
+                        raise CloudServiceError("quota_unavailable", 409)
+                    raise CloudServiceError("quota_exhausted", 429)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
     def reserve_budget(self, session: Session, *, input_chars: int) -> str | None:
         with self._quota_lock:
@@ -527,21 +541,56 @@ class CloudService:
                 .with_for_update()
             )
             if aggregate is None:
-                aggregate = DailyCostAggregate(
+                candidate = DailyCostAggregate(
                     usage_date=today,
                     provider="minimax",
                     model=self.settings.provider_model,
                     pricing_version=self.settings.provider_pricing_version,
                 )
-                session.add(aggregate)
-                session.flush()
-            aggregate.request_count += 1
-            aggregate.completed_count += int(completed)
-            aggregate.input_chars += input_chars
-            aggregate.output_chars += output_chars
-            aggregate.estimated_input_tokens += input_tokens
-            aggregate.estimated_output_tokens += output_tokens
-            aggregate.estimated_cost_microusd += estimated_cost
+                try:
+                    # The service lock only protects one process.  The
+                    # unique key is the cross-process guard, so create the
+                    # first row inside a savepoint and recover the winner if
+                    # another Cloud instance inserted it concurrently.
+                    with session.begin_nested():
+                        session.add(candidate)
+                        session.flush()
+                    aggregate = candidate
+                except IntegrityError:
+                    aggregate = session.scalar(
+                        select(DailyCostAggregate)
+                        .where(
+                            DailyCostAggregate.usage_date == today,
+                            DailyCostAggregate.provider == "minimax",
+                            DailyCostAggregate.model == self.settings.provider_model,
+                            DailyCostAggregate.pricing_version
+                            == self.settings.provider_pricing_version,
+                        )
+                        .with_for_update()
+                    )
+                    if aggregate is None:
+                        raise
+            # ``with_for_update`` is a no-op on SQLite, and separate Cloud
+            # processes do not share ``_quota_lock``.  Use database-side
+            # increments so an existing row cannot lose a concurrent update;
+            # this is also valid on PostgreSQL while retaining the savepoint
+            # recovery above for the first-row race.
+            session.execute(
+                update(DailyCostAggregate)
+                .where(DailyCostAggregate.id == aggregate.id)
+                .values(
+                    request_count=DailyCostAggregate.request_count + 1,
+                    completed_count=DailyCostAggregate.completed_count + int(completed),
+                    input_chars=DailyCostAggregate.input_chars + input_chars,
+                    output_chars=DailyCostAggregate.output_chars + output_chars,
+                    estimated_input_tokens=DailyCostAggregate.estimated_input_tokens
+                    + input_tokens,
+                    estimated_output_tokens=DailyCostAggregate.estimated_output_tokens
+                    + output_tokens,
+                    estimated_cost_microusd=DailyCostAggregate.estimated_cost_microusd
+                    + estimated_cost,
+                )
+            )
             session.commit()
 
     def _budget_enabled(self) -> bool:

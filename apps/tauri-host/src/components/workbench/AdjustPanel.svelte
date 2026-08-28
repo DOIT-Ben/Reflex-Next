@@ -4,6 +4,7 @@
   import X from "@lucide/svelte/icons/x";
   import { applySceneSelection, type RequestSettings } from "../../domain/hostState";
   import type { WorkbenchModelOption } from "../../domain/providerCatalog";
+  import SelectField from "../ui/SelectField.svelte";
   import {
     listSceneCategories,
     type OptimizeMode,
@@ -49,6 +50,39 @@
       return [scene.id, translate(scene.label), translate(scene.hint), translate(categoryLabel)]
         .some((value) => value.toLocaleLowerCase().includes(query));
     })
+  );
+  const sceneCategoryOptions = $derived([
+    { value: "", label: translate("全部分类") },
+    ...sceneCategories.map((category) => ({ value: category.id, label: translate(category.label) }))
+  ]);
+  const sceneSelectOptions = $derived([
+    {
+      value: "",
+      label: translate("自动识别"),
+      description: translate("由本地场景路由选择")
+    },
+    ...(draft.scene && !visibleScenes.some((scene) => scene.id === draft.scene)
+      ? [{
+          value: draft.scene,
+          label: translate(scenes.find((scene) => scene.id === draft.scene)?.label ?? draft.scene)
+        }]
+      : []),
+    ...sceneCategories.flatMap((category) =>
+      visibleScenes
+        .filter((scene) => scene.category === category.id)
+        .map((scene) => ({
+          value: scene.id,
+          label: translate(scene.label),
+          description: translate(scene.hint),
+          group: translate(category.label)
+        }))
+    )
+  ]);
+  const modelOptions = $derived(
+    models.map((model) => ({
+      value: modelValue(model.providerId, model.id),
+      label: `${model.providerLabel} · ${translate(model.label)}${model.isDefault ? ` · ${translate("默认")}` : ""}`
+    }))
   );
 
   function patchDraft(patch: Partial<RequestSettings>) {
@@ -136,50 +170,35 @@
         </label>
         <label class="scene-category">
           <span class="sr-only">{translate("场景分类")}</span>
-          <select
+          <SelectField
             value={sceneCategory ?? ""}
-            onchange={(event) => (sceneCategory = (event.currentTarget.value || null) as SceneCategoryId | null)}
-          >
-            <option value="">{translate("全部分类")}</option>
-            {#each sceneCategories as category}
-              <option value={category.id}>{translate(category.label)}</option>
-            {/each}
-          </select>
+            options={sceneCategoryOptions}
+            ariaLabel={translate("场景分类")}
+            onValueChange={(value) => (sceneCategory = (value || null) as SceneCategoryId | null)}
+          />
         </label>
       </div>
 
       <label class="adjust-field scene-field">
         <span>{translate("场景")} · {visibleScenes.length}</span>
-        <select value={draft.scene ?? ""} onchange={(event) => selectScene(event.currentTarget.value)}>
-          <option value="">{translate("自动识别")}</option>
-          {#if draft.scene && !visibleScenes.some((scene) => scene.id === draft.scene)}
-            <option value={draft.scene}>{translate(scenes.find((scene) => scene.id === draft.scene)?.label ?? draft.scene)}</option>
-          {/if}
-          {#each sceneCategories as category}
-            {@const categoryScenes = visibleScenes.filter((scene) => scene.category === category.id)}
-            {#if categoryScenes.length > 0}
-              <optgroup label={translate(category.label)}>
-                {#each categoryScenes as scene}
-                  <option value={scene.id}>{translate(scene.label)} · {translate(scene.hint)}</option>
-                {/each}
-              </optgroup>
-            {/if}
-          {/each}
-        </select>
+        <SelectField
+          value={draft.scene ?? ""}
+          options={sceneSelectOptions}
+          ariaLabel={translate("场景")}
+          onValueChange={selectScene}
+        />
       </label>
 
       <label class="adjust-field">
         <span>{translate("模型")}</span>
-        <select
+        <SelectField
           value={modelValue(draft.provider ?? "", draft.model ?? "")}
-          onchange={(event) => selectModel(event.currentTarget.value)}
-        >
-          {#each models as model}
-            <option value={modelValue(model.providerId, model.id)}>
-              {model.providerLabel} · {translate(model.label)}{model.isDefault ? ` · ${translate("默认")}` : ""}
-            </option>
-          {/each}
-        </select>
+          options={modelOptions}
+          ariaLabel={translate("模型")}
+          disabled={!models.length}
+          placeholder={translate("暂无可用模型")}
+          onValueChange={selectModel}
+        />
       </label>
 
       <section class="adjust-preview" aria-label={translate("当前输入")}>
@@ -218,8 +237,7 @@
     transform: translateY(-50%);
   }
 
-  .scene-search input,
-  .scene-category select {
+  .scene-search input {
     width: 100%;
     min-height: 36px;
     color: var(--text);
@@ -230,10 +248,6 @@
 
   .scene-search input {
     padding: 0 10px 0 32px;
-  }
-
-  .scene-category select {
-    padding: 0 28px 0 10px;
   }
 
   .scene-field > span {

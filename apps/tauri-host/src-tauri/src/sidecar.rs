@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -27,6 +29,8 @@ const MAX_PROVIDER_DISPLAY_NAME_LENGTH: usize = 80;
 const MAX_PROVIDER_MODELS: usize = 256;
 const MAX_PROVIDER_MODEL_ID_LENGTH: usize = 256;
 const PRIVATE_CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(2);
+const PUBLIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+const REQUEST_CANCEL_GRACE: Duration = Duration::from_secs(2);
 pub const CORE_EVENT_NAME: &str = "reflex://core-event";
 pub const PLUGIN_EVENT_NAME: &str = "reflex://plugin-event";
 pub const CAPABILITY_LIST_EVENT_NAME: &str = "reflex://capability-list";
@@ -141,6 +145,8 @@ fn build_process_command(launch: &LaunchSpec) -> Result<Command, &'static str> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
     Ok(command)
 }
 
@@ -630,6 +636,7 @@ impl Drop for PrivateEventStream {
 
 struct RunningProcess {
     process: Box<dyn ChildProcess>,
+    terminator: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>>,
     active_requests: ActiveRequests,
     stopping: Arc<AtomicBool>,
     unhealthy: Arc<AtomicBool>,
@@ -708,6 +715,19 @@ where
         if is_private_command(command.kind) {
             return Err(RUNTIME_UNAVAILABLE_MESSAGE);
         }
+        // Configuration sequences wait for private acknowledgements. Keep
+        // ordinary writes in the same operation lane so an optimize/provider
+        // command cannot slip between configure and its dependent request.
+        // Cancellation remains an out-of-band control operation.
+        if command.kind != crate::runtime_commands::CommandKind::Cancel {
+            let _sequence = self
+                .sequence
+                .lock()
+                .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+            return self
+                .send_routed(vec![(command, public_route(target)?)])
+                .map(|_| ());
+        }
         self.send_routed(vec![(command, public_route(target)?)])
     }
 
@@ -757,6 +777,10 @@ where
         &self,
         command: ValidatedCommand,
     ) -> Result<PrivateEventStream, &'static str> {
+        let _sequence = self
+            .sequence
+            .lock()
+            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
         self.send_private_for_generation(command, None)
             .map(|(stream, _)| stream)
     }
@@ -1031,14 +1055,23 @@ where
                 .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
             for (command, route) in &commands {
                 if let Some(contract) = ResponseContract::for_command(command) {
-                    active_requests.insert(
+                    let request = Arc::new(ActiveRequest::new(
                         command.request_id.clone(),
-                        Arc::new(ActiveRequest::new(
-                            command.request_id.clone(),
-                            contract,
-                            route.clone(),
-                        )),
-                    );
+                        contract,
+                        route.clone(),
+                    ));
+                    active_requests.insert(command.request_id.clone(), request.clone());
+                    if command.kind == crate::runtime_commands::CommandKind::Optimize {
+                        spawn_request_timeout_after(
+                            self.running.clone(),
+                            child.active_requests.clone(),
+                            self.emitter.clone(),
+                            request,
+                            child.unhealthy.clone(),
+                            child.terminator.clone(),
+                            PUBLIC_REQUEST_TIMEOUT,
+                        );
+                    }
                 }
             }
         }
@@ -1141,13 +1174,14 @@ where
                 active_requests.clone(),
                 stopping.clone(),
                 unhealthy.clone(),
-                terminator,
+                terminator.clone(),
             )
         });
         let stderr_reader = process.take_stderr().map(spawn_stderr_drainer);
 
         Ok(RunningProcess {
             process,
+            terminator,
             active_requests,
             stopping,
             unhealthy,
@@ -1188,6 +1222,111 @@ fn send_private_cancel(
         child.unhealthy.store(true, Ordering::Release);
         fail_all_requests(emitter, &child.active_requests);
     }
+}
+
+fn spawn_request_timeout_after(
+    running: Arc<Mutex<Option<RunningProcess>>>,
+    active_requests: ActiveRequests,
+    emitter: Arc<dyn EventEmitter>,
+    request: Arc<ActiveRequest>,
+    unhealthy: Arc<AtomicBool>,
+    terminator: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>>,
+    timeout: Duration,
+) {
+    let request_id = request.request_id.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(timeout);
+        let still_active = active_requests
+            .lock()
+            .ok()
+            .and_then(|active| active.get(&request_id).cloned())
+            .is_some_and(|candidate| Arc::ptr_eq(&candidate, &request));
+        if !still_active {
+            return;
+        }
+
+        if !request.dispatch(
+            &emitter,
+            request_timeout_payload(&request_id, &request.contract),
+            true,
+        ) {
+            return;
+        }
+        remove_active_request(&active_requests, &request_id, &request);
+
+        // A normal cancel is a blocking stdin write.  Run it as a best-effort
+        // control message so a wedged Runtime cannot hold up timeout recovery;
+        // the generation terminator below is the hard fallback.
+        let cancel_running = running.clone();
+        let cancel_active_requests = active_requests.clone();
+        let cancel_emitter = emitter.clone();
+        let cancel_request_id = request_id.clone();
+        std::thread::spawn(move || {
+            send_private_cancel(
+                &cancel_running,
+                &cancel_active_requests,
+                &cancel_emitter,
+                &cancel_request_id,
+            );
+        });
+
+        // A timed-out Runtime is no longer trusted to process subsequent
+        // commands.  Mark this generation unhealthy immediately so the next
+        // request cannot reuse it, then terminate it after a short cancel
+        // grace period.  Pointer equality prevents an old timer from killing
+        // a newly restarted generation.
+        unhealthy.store(true, Ordering::Release);
+        fail_all_requests(&emitter, &active_requests);
+        std::thread::sleep(REQUEST_CANCEL_GRACE);
+        if let Some(terminate) = terminator {
+            let _ = terminate();
+        } else {
+            // Test/process implementations without an out-of-band terminator
+            // retain the old guarded fallback. Production OsChildProcess
+            // always supplies a terminator.
+            terminate_generation(&running, &active_requests, &emitter);
+        }
+    });
+}
+
+fn request_timeout_payload(request_id: &str, contract: &ResponseContract) -> Value {
+    match contract {
+        ResponseContract::Core => serde_json::json!({
+            "version": 1,
+            "request_id": request_id,
+            "event": {
+                "type": "error",
+                "data": {
+                    "code": "request_timeout",
+                    "message": "运行请求超时，请重试。",
+                    "recoverable": true,
+                    "action": "retry"
+                }
+            }
+        }),
+        _ => safe_failure_payload(request_id, contract),
+    }
+}
+
+fn terminate_generation(
+    running: &Arc<Mutex<Option<RunningProcess>>>,
+    active_requests: &ActiveRequests,
+    emitter: &Arc<dyn EventEmitter>,
+) {
+    let Ok(mut running) = running.lock() else {
+        return;
+    };
+    let Some(child) = running.as_mut() else {
+        return;
+    };
+    if !Arc::ptr_eq(&child.active_requests, active_requests) {
+        return;
+    }
+    child.stopping.store(true, Ordering::Release);
+    fail_all_requests(emitter, active_requests);
+    child.process.close_stdin();
+    let _ = child.process.terminate();
+    let _ = child.process.wait_for(Duration::from_millis(300));
 }
 
 impl<F> Drop for RuntimeSidecar<F>
@@ -3958,10 +4097,9 @@ mod tests {
                 payload: json!({}),
             })
             .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        assert!(events.lock().unwrap().iter().any(|(name, payload)| {
+        wait_for_named_event(&events, |name, payload| {
             name == CAPABILITY_LIST_EVENT_NAME && payload["request_id"] == "public-1"
-        }));
+        });
 
         sidecar
             .send(ValidatedCommand {
@@ -4453,6 +4591,101 @@ mod tests {
         assert!(sidecar.running.lock().unwrap().is_none());
     }
 
+    #[test]
+    fn timed_out_request_can_terminate_when_writer_holds_running_lock() {
+        let terminated = Arc::new(AtomicBool::new(false));
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![FakeProcess::blocks_on_write(
+                Arc::new(Mutex::new(Vec::new())),
+                terminated.clone(),
+            )]),
+            Arc::new(FakeEmitter),
+        );
+        let child = sidecar.start_process().unwrap();
+        let active_requests = child.active_requests.clone();
+        let request = Arc::new(ActiveRequest::new(
+            "req-stuck".to_string(),
+            ResponseContract::Core,
+            RequestRoute::Public,
+        ));
+        active_requests
+            .lock()
+            .unwrap()
+            .insert("req-stuck".to_string(), request.clone());
+        let unhealthy = child.unhealthy.clone();
+        let terminator = child.terminator.clone();
+        *sidecar.running.lock().unwrap() = Some(child);
+        let writer_lock = sidecar.running.lock().unwrap();
+        super::spawn_request_timeout_after(
+            sidecar.running.clone(),
+            active_requests.clone(),
+            sidecar.emitter.clone(),
+            request,
+            unhealthy,
+            terminator,
+            Duration::from_millis(20),
+        );
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+        while !terminated.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert!(terminated.load(Ordering::Acquire));
+        drop(writer_lock);
+        sidecar.shutdown();
+    }
+
+    #[test]
+    fn timed_out_public_request_emits_fixed_error_cancels_and_evicts_generation() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sidecar = RuntimeSidecar::new(
+            FakeProcessFactory::new(vec![FakeProcess::running(writes.clone())]),
+            Arc::new(RecordingEmitter(events.clone())),
+        );
+
+        sidecar.send(optimize_command("req-timeout")).unwrap();
+        let (active_requests, request, unhealthy, terminator) = {
+            let running = sidecar.running.lock().unwrap();
+            let child = running.as_ref().unwrap();
+            let active_requests = child.active_requests.clone();
+            let request = active_requests
+                .lock()
+                .unwrap()
+                .get("req-timeout")
+                .cloned()
+                .unwrap();
+            (
+                active_requests,
+                request,
+                child.unhealthy.clone(),
+                child.terminator.clone(),
+            )
+        };
+        super::spawn_request_timeout_after(
+            sidecar.running.clone(),
+            active_requests.clone(),
+            sidecar.emitter.clone(),
+            request,
+            unhealthy,
+            terminator,
+            Duration::from_millis(20),
+        );
+
+        wait_for_event(&events, |payload| {
+            payload["request_id"] == "req-timeout"
+                && payload["event"]["type"] == "error"
+                && payload["event"]["data"]["code"] == "request_timeout"
+        });
+        wait_for_active_requests_empty(&sidecar);
+        wait_for_write(&writes, |write| {
+            String::from_utf8_lossy(write).contains(r#""type":"cancel""#)
+                && String::from_utf8_lossy(write).contains("req-timeout")
+        });
+        sidecar.shutdown();
+    }
+
     #[derive(Clone)]
     struct FakeProcessFactory {
         processes: Arc<Mutex<VecDeque<FakeProcess>>>,
@@ -4489,6 +4722,7 @@ mod tests {
         stdout: Option<Box<dyn Read + Send>>,
         termination_probe: Option<Arc<AtomicBool>>,
         wait_for_termination_on_flush: bool,
+        block_write_until_termination: bool,
     }
 
     struct HoldOpenReader {
@@ -4619,6 +4853,7 @@ mod tests {
                 stdout: None,
                 termination_probe: None,
                 wait_for_termination_on_flush: false,
+                block_write_until_termination: false,
             }
         }
 
@@ -4632,6 +4867,24 @@ mod tests {
                 stdout: None,
                 termination_probe: None,
                 wait_for_termination_on_flush: false,
+                block_write_until_termination: false,
+            }
+        }
+
+        fn blocks_on_write(
+            writes: Arc<Mutex<Vec<Vec<u8>>>>,
+            termination_probe: Arc<AtomicBool>,
+        ) -> Self {
+            Self {
+                exited: false,
+                exits_after_write: false,
+                has_exited_script: VecDeque::new(),
+                fail_after_writes: None,
+                writes,
+                stdout: None,
+                termination_probe: Some(termination_probe),
+                wait_for_termination_on_flush: false,
+                block_write_until_termination: true,
             }
         }
 
@@ -4645,6 +4898,7 @@ mod tests {
                 stdout: None,
                 termination_probe: None,
                 wait_for_termination_on_flush: false,
+                block_write_until_termination: false,
             }
         }
 
@@ -4658,6 +4912,7 @@ mod tests {
                 stdout: Some(Box::new(Cursor::new(stdout))),
                 termination_probe: None,
                 wait_for_termination_on_flush: false,
+                block_write_until_termination: false,
             }
         }
 
@@ -4674,6 +4929,7 @@ mod tests {
                 stdout: Some(stdout),
                 termination_probe: None,
                 wait_for_termination_on_flush: false,
+                block_write_until_termination: false,
             }
         }
 
@@ -4690,6 +4946,7 @@ mod tests {
                 stdout: Some(Box::new(Cursor::new(Vec::new()))),
                 termination_probe: Some(termination_probe),
                 wait_for_termination_on_flush: true,
+                block_write_until_termination: false,
             }
         }
 
@@ -4707,6 +4964,7 @@ mod tests {
                 stdout: Some(stdout),
                 termination_probe: Some(termination_probe),
                 wait_for_termination_on_flush: false,
+                block_write_until_termination: false,
             }
         }
 
@@ -4723,6 +4981,7 @@ mod tests {
                 stdout: Some(stdout),
                 termination_probe: None,
                 wait_for_termination_on_flush: false,
+                block_write_until_termination: false,
             }
         }
 
@@ -4740,6 +4999,7 @@ mod tests {
                 stdout: Some(stdout),
                 termination_probe: None,
                 wait_for_termination_on_flush: false,
+                block_write_until_termination: false,
             }
         }
     }
@@ -4750,6 +5010,16 @@ mod tests {
         }
 
         fn write_stdin(&mut self, bytes: &[u8]) -> io::Result<()> {
+            if self.block_write_until_termination {
+                let probe = self.termination_probe.as_ref().unwrap();
+                while !probe.load(Ordering::Acquire) {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "fixture write interrupted by termination",
+                ));
+            }
             if self
                 .fail_after_writes
                 .is_some_and(|limit| self.writes.lock().unwrap().len() >= limit)
@@ -4889,6 +5159,25 @@ mod tests {
         panic!("timed out waiting for private routes to close");
     }
 
+    fn wait_for_write(
+        writes: &Arc<Mutex<Vec<Vec<u8>>>>,
+        predicate: impl Fn(&[u8]) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while std::time::Instant::now() < deadline {
+            if writes
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|bytes| predicate(bytes.as_slice()))
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("timed out waiting for Runtime write");
+    }
+
     struct FakeEmitter;
 
     impl EventEmitter for FakeEmitter {
@@ -4972,5 +5261,24 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         panic!("timed out waiting for Runtime event");
+    }
+
+    fn wait_for_named_event(
+        events: &Arc<Mutex<Vec<(String, serde_json::Value)>>>,
+        predicate: impl Fn(&str, &serde_json::Value) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+        while std::time::Instant::now() < deadline {
+            if events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(name, payload)| predicate(name, payload))
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("timed out waiting for named Runtime event");
     }
 }

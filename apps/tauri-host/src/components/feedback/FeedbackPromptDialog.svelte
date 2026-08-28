@@ -107,14 +107,14 @@
 
   h2 {
     margin: 0;
-    font-size: 15px;
+    font-size: var(--font-body);
     line-height: 1.35;
   }
 
   p {
     margin: 4px 0 0;
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--font-meta);
     line-height: 1.55;
   }
 
@@ -154,7 +154,7 @@
   .prompt-notice {
     margin: -6px 14px 12px;
     color: var(--danger);
-    font-size: 11px;
+    font-size: var(--font-meta);
   }
 
   footer {
@@ -171,7 +171,7 @@
     color: var(--muted);
     background: transparent;
     border: 0;
-    font-size: 11px;
+    font-size: var(--font-meta);
   }
 
   footer button:hover,

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import Search from "@lucide/svelte/icons/search";
   import X from "@lucide/svelte/icons/x";
+  import SelectField from "../ui/SelectField.svelte";
   import {
     listSceneCategories,
     type SceneCategoryId,
@@ -40,6 +41,10 @@
         .some((value) => value.toLocaleLowerCase().includes(normalized));
     })
   );
+  const categoryOptions = $derived([
+    { value: "", label: translate("全部分类") },
+    ...categories.map((item) => ({ value: item.id, label: translate(item.label) }))
+  ]);
   let selectedSceneOption = $derived(scenes.find((scene) => scene.id === selectedScene));
 
   onMount(() => searchInput?.focus());
@@ -69,15 +74,12 @@
       </label>
       <label>
         <span class="sr-only">{translate("场景分类")}</span>
-        <select
+        <SelectField
           value={category ?? ""}
-          onchange={(event) => (category = (event.currentTarget.value || null) as SceneCategoryId | null)}
-        >
-          <option value="">{translate("全部分类")}</option>
-          {#each categories as item}
-            <option value={item.id}>{translate(item.label)}</option>
-          {/each}
-        </select>
+          options={categoryOptions}
+          ariaLabel={translate("场景分类")}
+          onValueChange={(value) => (category = (value || null) as SceneCategoryId | null)}
+        />
       </label>
     </div>
 
@@ -190,7 +192,7 @@
   }
 
   h2 {
-    font-size: 16px;
+    font-size: var(--font-title);
     line-height: 1.35;
   }
 
@@ -203,12 +205,12 @@
   .scene-summary span {
     margin-top: 3px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--font-meta);
   }
 
   .scene-summary strong {
     overflow: hidden;
-    font-size: 12px;
+    font-size: var(--font-meta);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -247,8 +249,7 @@
     transform: translateY(-50%);
   }
 
-  input[type="search"],
-  select {
+  input[type="search"] {
     width: 100%;
     min-height: 36px;
     color: var(--text);
@@ -261,10 +262,6 @@
     padding: 0 10px 0 32px;
   }
 
-  select {
-    padding: 0 28px 0 10px;
-  }
-
   .scene-list {
     min-height: 0;
     padding: 10px 16px 16px;
@@ -274,7 +271,7 @@
   h3 {
     padding: 10px 0 6px;
     color: var(--muted);
-    font-size: 11px;
+    font-size: var(--font-meta);
     font-weight: 700;
   }
 
@@ -320,7 +317,7 @@
   }
 
   .scene-choice strong {
-    font-size: 13px;
+    font-size: var(--font-body);
     line-height: 1.35;
   }
 
@@ -328,7 +325,7 @@
     margin-top: 2px;
     overflow: hidden;
     color: var(--muted);
-    font-size: 11px;
+    font-size: var(--font-meta);
     line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;

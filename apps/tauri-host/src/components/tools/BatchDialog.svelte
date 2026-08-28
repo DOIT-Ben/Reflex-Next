@@ -16,6 +16,7 @@
     type BatchState
   } from "../../domain/batchState";
   import type { OptimizeStyle, SceneOption } from "../../domain/reflexSession";
+  import SelectField from "../ui/SelectField.svelte";
 
   interface Props {
     state: BatchState;
@@ -52,6 +53,12 @@
   let closeButton: HTMLButtonElement;
   let fileInput: HTMLInputElement;
   let locked = $derived(state.phase === "parsing" || state.phase === "running");
+  let styleOptions = $derived(styles.map((item) => ({ value: item.id, label: translate(item.label) })));
+  let sceneSelectOptions = $derived([
+    { value: "", label: translate("自动识别"), description: translate("由本地场景路由选择") },
+    ...scenes.map((scene) => ({ value: scene.id, label: translate(scene.label) }))
+  ]);
+  const concurrencyOptions = [1, 2, 3, 4].map((value) => ({ value: String(value), label: String(value) }));
   onMount(() => closeButton?.focus());
 
   function chooseFile() {
@@ -83,9 +90,9 @@
           <button type="button" class:active={state.format === item.id} aria-pressed={state.format === item.id} disabled={locked} onclick={() => onStateChange(setBatchFormat(state, item.id))}>{translate(item.label)}</button>
         {/each}
       </div>
-      <label><span>{translate("处理风格")}</span><select value={state.style} disabled={state.phase === "running"} onchange={(event) => onStateChange(setBatchStyle(state, event.currentTarget.value as OptimizeStyle))}>{#each styles as item}<option value={item.id}>{translate(item.label)}</option>{/each}</select></label>
-      <label><span>{translate("场景")}</span><select value={state.scene ?? ""} disabled={state.phase === "running"} onchange={(event) => onStateChange(setBatchScene(state, event.currentTarget.value))}><option value="">{translate("自动识别")}</option>{#each scenes as scene}<option value={scene.id}>{translate(scene.label)}</option>{/each}</select></label>
-      <label><span>{translate("并发数")}</span><select value={state.concurrency} disabled={state.phase === "running"} onchange={(event) => onStateChange(setBatchConcurrency(state, Number(event.currentTarget.value)))}>{#each [1, 2, 3, 4] as value}<option value={value}>{value}</option>{/each}</select></label>
+      <label><span>{translate("处理风格")}</span><SelectField value={state.style} options={styleOptions} ariaLabel={translate("处理风格")} disabled={state.phase === "running"} onValueChange={(value) => onStateChange(setBatchStyle(state, value as OptimizeStyle))} /></label>
+      <label><span>{translate("场景")}</span><SelectField value={state.scene ?? ""} options={sceneSelectOptions} ariaLabel={translate("场景")} disabled={state.phase === "running"} onValueChange={(value) => onStateChange(setBatchScene(state, value))} /></label>
+      <label><span>{translate("并发数")}</span><SelectField value={String(state.concurrency)} options={concurrencyOptions} ariaLabel={translate("并发数")} size="compact" disabled={state.phase === "running"} onValueChange={(value) => onStateChange(setBatchConcurrency(state, Number(value)))} /></label>
     </div>
 
     <label class="batch-source">

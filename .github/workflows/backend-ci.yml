@@ -1,7 +1,15 @@
-name: Backend Verification (Manual)
+name: Backend Verification
 
 on:
+  push:
+  pull_request:
   workflow_dispatch:
+    inputs:
+      run_heavy:
+        description: "Run release-grade Windows lifecycle contract, soak smoke, dependency and SBOM gates"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -46,6 +54,7 @@ jobs:
 
       - name: Cache pinned Cargo tools
         id: cargo-tools-cache
+        if: ${{ inputs.run_heavy == true }}
         uses: actions/cache@v4
         with:
           path: |
@@ -57,15 +66,16 @@ jobs:
           key: cargo-tools-windows-audit-0.22.2-license-0.6.1-cyclonedx-0.5.9
 
       - name: Install pinned dependency audit tools
-        if: steps.cargo-tools-cache.outputs.cache-hit != 'true'
-        shell: powershell
+        if: ${{ inputs.run_heavy == true && steps.cargo-tools-cache.outputs.cache-hit != 'true' }}
+        shell: pwsh
         run: |
           cargo install cargo-audit --version 0.22.2 --locked
           cargo install cargo-license --version 0.6.1 --locked
           cargo install cargo-cyclonedx --version 0.5.9 --locked --jobs 2
 
       - name: Verify pinned Cargo tool versions
-        shell: powershell
+        if: ${{ inputs.run_heavy == true }}
+        shell: pwsh
         run: |
           $installed = (cargo install --list) -join "`n"
           if ($LASTEXITCODE -ne 0 -or $installed -notmatch "(?m)^cargo-audit v0\.22\.2:$") { throw "cargo-audit version mismatch" }
@@ -73,29 +83,41 @@ jobs:
           if ($installed -notmatch "(?m)^cargo-cyclonedx v0\.5\.9:$") { throw "cargo-cyclonedx version mismatch" }
 
       - name: Verify backend script contract
-        shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tests\verify_backend_contract.ps1
+        shell: pwsh
+        run: .\tools\tests\verify_backend_contract.ps1
 
       - name: Verify Windows lifecycle tool contract
-        shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tests\verify_windows_lifecycle_contract.ps1
+        shell: pwsh
+        run: .\tools\tests\verify_windows_lifecycle_contract.ps1
 
       - name: Run locked backend verification
-        shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\verify_backend.ps1
+        shell: pwsh
+        run: |
+          $verifyArgs = @()
+          if ("${{ inputs.run_heavy }}" -ne "true") {
+            $verifyArgs += @("-SkipHeavy", "-SkipDependencyAudit", "-SkipReleaseMaterials")
+          }
+          & .\tools\verify_backend.ps1 @verifyArgs
 
-      - name: Verify Reflex Cloud service and operations contracts
-        shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\verify_cloud.ps1 -SkipDocker
+      - name: Verify Reflex Cloud operations contract
+        shell: pwsh
+        run: .\tools\verify_cloud.ps1 -SkipDocker -SkipTests
+
+      - name: Build frontend release artifact for retained SBOM
+        if: ${{ inputs.run_heavy == true }}
+        shell: pwsh
+        run: npm --prefix .\apps\tauri-host run build
 
       - name: Generate retained SBOM and scan build artifacts
-        shell: powershell
+        if: ${{ inputs.run_heavy == true }}
+        shell: pwsh
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\generate_release_sbom.ps1 `
+          .\tools\generate_release_sbom.ps1 `
             -OutputDirectory "${{ runner.temp }}\reflex-sbom" `
             -ReleasePath ".\apps\tauri-host\dist"
 
       - name: Upload SBOM evidence
+        if: ${{ inputs.run_heavy == true }}
         uses: actions/upload-artifact@v4
         with:
           name: reflex-next-sbom-${{ github.sha }}

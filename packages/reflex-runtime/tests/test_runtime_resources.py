@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -52,8 +53,21 @@ def test_sidecar_build_embeds_native_provider_and_builtin_templates():
         encoding="utf-8"
     )
 
-    assert "plugins\\provider-native-protocols\\src" in source
-    assert '"reflex_provider_native_protocols"' in source
-    assert '"reflex-provider-native-protocols"' in source
+    registry = json.loads(
+        (REPOSITORY_ROOT / "tools" / "project-registry.json").read_text(encoding="utf-8")
+    )
+    native_provider = next(
+        project
+        for project in registry["projects"]
+        if project["id"] == "provider-native-protocols"
+    )
+    assert native_provider["sidecar"] is True
+    assert native_provider["module"] == "reflex_provider_native_protocols"
+    assert "project_registry.ps1" in source
+    assert "Get-ReflexProjectRegistry" in source
+    assert "$_ .module".replace(" ", "") in source
+    assert "$_ .package_name".replace(" ", "") in source
+    assert '"--collect-submodules"' in source
+    assert '"--copy-metadata"' in source
     assert '"--add-data"' in source
     assert 'template-packs\\builtin' in source

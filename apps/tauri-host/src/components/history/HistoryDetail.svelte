@@ -1,6 +1,7 @@
 <script lang="ts">
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import { historyElapsedLabel, type HistoryState } from "../../domain/historyState";
+  import EmptyState from "../ui/EmptyState.svelte";
 
   interface Props {
     state: HistoryState;
@@ -17,7 +18,7 @@
 </script>
 
 <article class="history-detail">
-  {#if !state.selectedId}<p class="history-state">{translate("选择一条历史记录查看详情。")}</p>
+  {#if !state.selectedId}<EmptyState title={translate("选择一条记录")} detail={translate("在左侧查看处理时间、场景和评分。")} />
   {:else if !detail}<p class="history-state" role="status" aria-live="polite">{translate("正在加载详情...")}</p>
   {:else if typeof detail.error === "string"}<p class="history-state error" role="alert">{translate(detail.error)}</p>
   {:else}

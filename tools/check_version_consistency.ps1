@@ -221,6 +221,9 @@ catch {
   throw "Version check root does not exist: $Root"
 }
 
+. (Join-Path $PSScriptRoot "project_registry.ps1")
+$registry = Get-ReflexProjectRegistry -RepositoryRoot $resolvedRoot
+
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
   throw "Git is required for the version consistency check."
 }
@@ -247,21 +250,40 @@ $sources = @(
   [PSCustomObject]@{ Label = "Tauri"; Path = "apps\tauri-host\src-tauri\tauri.conf.json"; Kind = "json"; Version = $null },
   [PSCustomObject]@{ Label = "Cargo"; Path = "apps\tauri-host\src-tauri\Cargo.toml"; Kind = "toml"; Section = "package"; Version = $null },
   [PSCustomObject]@{ Label = "npm"; Path = "apps\tauri-host\package.json"; Kind = "json"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-core"; Path = "packages\reflex-core\pyproject.toml"; Kind = "toml"; Section = "project"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-runtime"; Path = "packages\reflex-runtime\pyproject.toml"; Kind = "toml"; Section = "project"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-http-host"; Path = "packages\reflex-http-host\pyproject.toml"; Kind = "toml"; Section = "project"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-cloud"; Path = "services\reflex-cloud\pyproject.toml"; Kind = "toml"; Section = "project"; Version = $null },
   [PSCustomObject]@{ Label = "npm lockfile"; Path = "apps\tauri-host\package-lock.json"; Kind = "npm-lock"; Version = $null },
-  [PSCustomObject]@{ Label = "Cargo lockfile"; Path = "apps\tauri-host\src-tauri\Cargo.lock"; Kind = "lock"; Package = "reflex-next-tauri-host"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-core lockfile"; Path = "packages\reflex-core\uv.lock"; Kind = "lock"; Package = "reflex-core"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-runtime lockfile"; Path = "packages\reflex-runtime\uv.lock"; Kind = "lock"; Package = "reflex-runtime"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-runtime core dependency lock"; Path = "packages\reflex-runtime\uv.lock"; Kind = "lock"; Package = "reflex-core"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-http-host lockfile"; Path = "packages\reflex-http-host\uv.lock"; Kind = "lock"; Package = "reflex-http-host"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-http-host core dependency lock"; Path = "packages\reflex-http-host\uv.lock"; Kind = "lock"; Package = "reflex-core"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-http-host runtime dependency lock"; Path = "packages\reflex-http-host\uv.lock"; Kind = "lock"; Package = "reflex-runtime"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-cloud lockfile"; Path = "services\reflex-cloud\uv.lock"; Kind = "lock"; Package = "reflex-cloud"; Version = $null },
-  [PSCustomObject]@{ Label = "Python reflex-cloud core dependency lock"; Path = "services\reflex-cloud\uv.lock"; Kind = "lock"; Package = "reflex-core"; Version = $null }
+  [PSCustomObject]@{ Label = "Cargo lockfile"; Path = "apps\tauri-host\src-tauri\Cargo.lock"; Kind = "lock"; Package = "reflex-next-tauri-host"; Version = $null }
 )
+
+$productProjects = @($registry.projects | Where-Object {
+    $_.kind -eq "python" -and $_.version_policy -eq "product"
+  })
+if ($productProjects.Count -eq 0) {
+  throw "Project registry has no product Python projects."
+}
+foreach ($project in $productProjects) {
+  $projectPath = ([string]$project.path -replace "/", "\")
+  $manifestPath = $projectPath + "\pyproject.toml"
+  $sources += [PSCustomObject]@{
+    Label = "Python $([string]$project.id)"
+    Path = $manifestPath
+    Kind = "toml"
+    Section = "project"
+    Version = $null
+  }
+  $lockPackages = @($project.version_lock_packages)
+  if ($lockPackages.Count -eq 0) {
+    throw ("Product project has no version lock packages: {0}" -f $project.id)
+  }
+  foreach ($packageName in $lockPackages) {
+    $sources += [PSCustomObject]@{
+      Label = "Python $([string]$project.id) lock: $([string]$packageName)"
+      Path = ([string]$project.lock -replace "/", "\")
+      Kind = "lock"
+      Package = [string]$packageName
+      Version = $null
+    }
+  }
+}
 
 foreach ($source in $sources) {
   $fullPath = Join-Path $resolvedRoot $source.Path
@@ -289,6 +311,30 @@ foreach ($source in $sources) {
       throw ("Unsupported version source kind: {0}" -f $source.Kind)
     }
   }
+}
+
+$pluginVersionSources = @($registry.projects | Where-Object {
+    $_.kind -eq "python" -and $_.version_policy -eq "plugin"
+  })
+foreach ($project in $pluginVersionSources) {
+  $manifestPath = ([string]$project.path -replace "/", "\") + "\pyproject.toml"
+  $lockPath = ([string]$project.lock -replace "/", "\")
+  $manifestFullPath = Join-Path $resolvedRoot $manifestPath
+  $lockFullPath = Join-Path $resolvedRoot $lockPath
+  $manifestVersion = Get-TomlSectionVersion `
+    -Path $manifestFullPath `
+    -Section "project" `
+    -Label ("Plugin " + [string]$project.id)
+  $lockVersion = Get-LockPackageVersion `
+    -Path $lockFullPath `
+    -Package ([string]$project.package_name) `
+    -Label ("Plugin lock " + [string]$project.id)
+  Assert-ReleaseVersion -Version $manifestVersion -Label ("Plugin " + [string]$project.id)
+  Assert-ReleaseVersion -Version $lockVersion -Label ("Plugin lock " + [string]$project.id)
+  if ((Normalize-ReleaseVersion $manifestVersion) -cne (Normalize-ReleaseVersion $lockVersion)) {
+    throw ("Plugin version and lock differ: {0} manifest={1}; lock={2}" -f $project.id, $manifestVersion, $lockVersion)
+  }
+  Write-Output ("[PLUGIN-VERSION] {0} | version={1} | source={2}" -f $project.id, $manifestVersion, $manifestPath)
 }
 
 foreach ($source in $sources) {

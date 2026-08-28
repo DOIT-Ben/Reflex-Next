@@ -20,7 +20,7 @@ from ..events import (
 )
 from ..interfaces import Provider, SceneDetector, TemplateResolver
 from ..models import OptimizeRequest, SceneDetectionResult
-from ..provider_events import ProviderEvent
+from ..provider_events import ProviderEvent, iter_provider_events
 from ..protocol import EventEnvelope, new_request_id
 from ..safety import InputValidationError, safe_provider_error, sanitize_text, validate_input
 
@@ -218,14 +218,13 @@ class OptimizeUseCase:
             output_bytes = 0
             output_chunks = 0
             provider_usage: dict[str, Any] = {}
-            structured_stream = callable(getattr(self._provider, "stream_events", None))
             provider_started = False
             provider_completed = False
             provider_terminal = False
             provider_metadata: dict[str, Any] = {}
-            event_stream = getattr(self._provider, "stream_events", None)
-            raw_events = event_stream(rendered, request, token) if callable(event_stream) else self._provider.stream(rendered, request, token)
-            for raw_chunk in raw_events:
+            for raw_chunk in iter_provider_events(
+                self._provider, rendered, request, token
+            ):
                 if token.is_cancelled:
                     yield self._cancellation_terminal(current_request_id, deadline)
                     return
@@ -281,7 +280,7 @@ class OptimizeUseCase:
                         if isinstance(provider_request_id, str) and provider_request_id:
                             provider_metadata["provider_request_id"] = provider_request_id
                         continue
-                elif structured_stream:
+                else:
                     raise _ProviderEventError(
                         "provider_invalid_response", retryable=False
                     )
@@ -304,7 +303,7 @@ class OptimizeUseCase:
                 chunks.append(chunk)
                 yield self._envelope(current_request_id, chunk_event(chunk))
 
-            if structured_stream and (not provider_started or not provider_completed):
+            if not provider_started or not provider_completed:
                 raise _ProviderEventError(
                     "provider_invalid_response", retryable=False
                 )

@@ -1,6 +1,8 @@
 import pytest
 
 from reflex_runtime.protocol import (
+    COMMAND_TYPE_VALUES,
+    COMMAND_TYPES,
     RUNTIME_PROTOCOL_VERSION,
     CommandEnvelope,
     ProtocolError,
@@ -21,6 +23,10 @@ def test_runtime_protocol_version_is_owned_by_runtime():
     assert RUNTIME_PROTOCOL_VERSION == 1
 
 
+def test_runtime_command_type_registry_has_unique_values():
+    assert len(COMMAND_TYPE_VALUES) == len(COMMAND_TYPES)
+
+
 def test_parse_valid_optimize_command():
     command = parse_command(
         {
@@ -37,6 +43,12 @@ def test_parse_valid_optimize_command():
         type="optimize",
         payload={"text": "写一封邮件"},
     )
+
+
+@pytest.mark.parametrize("scene_policy", ["unsupported", "", 42, True, [], {}])
+def test_parse_optimize_rejects_unknown_scene_policy(scene_policy):
+    with pytest.raises(ProtocolError):
+        parse_command(command("optimize", {"text": "fixture", "scene_policy": scene_policy}))
 
 
 def test_parse_private_provider_configuration_command():

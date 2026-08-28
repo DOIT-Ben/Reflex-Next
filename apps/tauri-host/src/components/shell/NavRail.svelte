@@ -159,7 +159,7 @@
     display: grid;
     place-items: center;
     font-family: "Segoe UI Symbol", "Microsoft YaHei UI", sans-serif;
-    font-size: 15px;
+    font-size: var(--font-body);
     font-weight: 600;
     line-height: 1;
   }

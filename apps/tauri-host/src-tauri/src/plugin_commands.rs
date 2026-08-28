@@ -12,6 +12,7 @@ const MAIN_CAPABILITY_PERMISSIONS: &[&str] = &[
     "allow-minimize-window",
     "allow-toggle-maximize-window",
     "allow-set-window-size",
+    "core:window:allow-start-dragging",
     "allow-desktop-status",
     "allow-runtime-available",
     "allow-runtime-optimize",

@@ -12,7 +12,7 @@ Python Core + Python Runtime/插件 + Tauri 2/Rust Host + Svelte UI
 - 当前版本：`v0.7.0-alpha.8`；
 - 核心产品功能、桌面主链、增强插件和 Reflex Cloud 闭环已基本实现；
 - 真实 MiniMax 流式请求和取消已有脱敏实机证据；
-- Cloud 反馈、隐私授权、免费额度、质量发布、回滚和 PostgreSQL 多实例并发已有验证；
+- Cloud 反馈、隐私授权、免费额度、质量发布和回滚已有验证；质量发布/回滚的 PostgreSQL 多实例证据已具备，但输出额度结算的 PostgreSQL 多实例并发仍待复验；
 - 正式 72 小时浸泡、Windows 10 生命周期、真实旧版本升级、
   代码签名和受控试用仍未完成。
 

@@ -66,6 +66,7 @@
   import {
     createDefaultCoreBridge,
     createDemoCoreBridge,
+    isSuccessfulCompletionEvent,
     UnavailableCoreBridge
   } from "./domain/coreBridge";
   import {
@@ -260,6 +261,7 @@
   let providerConnectionBridge: ProviderConnectionBridge | null = null;
   let hostApi: TauriHostApi | null = null;
   let settingsApi: SettingsApi | null = null;
+  let configWriteChain: Promise<void> = Promise.resolve();
   let desktopBridge: DesktopBridge | null = null;
   let clipboardReader: ClipboardReader = createClipboardReader();
   let clipboardWriter: ClipboardWriter = createClipboardWriter();
@@ -472,7 +474,7 @@
     activeProviderId === "reflex-cloud"
   );
   $: bridgeUnavailable = coreBridgeState === "unavailable" && !bridgeReady;
-  $: canGenerate = state.canGenerate && !isGenerating(state.phase) && bridgeReady;
+  $: canGenerate = state.canGenerate && activeRun === null && !isGenerating(state.phase) && bridgeReady;
   $: translatorEnabled = persistedConfig?.enabled_plugins.includes("translator") ?? true;
   $: markdownPreviewEnabled = persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
   $: batchRunnerEnabled = persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
@@ -805,6 +807,18 @@
     }
   }
 
+  async function saveConfigSerial(
+    api: SettingsApi,
+    buildConfig: (latest: AppConfig) => AppConfig
+  ): Promise<AppConfig> {
+    const write = configWriteChain.then(async () => {
+      const latest = await api.loadConfig();
+      return api.saveConfig(buildConfig(latest));
+    });
+    configWriteChain = write.then(() => undefined, () => undefined);
+    return write;
+  }
+
   async function saveSettings() {
     if (settingsBusy) return;
     if (!settingsApi || !persistedConfig) {
@@ -818,10 +832,11 @@
         ...feedbackPromptState,
         enabled: feedbackPromptEnabledDraft
       };
-      const saved = await settingsApi.saveConfig({
-        ...configFromSettingsDraft(persistedConfig, settingsDraft),
+      const draftToSave = settingsDraft;
+      const saved = await saveConfigSerial(settingsApi, (latest) => ({
+        ...configFromSettingsDraft(latest, draftToSave),
         feedback_prompt: nextFeedbackPromptState
-      });
+      }));
       persistedConfig = saved;
       feedbackPromptState = normalizeFeedbackPromptState(saved.feedback_prompt);
       feedbackPromptEnabledDraft = feedbackPromptState.enabled;
@@ -838,6 +853,9 @@
       }
       const cloudSaved = await saveCloudPrivacyDraft();
       showToast(cloudSaved ? "✓ 设置已保存" : "本地设置已保存，云端授权未更新。", cloudSaved ? "success" : "error");
+      if (providerReadyForActivation(saved.provider)) {
+        await finishFirstRunFromSettings(saved.provider);
+      }
     } catch (error) {
       settingsNotice = safeDesktopSettingsError(error);
     } finally {
@@ -998,15 +1016,23 @@
         let defaultProviderSaved = true;
         if (persistedConfig) {
           try {
-            persistedConfig = await api.saveConfig(configFromSettingsDraft(persistedConfig, settingsDraft));
+            const draftToSave = settingsDraft;
+            persistedConfig = await saveConfigSerial(api, (latest) =>
+              configFromSettingsDraft(latest, draftToSave)
+            );
           } catch {
             defaultProviderSaved = false;
           }
         }
-        cancelSettingsView();
-        activationNotice = defaultProviderSaved
-          ? "密钥已保存，可以开始生成。"
-          : "密钥已保存，本次可继续生成；默认 Provider 尚未保存。";
+        if (defaultProviderSaved && providerReadyForActivation(savedProvider)) {
+          await finishFirstRunFromSettings(savedProvider);
+        }
+        showToast(
+          defaultProviderSaved
+            ? "✓ 密钥已保存，可以开始生成"
+            : "密钥已保存，本次可继续生成；默认 Provider 尚未保存。",
+          defaultProviderSaved ? "success" : "error"
+        );
       }
     } catch {
       providerStatusError = true;
@@ -1141,7 +1167,10 @@
     const pending = { ...config, feedback_prompt: next };
     persistedConfig = pending;
     try {
-      const saved = await api.saveConfig(pending);
+      const saved = await saveConfigSerial(api, (latest) => ({
+        ...latest,
+        feedback_prompt: next
+      }));
       persistedConfig = saved;
       feedbackPromptState = normalizeFeedbackPromptState(saved.feedback_prompt);
       feedbackPromptEnabledDraft = feedbackPromptState.enabled;
@@ -1208,30 +1237,55 @@
   }
 
   async function executeOptimization(request = createRequestDraft(state, persistedConfig?.language ?? "zh-CN")) {
-    if (!canGenerate) return;
+    if (activeRun !== null || !canGenerate) return;
     const requestId = `ui-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const controller = new AbortController();
     activeRun = controller;
     state = startGeneration(state, requestId);
+    let completionHandled = false;
 
-    for await (const event of coreBridge.optimize(request, {
-      signal: controller.signal
-    })) {
-      if (controller.signal.aborted) break;
-      state = applyCoreEnvelope(state, {
-        version: 1,
-        request_id: requestId,
-        event
-      });
-      if (event.type === "done" && state.phase === "completed") {
-        await handleCompletionClipboard();
-        await completeFirstRunActivation();
-        await recordFeedbackPromptCompletion();
+    try {
+      for await (const event of coreBridge.optimize(request, {
+        signal: controller.signal
+      })) {
+        if (controller.signal.aborted) break;
+        state = applyCoreEnvelope(state, {
+          version: 1,
+          request_id: requestId,
+          event
+        });
+        if (
+          !completionHandled &&
+          isSuccessfulCompletionEvent(event) &&
+          state.phase === "completed" &&
+          Boolean(state.currentResult?.output.trim())
+        ) {
+          completionHandled = true;
+          await handleCompletionClipboard();
+          await completeFirstRunActivation();
+          await recordFeedbackPromptCompletion();
+        }
       }
-    }
-
-    if (activeRun === controller) {
-      activeRun = null;
+    } catch {
+      if (!controller.signal.aborted && state.phase !== "completed") {
+        state = applyCoreEnvelope(state, {
+          version: 1,
+          request_id: requestId,
+          event: {
+            type: "error",
+            data: {
+              code: "runtime_stream_failed",
+              message: "生成服务连接中断，请重试。",
+              recoverable: true,
+              action: "retry"
+            }
+          }
+        });
+      }
+    } finally {
+      if (activeRun === controller) {
+        activeRun = null;
+      }
     }
   }
 
@@ -1521,7 +1575,10 @@
     }
     templateBusy = true;
     try {
-      const saved = await settingsApi.saveConfig({ ...persistedConfig, custom_templates: next });
+      const saved = await saveConfigSerial(settingsApi, (latest) => ({
+        ...latest,
+        custom_templates: next
+      }));
       persistedConfig = saved;
       customTemplates = readCustomTemplates(saved.custom_templates);
       const selected = customTemplates.find((template) => template.id === (selectedTemplateId ?? next.at(-1)?.id));
@@ -1549,7 +1606,10 @@
     templateBusy = true;
     try {
       const next = removeCustomTemplate(customTemplates, selectedTemplateId);
-      const saved = await settingsApi.saveConfig({ ...persistedConfig, custom_templates: next });
+      const saved = await saveConfigSerial(settingsApi, (latest) => ({
+        ...latest,
+        custom_templates: next
+      }));
       persistedConfig = saved;
       customTemplates = readCustomTemplates(saved.custom_templates);
       selectedTemplateId = null;
@@ -2001,7 +2061,10 @@
     persistedConfig = confirmedConfig;
     if (!settingsApi) return;
     try {
-      persistedConfig = await settingsApi.saveConfig(confirmedConfig);
+      persistedConfig = await saveConfigSerial(settingsApi, (latest) => ({
+        ...latest,
+        clipboard_replace_confirmed: true
+      }));
       settingsDraft = settingsDraftFromConfig(persistedConfig);
     } catch {
       clipboardNotice = "本次已替换，下次使用时仍会再次确认。";
@@ -2018,16 +2081,25 @@
   }
 
   async function persistActivationState(next: ActivationState): Promise<boolean> {
+    const previous = activationState;
     activationState = next;
     const api = settingsApi;
     const config = persistedConfig;
-    if (!api || !config) return false;
+    if (!api || !config) {
+      activationState = previous;
+      activationNotice = "首次使用状态暂未保存，本次仍可继续使用。";
+      return false;
+    }
     try {
-      const saved = await api.saveConfig({ ...config, first_run_activation: next });
+      const saved = await saveConfigSerial(api, (latest) => ({
+        ...latest,
+        first_run_activation: next
+      }));
       persistedConfig = saved;
       activationState = normalizeActivationState(saved.first_run_activation);
       return true;
     } catch {
+      activationState = previous;
       activationNotice = "首次使用状态暂未保存，本次仍可继续使用。";
       return false;
     }
@@ -2036,7 +2108,8 @@
   async function chooseActivationRoute(route: ActivationRoute) {
     if (!availableActivationRoutes(cloudAvailability).includes(route)) return;
     const next = selectActivationRoute(activationState, route);
-    await persistActivationState(next);
+    const persisted = await persistActivationState(next);
+    if (!persisted) return;
     activationNotice = "";
     if (route === "cloud") {
       const model = providerDefaultModel("reflex-cloud", providerOptions);
@@ -2068,9 +2141,27 @@
     if (activationState.completed) return;
     const route = activationState.route ?? activationRouteForProvider(activeProviderId);
     const completed = completeActivation(selectActivationRoute(activationState, route));
-    activationOpen = false;
-    activationNotice = "";
-    await persistActivationState(completed);
+    const persisted = await persistActivationState(completed);
+    if (persisted) {
+      activationOpen = false;
+      activationNotice = "";
+    }
+  }
+
+  function providerReadyForActivation(providerId: string | null): boolean {
+    if (providerId === "reflex-cloud") return cloudAvailability === "ready";
+    return (
+      providerId !== null &&
+      secretStatus.providerId === providerId &&
+      secretStatus.configured &&
+      !providerStatusError
+    );
+  }
+
+  async function finishFirstRunFromSettings(providerId: string | null) {
+    if (!activationOpen || !providerReadyForActivation(providerId)) return;
+    await completeFirstRunActivation();
+    if (activationState.completed) cancelSettingsView();
   }
 
   function managePluginSettings() {
@@ -2369,8 +2460,19 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-<main class="app-shell" data-phase={state.phase} data-theme={settingsDraft.theme} style={`--view-scale: ${viewScale}`}>
-  <section class="window" aria-label="Reflex quick window">
+<main
+  class="app-shell outer-contour"
+  data-phase={state.phase}
+  data-theme={settingsDraft.theme}
+  data-dialog-focus-fallback
+  tabindex="-1"
+  style={`--view-scale: ${viewScale}`}
+>
+  <section
+    class="window"
+    aria-label="Reflex quick window"
+    inert={state.overlay === "settings" || activationOpen}
+  >
     <ReflexTitleBar
       providerName={tr(providerName(state.requestDraft.provider, providerOptions))}
       modelName={state.requestDraft.model ?? ""}
@@ -2632,20 +2734,7 @@
       <PluginDialog translate={tr} onManage={managePluginSettings} onClose={closeOverlay} />
     {/if}
 
-    {#if activationOpen && state.overlay !== "settings"}
-      <FirstRunDialog
-        routes={activationRoutes}
-        selectedRoute={activationState.route}
-        providerReady={activationProviderReady}
-        providerLabel={activeProviderLabel}
-        notice={activationNotice}
-        translate={tr}
-        onChoose={chooseActivationRoute}
-        onOpenSettings={openByokSettings}
-        onContinue={continueFirstRun}
-        onLater={postponeFirstRun}
-      />
-    {/if}
+  </section>
 
     {#if state.overlay === "settings"}
       <SettingsDialog
@@ -2712,5 +2801,19 @@
         onCloudDeleteData={confirmDeleteCloudData}
       />
     {/if}
-  </section>
+
+  {#if activationOpen && state.overlay !== "settings"}
+    <FirstRunDialog
+      routes={activationRoutes}
+      selectedRoute={activationState.route}
+      providerReady={activationProviderReady}
+      providerLabel={activeProviderLabel}
+      notice={activationNotice}
+      translate={tr}
+      onChoose={chooseActivationRoute}
+      onOpenSettings={openByokSettings}
+      onContinue={continueFirstRun}
+      onLater={postponeFirstRun}
+    />
+  {/if}
 </main>

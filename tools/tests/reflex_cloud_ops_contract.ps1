@@ -17,17 +17,19 @@ function Read-Utf8 {
 $composePath = Join-Path $root "services\reflex-cloud\docker-compose.yml"
 $caddyPath = Join-Path $root "services\reflex-cloud\Caddyfile"
 $dockerfilePath = Join-Path $root "services\reflex-cloud\Dockerfile"
+$verifyCloudPath = Join-Path $root "tools\verify_cloud.ps1"
 $backupPath = Join-Path $root "tools\reflex-cloud-backup.ps1"
 $restorePath = Join-Path $root "tools\reflex-cloud-restore.ps1"
 $budgetCheckPath = Join-Path $root "tools\reflex-cloud-budget-check.ps1"
 
-foreach ($path in @($composePath, $caddyPath, $dockerfilePath, $backupPath, $restorePath, $budgetCheckPath)) {
+foreach ($path in @($composePath, $caddyPath, $dockerfilePath, $verifyCloudPath, $backupPath, $restorePath, $budgetCheckPath)) {
   Assert-True (Test-Path -LiteralPath $path -PathType Leaf) "Missing cloud operations file: $path"
 }
 
 $compose = Read-Utf8 $composePath
 $caddy = Read-Utf8 $caddyPath
 $dockerfile = Read-Utf8 $dockerfilePath
+$verifyCloud = Read-Utf8 $verifyCloudPath
 $backup = Read-Utf8 $backupPath
 $restore = Read-Utf8 $restorePath
 $budgetCheck = Read-Utf8 $budgetCheckPath
@@ -51,8 +53,14 @@ Assert-True ($restore -match 'dropdb.*TargetDatabase') "Restore must replace onl
 Assert-True ($budgetCheck -match 'REFLEX_CLOUD_ADMIN_TOKEN') "Budget checks must read the admin token from the environment."
 Assert-True ($budgetCheck -match 'Remote budget checks require HTTPS') "Remote budget checks must require HTTPS."
 Assert-True ($budgetCheck -match 'exit \$exitCode') "Budget checks must expose monitoring exit codes."
+Assert-True ($verifyCloud -match '\[switch\]\$SkipTests') "verify_cloud.ps1 must expose a test-suite skip switch for the aggregate CI gate."
+Assert-True ($verifyCloud -match 'cloud:tests[\s\S]*-Skip:\$SkipTests') "verify_cloud.ps1 must make the Cloud test-suite skip explicit."
 
-$powershell = Join-Path $PSHOME "powershell.exe"
+$powershellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+if ($null -eq $powershellCommand) {
+  $powershellCommand = Get-Command powershell.exe -ErrorAction Stop
+}
+$powershell = $powershellCommand.Source
 $dryOutputDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "reflex-cloud-ops-contract"
 function Invoke-ChildScript {
   param([string[]]$Arguments)

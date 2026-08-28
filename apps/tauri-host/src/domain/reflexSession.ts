@@ -163,6 +163,16 @@ export function applyCoreEvent(session: ReflexSession, event: CoreEvent): Reflex
   const timeline = [...session.timeline, toTimelineItem(event)];
 
   if (event.type === "status") {
+    const phase = stringFrom(event.data.phase, "");
+    if (phase === "completed") {
+      return {
+        ...session,
+        phase: "complete",
+        statusMessage: stringFrom(event.data.message, "已完成"),
+        elapsedSeconds: numberFrom(event.data.elapsed_seconds, session.elapsedSeconds ?? 0),
+        timeline
+      };
+    }
     return {
       ...session,
       phase: "running",
