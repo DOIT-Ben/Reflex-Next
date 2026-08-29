@@ -118,12 +118,14 @@ pub fn run() {
         .expect("error while building Reflex host");
 
     app.run(|app, event| match event {
-        tauri::RunEvent::WindowEvent { label, event, .. } if label == "main" => {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if app.state::<desktop::DesktopState>().tray_available() {
-                    api.prevent_close();
-                    let _ = window::hide_main_window(app);
-                }
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "main" => {
+            if app.state::<desktop::DesktopState>().tray_available() {
+                api.prevent_close();
+                let _ = window::hide_main_window(app);
             }
         }
         tauri::RunEvent::Exit => {

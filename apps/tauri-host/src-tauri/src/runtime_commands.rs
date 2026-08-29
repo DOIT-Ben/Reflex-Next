@@ -399,9 +399,10 @@ fn validate_payload(kind: CommandKind, payload: &Value) -> bool {
             let keys = payload.get("keys").and_then(Value::as_object).unwrap();
             let active = payload.get("active_version").and_then(Value::as_str);
             let pending = payload.get("pending_version").and_then(Value::as_str);
-            let active_valid = active
-                .is_none_or(|version| is_safe_key_version(version) && keys.contains_key(version));
-            let pending_valid = pending.is_none_or(|version| {
+            let active_valid = active.map_or(true, |version| {
+                is_safe_key_version(version) && keys.contains_key(version)
+            });
+            let pending_valid = pending.map_or(true, |version| {
                 is_safe_key_version(version)
                     && keys.contains_key(version)
                     && active.is_some_and(|active| {

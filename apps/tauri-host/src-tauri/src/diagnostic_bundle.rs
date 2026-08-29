@@ -56,6 +56,12 @@ struct NormalizedFile {
     records: usize,
 }
 
+struct NormalizedInput {
+    body: Vec<u8>,
+    input_bytes: u64,
+    records: usize,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PendingExport {
@@ -136,7 +142,12 @@ pub fn export_diagnostic_bundle(
             Err(CANCELLED_SENTINEL) => return Ok(ExportOutcome::Cancelled),
             Err(error) => return Err(error),
         };
-        let Some((body, input_bytes, records)) = normalized else {
+        let Some(NormalizedInput {
+            body,
+            input_bytes,
+            records,
+        }) = normalized
+        else {
             continue;
         };
         total_input_bytes = total_input_bytes
@@ -297,7 +308,7 @@ fn read_and_normalize(
     path: &Path,
     source: SourceKind,
     is_cancelled: &impl Fn() -> bool,
-) -> Result<Option<(Vec<u8>, u64, usize)>, &'static str> {
+) -> Result<Option<NormalizedInput>, &'static str> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -361,9 +372,17 @@ fn read_and_normalize(
         records += 1;
     }
     if input.is_empty() {
-        return Ok(Some((output, 0, 0)));
+        return Ok(Some(NormalizedInput {
+            body: output,
+            input_bytes: 0,
+            records: 0,
+        }));
     }
-    Ok(Some((output, input.len() as u64, records)))
+    Ok(Some(NormalizedInput {
+        body: output,
+        input_bytes: input.len() as u64,
+        records,
+    }))
 }
 
 const CANCELLED_SENTINEL: &str = "diagnostic export cancelled";

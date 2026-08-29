@@ -327,6 +327,22 @@ $steps += New-VerificationStep `
   -Heavy $true
 
 $steps += New-VerificationStep `
+  -Id "rust:format" `
+  -Category "rust" `
+  -WorkDir "apps\tauri-host\src-tauri" `
+  -LockFile "Cargo.lock" `
+  -Executable "cargo" `
+  -Arguments @("fmt", "--check")
+
+$steps += New-VerificationStep `
+  -Id "rust:clippy" `
+  -Category "rust" `
+  -WorkDir "apps\tauri-host\src-tauri" `
+  -LockFile "Cargo.lock" `
+  -Executable "cargo" `
+  -Arguments @("clippy", "--locked", "--all-targets", "--all-features", "--", "-D", "warnings")
+
+$steps += New-VerificationStep `
   -Id "rust:tests" `
   -Category "rust" `
   -WorkDir "apps\tauri-host\src-tauri" `
@@ -341,6 +357,24 @@ $steps += New-VerificationStep `
   -LockFile "package-lock.json" `
   -Executable "npm" `
   -Arguments @("ci") `
+  -Frontend $true
+
+$steps += New-VerificationStep `
+  -Id "frontend:typecheck" `
+  -Category "frontend" `
+  -WorkDir "apps\tauri-host" `
+  -LockFile "package-lock.json" `
+  -Executable "npm" `
+  -Arguments @("run", "typecheck") `
+  -Frontend $true
+
+$steps += New-VerificationStep `
+  -Id "frontend:lint" `
+  -Category "frontend" `
+  -WorkDir "apps\tauri-host" `
+  -LockFile "package-lock.json" `
+  -Executable "npm" `
+  -Arguments @("run", "lint") `
   -Frontend $true
 
 $steps += New-VerificationStep `

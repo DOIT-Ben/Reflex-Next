@@ -245,6 +245,36 @@ function Add-LicenseFinding {
   }
 }
 
+function Test-UnknownLicenseValue {
+  param(
+    [object]$License,
+    [object]$Policy
+  )
+
+  $licenseText = ([string]$License).Trim()
+  if ([string]::IsNullOrWhiteSpace($licenseText)) {
+    return $true
+  }
+
+  return @($Policy.licenses.unknown_markers) | Where-Object {
+    $licenseText.Equals(([string]$_).Trim(), [System.StringComparison]::OrdinalIgnoreCase)
+  } | Select-Object -First 1
+}
+
+function ConvertTo-PythonLicenseExpression {
+  param([object]$License)
+
+  $licenseText = ([string]$License).Trim()
+  $normalized = $licenseText -replace '\s+', ' '
+  switch -Regex ($normalized) {
+    '^(?i:MIT License)$' { return 'MIT' }
+    '^(?i:Apache Software License)$' { return 'Apache-2.0' }
+    '^(?i:Mozilla Public License 2\.0(?: \(MPL 2\.0\))?)$' { return 'MPL-2.0' }
+    '^(?i:Python Software Foundation License)$' { return 'PSF-2.0' }
+    default { return $licenseText }
+  }
+}
+
 function Read-FixtureInputs {
   param([string]$Directory)
 
@@ -389,15 +419,12 @@ try {
     }
   }
   foreach ($item in @($inputs.PythonLicenses)) {
-    $metadataLicense = [string]$item.'License-Metadata'
-    $pythonLicense = if ($null -ne $item.License) {
-      $item.License
-    }
-    elseif (-not [string]::IsNullOrWhiteSpace($metadataLicense) -and -not $metadataLicense.Equals("UNKNOWN", [System.StringComparison]::OrdinalIgnoreCase)) {
-      $metadataLicense
-    }
-    else {
-      $item.'License-Classifier'
+    $pythonLicense = $null
+    foreach ($candidate in @($item.License, $item.'License-Metadata', $item.'License-Classifier')) {
+      if (-not (Test-UnknownLicenseValue -License $candidate -Policy $policy)) {
+        $pythonLicense = ConvertTo-PythonLicenseExpression -License $candidate
+        break
+      }
     }
     Add-LicenseFinding -Findings $licenses -ToolFailures $toolFailures -Ecosystem "python" -Package $item.Name -Version $item.Version -License $pythonLicense -Policy $policy
   }

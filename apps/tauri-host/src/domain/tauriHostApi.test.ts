@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { TauriEvent } from "./coreBridge";
 import { createTauriHostApiFromModules } from "./tauriHostApi";
 
 describe("tauri host api adapter", () => {
@@ -7,13 +8,13 @@ describe("tauri host api adapter", () => {
     const unlisten = () => undefined;
     const api = createTauriHostApiFromModules({
       core: {
-        invoke: async (command, args) => {
+        invoke: async <T>(command: string, args?: Record<string, unknown>) => {
           calls.push({ command, args });
-          return "ok";
+          return "ok" as T;
         }
       },
       event: {
-        listen: async (eventName, handler) => {
+        listen: async <T>(eventName: string, handler: (event: TauriEvent<T>) => void) => {
           calls.push({ eventName, handler });
           return unlisten;
         }

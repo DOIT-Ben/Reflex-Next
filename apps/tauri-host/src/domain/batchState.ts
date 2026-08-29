@@ -225,11 +225,13 @@ function parseItems(data: unknown): BatchItem[] | null {
   const seen = new Set<number>();
   const items: BatchItem[] = [];
   for (const value of data.items) {
-    if (!isRecord(value) || !Number.isInteger(value.id) || value.id < 1 || seen.has(value.id)) return null;
+    if (!isRecord(value)) return null;
+    const id = value.id;
+    if (typeof id !== "number" || !Number.isInteger(id) || id < 1 || seen.has(id)) return null;
     const prompt = normalizeText(value.prompt);
     if (!prompt) return null;
-    seen.add(value.id);
-    items.push({ id: value.id, prompt, status: "pending", result: "", error: null });
+    seen.add(id);
+    items.push({ id, prompt, status: "pending", result: "", error: null });
   }
   return items;
 }

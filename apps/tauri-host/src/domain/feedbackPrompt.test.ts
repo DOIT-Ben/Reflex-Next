@@ -5,7 +5,8 @@ import {
   disableFeedbackPrompt,
   normalizeFeedbackPromptState,
   recordSuccessfulGeneration,
-  snoozeFeedbackPrompt
+  snoozeFeedbackPrompt,
+  type FeedbackPromptState
 } from "./feedbackPrompt";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -29,7 +30,7 @@ describe("feedback prompt scheduler", () => {
   });
 
   it("enforces a hard cooldown even when the run threshold is reached", () => {
-    let state = {
+    let state: FeedbackPromptState = {
       ...createFeedbackPromptState(() => 0),
       completedRuns: 10,
       nextPromptAt: 11,

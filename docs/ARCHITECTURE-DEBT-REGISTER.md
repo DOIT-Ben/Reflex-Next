@@ -23,7 +23,7 @@
 | ARC-P3-002 | P3 | open | QA/Release | 本地产物可能被误当正式证据 | 验证证据与本地运行产物身份不清 | `workbench/http-soak-*.json` | 迁移或保留决策有引用核查证据 |
 | ARC-P3-003 | P3 | open | Core | 入口含义容易误判 | Core preview Sidecar 命名容易混淆 | `packages/reflex-core/src/reflex_core/sidecar.py` | 明确兼容/示例用途 |
 | ARC-P3-004 | P3 | open | HTTP Host | tombstone 无限增长或误拒请求 | HTTP Host 未完成 request ID tombstone 的时间过期策略 | `packages/reflex-http-host/src/reflex_http_host/gateway.py` | 以可证明的时间窗口和数量上限共同治理 tombstone，并补充过期/重启语义测试 |
-| ARC-P2-009 | P2 | open | Frontend/CI | 约定的命名门禁当前无法直接执行 | 前端没有 `typecheck`、`lint`、`identity:check`、`docs:check` npm scripts | `apps/tauri-host/package.json`、`tools/verify_backend.ps1` | 提供真实命令并纳入 CI，或将统一验证入口的等价检查明确文档化 |
+| ARC-P2-009 | P2 | verified | Frontend/CI | 约定的命名门禁当前无法直接执行 | 前端现提供 `typecheck`、`lint`，并由统一验证入口执行；未定义的 `identity:check`、`docs:check` 不再作为虚假门禁承诺 | `apps/tauri-host/package.json`、`apps/tauri-host/eslint.config.js`、`tools/verify_backend.ps1` | 类型检查、ESLint、Vitest、构建均由统一入口执行；本轮已验证 |
 | ARC-P3-005 | P3 | open | Frontend QA | 静态契约不能证明真实焦点回归 | 对话框焦点恢复目前主要由源码契约覆盖 | `apps/tauri-host/src/domain/frontendArchitecture.test.ts` | 在受控浏览器/Tauri 测试中覆盖键盘焦点、Esc、切换对话框和 inert 边界 |
 
 ## 本轮验证记录

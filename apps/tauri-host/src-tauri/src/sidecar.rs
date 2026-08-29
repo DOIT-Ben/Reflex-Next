@@ -1001,13 +1001,12 @@ where
                 .lock()
                 .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
             for (command, route) in &commands {
-                if command.kind == crate::runtime_commands::CommandKind::Cancel {
-                    if !active_requests
+                if command.kind == crate::runtime_commands::CommandKind::Cancel
+                    && !active_requests
                         .get(&command.request_id)
                         .is_some_and(|active| active.route.owned_by_same_public_window(route))
-                    {
-                        return Err(REQUEST_NOT_FOUND_MESSAGE);
-                    }
+                {
+                    return Err(REQUEST_NOT_FOUND_MESSAGE);
                 }
             }
             let registrations = commands
@@ -2127,7 +2126,7 @@ fn parse_provider_models(
             let Some(model) = item.as_str() else {
                 return false;
             };
-            let ordered = previous.is_none_or(|last| last < model);
+            let ordered = previous.map_or(true, |last| last < model);
             previous = Some(model);
             ordered && is_safe_public_text(model, MAX_PROVIDER_MODEL_ID_LENGTH)
         });
@@ -2269,17 +2268,16 @@ fn parse_plugin_event(
     {
         return Err(RUNTIME_UNAVAILABLE_MESSAGE);
     }
-    if status == "error" {
-        if !object["data"]
+    if status == "error"
+        && (!object["data"]
             .as_object()
             .is_some_and(|data| data.is_empty())
             || !object
                 .get("code")
                 .and_then(Value::as_str)
-                .is_some_and(crate::runtime_commands::is_safe_id)
-        {
-            return Err(RUNTIME_UNAVAILABLE_MESSAGE);
-        }
+                .is_some_and(crate::runtime_commands::is_safe_id))
+    {
+        return Err(RUNTIME_UNAVAILABLE_MESSAGE);
     }
     Ok(ParsedSidecarEvent {
         event_name: PLUGIN_EVENT_NAME,
@@ -5159,10 +5157,7 @@ mod tests {
         panic!("timed out waiting for private routes to close");
     }
 
-    fn wait_for_write(
-        writes: &Arc<Mutex<Vec<Vec<u8>>>>,
-        predicate: impl Fn(&[u8]) -> bool,
-    ) {
+    fn wait_for_write(writes: &Arc<Mutex<Vec<Vec<u8>>>>, predicate: impl Fn(&[u8]) -> bool) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while std::time::Instant::now() < deadline {
             if writes

@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { TauriHostApi } from "./coreBridge";
+import { createTauriHostStub, type TauriHostStubOptions } from "./testHost";
 import {
   createDiagnosticBundleBridge,
   DIAGNOSTIC_EXPORT_FAILED_MESSAGE
 } from "./diagnosticBundleBridge";
 
-function hostWithInvoke(invoke: TauriHostApi["invoke"]): TauriHostApi {
-  return { invoke, listen: vi.fn() };
+function hostWithInvoke(invoke: NonNullable<TauriHostStubOptions["invoke"]>) {
+  return createTauriHostStub({ invoke, listen: vi.fn() });
 }
 
 describe("DiagnosticBundleBridge", () => {

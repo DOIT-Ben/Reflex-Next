@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSettingsApi, type AppConfig } from "./settingsApi";
+import { createTauriHostStub } from "./testHost";
 
 const config: AppConfig = {
   version: 2,
@@ -26,13 +27,13 @@ const config: AppConfig = {
 describe("settings api", () => {
   it("loads and saves only non-sensitive application config", async () => {
     const calls: Array<{ command: string; args: unknown }> = [];
-    const api = createSettingsApi({
+    const api = createSettingsApi(createTauriHostStub({
       invoke: async (command, args) => {
         calls.push({ command, args });
         return config;
       },
       listen: async () => () => undefined
-    });
+    }));
 
     await expect(api.loadConfig()).resolves.toEqual(config);
     await expect(api.saveConfig(config)).resolves.toEqual(config);
@@ -45,7 +46,7 @@ describe("settings api", () => {
 
   it("sends a transient secret once and returns only normalized status", async () => {
     const calls: Array<{ command: string; args: unknown }> = [];
-    const api = createSettingsApi({
+    const api = createSettingsApi(createTauriHostStub({
       invoke: async (command, args) => {
         calls.push({ command, args });
         return {
@@ -56,7 +57,7 @@ describe("settings api", () => {
         };
       },
       listen: async () => () => undefined
-    });
+    }));
 
     const status = await api.saveProviderSecret("minimax", "provider-fixture-key");
 
@@ -76,13 +77,13 @@ describe("settings api", () => {
 
   it("queries and deletes by normalized provider id", async () => {
     const calls: Array<{ command: string; args: unknown }> = [];
-    const api = createSettingsApi({
+    const api = createSettingsApi(createTauriHostStub({
       invoke: async (command, args) => {
         calls.push({ command, args });
         return { provider_id: "minimax", configured: false, masked_tail: null };
       },
       listen: async () => () => undefined
-    });
+    }));
 
     await expect(api.getProviderSecretStatus("MiniMax")).resolves.toMatchObject({
       providerId: "minimax",
@@ -99,7 +100,7 @@ describe("settings api", () => {
   });
 
   it("normalizes legacy history consent and filters invalid plugin values", async () => {
-    const api = createSettingsApi({
+    const api = createSettingsApi(createTauriHostStub({
       invoke: async () => ({
         version: 1,
         history_enabled: true,
@@ -108,7 +109,7 @@ describe("settings api", () => {
         api_key: "history-fixture-key"
       }),
       listen: async () => () => undefined
-    });
+    }));
 
     await expect(api.loadConfig()).resolves.toMatchObject({
       version: 2,
@@ -120,7 +121,7 @@ describe("settings api", () => {
   });
 
   it("preserves explicit v2 history policy and removes duplicate plugins", async () => {
-    const api = createSettingsApi({
+    const api = createSettingsApi(createTauriHostStub({
       invoke: async () => ({
         version: 2,
         history_enabled: true,
@@ -129,7 +130,7 @@ describe("settings api", () => {
         enabled_plugins: ["markdown-preview", "translator", "translator"]
       }),
       listen: async () => () => undefined
-    });
+    }));
 
     await expect(api.loadConfig()).resolves.toMatchObject({
       version: 2,
@@ -141,7 +142,7 @@ describe("settings api", () => {
   });
 
   it("drops an unknown extension when it contains nested secret-like fields", async () => {
-    const api = createSettingsApi({
+    const api = createSettingsApi(createTauriHostStub({
       invoke: async () => ({
         version: 2,
         future_flag: true,
@@ -150,7 +151,7 @@ describe("settings api", () => {
         }
       }),
       listen: async () => () => undefined
-    });
+    }));
 
     const normalized = await api.loadConfig();
 
@@ -160,13 +161,13 @@ describe("settings api", () => {
   });
 
   it("persists only the bounded first-run activation marker", async () => {
-    const api = createSettingsApi({
+    const api = createSettingsApi(createTauriHostStub({
       invoke: async () => ({
         version: 2,
         first_run_activation: { version: 1, completed: true, route: "cloud" }
       }),
       listen: async () => () => undefined
-    });
+    }));
 
     await expect(api.loadConfig()).resolves.toMatchObject({
       first_run_activation: { version: 1, completed: true, route: "cloud" }
@@ -174,13 +175,13 @@ describe("settings api", () => {
   });
 
   it("drops a first-run marker if it ever contains credential-like data", async () => {
-    const api = createSettingsApi({
+    const api = createSettingsApi(createTauriHostStub({
       invoke: async () => ({
         version: 2,
         first_run_activation: { version: 1, completed: false, route: "byok", token: "fixture" }
       }),
       listen: async () => () => undefined
-    });
+    }));
 
     const normalized = await api.loadConfig();
 
@@ -189,7 +190,7 @@ describe("settings api", () => {
   });
 
   it("normalizes non-sensitive provider endpoints and discovered model candidates", async () => {
-    const api = createSettingsApi({
+    const api = createSettingsApi(createTauriHostStub({
       invoke: async () => ({
         version: 2,
         provider_endpoints: {
@@ -202,7 +203,7 @@ describe("settings api", () => {
         }
       }),
       listen: async () => () => undefined
-    });
+    }));
 
     await expect(api.loadConfig()).resolves.toMatchObject({
       provider_endpoints: { "openai-responses": "https://api.example.test/v1" },

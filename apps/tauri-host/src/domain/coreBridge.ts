@@ -91,19 +91,19 @@ export class TauriRuntimeBridge implements CoreBridge {
     }
     const requestId = this.requestIdFactory();
     const queue = createAsyncEventQueue();
-    let unlisten = () => undefined;
+    let unlisten: () => void = () => {};
     let cancelSent = false;
     let terminalSeen = false;
     let resultSeen = false;
-    let resolveRequestTimeout = () => undefined;
+    let resolveRequestTimeout: () => void = () => {};
     const requestTimeout = new Promise<void>((resolve) => {
       resolveRequestTimeout = resolve;
     });
-    let resolveAbort = () => undefined;
+    let resolveAbort: () => void = () => {};
     const aborted = new Promise<void>((resolve) => {
       resolveAbort = resolve;
     });
-    let resolveTerminal = () => undefined;
+    let resolveTerminal: () => void = () => {};
     const terminal = new Promise<void>((resolve) => {
       resolveTerminal = resolve;
     });
@@ -202,19 +202,19 @@ export class CloudCoreBridge implements CoreBridge {
   ): AsyncGenerator<CoreEvent> {
     const requestId = this.requestIdFactory();
     const queue = createAsyncEventQueue();
-    let unlisten = () => undefined;
+    let unlisten: () => void = () => {};
     let cancelSent = false;
     let terminalSeen = false;
     let resultSeen = false;
-    let resolveRequestTimeout = () => undefined;
+    let resolveRequestTimeout: () => void = () => {};
     const requestTimeout = new Promise<void>((resolve) => {
       resolveRequestTimeout = resolve;
     });
-    let resolveAbort = () => undefined;
+    let resolveAbort: () => void = () => {};
     const aborted = new Promise<void>((resolve) => {
       resolveAbort = resolve;
     });
-    let resolveTerminal = () => undefined;
+    let resolveTerminal: () => void = () => {};
     const terminal = new Promise<void>((resolve) => {
       resolveTerminal = resolve;
     });
@@ -337,7 +337,9 @@ export async function createDefaultCoreBridge(
   let runtimeAvailable = false;
   try {
     runtimeAvailable = await host.invoke<boolean>("runtime_available") === true;
-  } catch {}
+  } catch {
+    // Runtime probing is best-effort; the routed bridge falls back safely.
+  }
 
   return {
     bridge: new RoutedCoreBridge(host, { runtimeAvailable }),

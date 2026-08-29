@@ -13,6 +13,7 @@ import {
   createTauriHostApi,
   createTauriHostApiFromModules
 } from "./tauriHostApi";
+import { createTauriHostStub } from "./testHost";
 
 const frontendRoot = fileURLToPath(new URL("../../", import.meta.url));
 const sourceRoot = join(frontendRoot, "src");
@@ -128,10 +129,10 @@ describe("production frontend architecture", () => {
   });
 
   it("keeps the executable Tauri host and CoreBridge contract wired into App", () => {
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       invoke: async () => undefined,
       listen: async () => () => undefined
-    };
+    });
     const bridges: CoreBridge[] = [
       new DemoCoreBridge(),
       new TauriRuntimeBridge(host, { requestIdFactory: () => "architecture-test" })
@@ -156,7 +157,7 @@ describe("production frontend architecture", () => {
     expect(appSource).toContain("createPromptFeedbackPayload({");
     expect(appSource).not.toContain('openFeedback(sentiment, "prompt", false)');
     const mainStart = appSource.indexOf("<main");
-    const windowStart = appSource.indexOf('<section\n    class="window"');
+    const windowStart = /<section\s+class="window"/.exec(appSource)?.index ?? -1;
     expect(mainStart).toBeGreaterThanOrEqual(0);
     expect(windowStart).toBeGreaterThan(mainStart);
     expect(appSource.slice(mainStart, windowStart)).toContain("data-dialog-focus-fallback");
@@ -320,7 +321,7 @@ describe("production frontend architecture", () => {
       /try\s*\{[\s\S]{0,200}for await \(const event of coreBridge\.optimize[\s\S]{0,1600}\}\s*catch[\s\S]{0,600}\}\s*finally/
     );
     const postponeFirstRunBody = appSource.match(
-      /function postponeFirstRun\(\)\s*\{([\s\S]*?)\n  \}/
+      /function postponeFirstRun\(\)\s*\{([\s\S]*?)\n {2}\}/
     )?.[1] ?? "";
     expect(postponeFirstRunBody).toContain("activationOpen = false");
     expect(postponeFirstRunBody).toContain('activationNotice = ""');

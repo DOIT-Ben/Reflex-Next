@@ -1,8 +1,5 @@
-import type {
-  CoreEvent,
-  CoreEventEnvelope,
-  OptimizeRequestDraft
-} from "./coreBridge";
+import type { CoreEventEnvelope } from "./coreBridge";
+import type { CoreEvent, OptimizeRequestDraft } from "./reflexSession";
 import {
   listSceneOptions,
   type OptimizeMode,
@@ -105,6 +102,10 @@ export type HostSettingsDraft = {
 
 export const SETTINGS_PLUGIN_IDS = ["translator", "markdown-preview", "batch-runner", "semantic-detector"] as const;
 export type SettingsPluginId = (typeof SETTINGS_PLUGIN_IDS)[number];
+
+function isSettingsPluginId(value: string): value is SettingsPluginId {
+  return SETTINGS_PLUGIN_IDS.some((pluginId) => pluginId === value);
+}
 
 export type HostState = {
   phase: HostPhase;
@@ -224,13 +225,11 @@ export function updatePluginSettingsDraft(
   pluginId: string,
   enabled: boolean
 ): HostSettingsDraft {
-  if (!SETTINGS_PLUGIN_IDS.includes(pluginId as SettingsPluginId)) {
+  if (!isSettingsPluginId(pluginId)) {
     return { ...draft, enabled_plugins: [...draft.enabled_plugins] };
   }
-  const enabledPlugins = new Set(
-    draft.enabled_plugins.filter((candidate) =>
-      SETTINGS_PLUGIN_IDS.includes(candidate as SettingsPluginId)
-    )
+  const enabledPlugins = new Set<SettingsPluginId>(
+    draft.enabled_plugins.filter(isSettingsPluginId)
   );
   if (enabled) {
     enabledPlugins.add(pluginId);

@@ -4,13 +4,14 @@ import {
   createDesktopBridge,
   safeDesktopSettingsError
 } from "./desktopBridge";
+import { createTauriHostStub } from "./testHost";
 
 describe("desktop bridge", () => {
   it("normalizes desktop status and subscribes to known host actions", async () => {
     const actions: string[] = [];
     const calls: string[] = [];
     const unlisten = () => undefined;
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       invoke: async (command) => {
         calls.push(command);
         return {
@@ -25,7 +26,7 @@ describe("desktop bridge", () => {
         handler({ payload: { action: "unknown" } });
         return unlisten;
       }
-    };
+    });
 
     const bridge = createDesktopBridge(host);
 

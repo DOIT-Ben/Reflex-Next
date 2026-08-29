@@ -5,6 +5,7 @@ import {
   RuntimeProviderCatalogBridge,
   parseProviderCatalogEnvelope
 } from "./providerCatalogBridge";
+import { createTauriHostStub } from "./testHost";
 
 function validProviderCatalog(requestId = "host-provider-catalog-1") {
   return {
@@ -36,7 +37,7 @@ describe("provider catalog bridge", () => {
   it("correlates the response with the Rust-generated request id and ignores stale events", async () => {
     let listener: ((event: TauriEvent<Record<string, unknown>>) => void) | null = null;
     const calls: string[] = [];
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       invoke: async (command) => {
         calls.push(command);
         queueMicrotask(() => {
@@ -52,7 +53,7 @@ describe("provider catalog bridge", () => {
           listener = null;
         };
       }
-    };
+    });
 
     const bridge = new RuntimeProviderCatalogBridge(host);
     await expect(bridge.listProviders()).resolves.toEqual([
@@ -90,7 +91,7 @@ describe("provider catalog bridge", () => {
 
   it("rejects a safe Runtime catalog error without exposing its code", async () => {
     let listener: ((event: TauriEvent<Record<string, unknown>>) => void) | null = null;
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       invoke: async () => {
         queueMicrotask(() =>
           listener?.({
@@ -108,7 +109,7 @@ describe("provider catalog bridge", () => {
         listener = handler;
         return () => undefined;
       }
-    };
+    });
 
     await expect(new RuntimeProviderCatalogBridge(host).listProviders()).rejects.toThrow(
       PROVIDER_CATALOG_UNAVAILABLE_MESSAGE
@@ -117,12 +118,12 @@ describe("provider catalog bridge", () => {
 
   it("times out with a fixed user-facing error and cleans up the listener", async () => {
     let unlistenCalled = false;
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       invoke: async () => "host-provider-catalog-1",
       listen: async () => () => {
         unlistenCalled = true;
       }
-    };
+    });
 
     await expect(
       new RuntimeProviderCatalogBridge(host).listProviders({ timeoutMs: 5 })

@@ -842,8 +842,10 @@ mod tests {
         let store = ConfigStore::new(directory.path().to_path_buf());
         store.save(&AppConfig::default()).unwrap();
 
-        let mut changed = AppConfig::default();
-        changed.style = "concise".to_string();
+        let changed = AppConfig {
+            style: "concise".to_string(),
+            ..AppConfig::default()
+        };
         store.save(&changed).unwrap();
 
         assert_eq!(store.load().unwrap().style, "concise");
@@ -862,8 +864,10 @@ mod tests {
             ConfigStore::with_diagnostics(directory.path().join("config"), diagnostics.clone());
         store.save(&AppConfig::default()).unwrap();
 
-        let mut changed = AppConfig::default();
-        changed.style = "concise".to_string();
+        let changed = AppConfig {
+            style: "concise".to_string(),
+            ..AppConfig::default()
+        };
         store.save(&changed).unwrap();
         fs::write(store.config_path(), b"{private-invalid-config").unwrap();
 

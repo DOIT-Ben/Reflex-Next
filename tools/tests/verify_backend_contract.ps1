@@ -95,8 +95,12 @@ foreach ($id in $registryPythonIds) {
   Assert-True (($list.Output | Where-Object { $_ -match ('^\[STEP\] ' + [regex]::Escape($id) + ' ') }).Count -eq 1) "Missing step: $id"
 }
 
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] rust:format .*heavy=False .*cargo fmt --check' }).Count -eq 1) "Rust formatting must remain in the default PR gate."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] rust:clippy .*heavy=False .*cargo clippy --locked --all-targets --all-features -- -D warnings' }).Count -eq 1) "Strict Rust Clippy must remain in the default PR gate."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] rust:tests .*heavy=False .*cargo test --locked -- --test-threads=2' }).Count -eq 1) "Rust tests must remain in the default PR gate and use at most 2 test threads."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:install .*heavy=False .*npm ci' }).Count -eq 1) "Frontend install must remain in the default PR gate and use package-lock.json through npm ci."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:typecheck .*heavy=False .*npm run typecheck' }).Count -eq 1) "Frontend type checking must remain in the default PR gate."
+Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:lint .*heavy=False .*npm run lint' }).Count -eq 1) "Frontend linting must remain in the default PR gate."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:tests .*heavy=False .*npm test -- --maxWorkers=2' }).Count -eq 1) "Vitest must remain in the default PR gate and use at most 2 workers."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] frontend:build .*heavy=False .*npm run build' }).Count -eq 1) "Frontend production build must remain in the default PR gate."
 Assert-True (($list.Output | Where-Object { $_ -match '^\[STEP\] governance:project-registry-contract .*project_registry_contract\.ps1' }).Count -eq 1) "Project registry contracts must be part of verification."
@@ -133,12 +137,18 @@ Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] tools:plugin-
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] tools:history-benchmark-small-smoke .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip the small history benchmark."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[SKIP\] tools:history-benchmark-heavy-smoke .*SkipHeavy' }).Count -eq 1) "-SkipHeavy must skip the heavy history benchmark."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] rust:tests ' }).Count -eq 1) "-SkipHeavy must keep Rust tests in the PR gate."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] rust:format ' }).Count -eq 1) "-SkipHeavy must keep Rust formatting in the PR gate."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] rust:clippy ' }).Count -eq 1) "-SkipHeavy must keep Rust Clippy in the PR gate."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] frontend:typecheck ' }).Count -eq 1) "-SkipHeavy must keep frontend type checking in the PR gate."
+Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] frontend:lint ' }).Count -eq 1) "-SkipHeavy must keep frontend linting in the PR gate."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] frontend:tests ' }).Count -eq 1) "-SkipHeavy must keep frontend tests in the PR gate."
 Assert-True (($dryRun.Output | Where-Object { $_ -match '^\[DRY-RUN\] frontend:build ' }).Count -eq 1) "-SkipHeavy must keep the frontend build in the PR gate."
 
 $frontendSkip = Invoke-Verify -Arguments @("-DryRun", "-PythonProject", "reflex-core", "-SkipFrontend")
 Assert-True ($frontendSkip.ExitCode -eq 0) "The frontend-skip dry-run must return exit code 0."
 Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[DRY-RUN\] rust:tests ' }).Count -eq 1) "-SkipFrontend must not skip Rust tests."
+Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[SKIP\] frontend:typecheck .*SkipFrontend' }).Count -eq 1) "-SkipFrontend must skip frontend type checking."
+Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[SKIP\] frontend:lint .*SkipFrontend' }).Count -eq 1) "-SkipFrontend must skip frontend linting."
 Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[SKIP\] frontend:tests .*SkipFrontend' }).Count -eq 1) "-SkipFrontend must skip frontend tests."
 Assert-True (($frontendSkip.Output | Where-Object { $_ -match '^\[SKIP\] frontend:build .*SkipFrontend' }).Count -eq 1) "-SkipFrontend must skip the frontend build."
 
@@ -160,7 +170,7 @@ try {
   $fakeUv = Join-Path $resourceFakeBin "uv.cmd"
   $fakeCargo = Join-Path $resourceFakeBin "cargo.cmd"
   [System.IO.File]::WriteAllText($fakeUv, "@exit /b 0`r`n", [System.Text.Encoding]::ASCII)
-  [System.IO.File]::WriteAllText($fakeCargo, "@if not exist `"$resourceProbe`" exit /b 41`r`n@exit /b 0`r`n", [System.Text.Encoding]::ASCII)
+  [System.IO.File]::WriteAllText($fakeCargo, "@if /I `"%~1`"==`"test`" if not exist `"$resourceProbe`" exit /b 41`r`n@exit /b 0`r`n", [System.Text.Encoding]::ASCII)
 
   $originalPath = $env:PATH
   $originalResourcePath = $env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH

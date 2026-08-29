@@ -702,6 +702,10 @@ pub async fn history_reuse_intent(
 }
 
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Tauri injects command state and window parameters; grouping them would change the command boundary."
+)]
 pub async fn history_export(
     app: AppHandle,
     paths: State<'_, AppPaths>,
@@ -743,16 +747,14 @@ pub async fn history_export(
         "filters": request.filters,
     });
     control.begin()?;
-    let result = run_history_export(
-        state.runtime(),
-        &config_store,
-        &history_key_store,
-        &history_path,
-        input,
-        &control,
-        &target,
-        &export_journal,
-    );
+    let context = HistoryOperationContext {
+        runtime: state.runtime(),
+        config_store: &config_store,
+        history_key_store: &history_key_store,
+        history_path: &history_path,
+        control: &control,
+    };
+    let result = run_history_export(&context, input, &target, &export_journal);
     control.finish();
     Ok(if result? { "completed" } else { "cancelled" }.to_string())
 }
@@ -799,6 +801,10 @@ pub async fn diagnostic_bundle_cancel(
 }
 
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Tauri injects command state and window parameters; grouping them would change the command boundary."
+)]
 pub async fn history_admin_operation(
     app: AppHandle,
     paths: State<'_, AppPaths>,
@@ -826,31 +832,23 @@ pub async fn history_admin_operation(
         return Ok("cancelled".to_string());
     }
     let history_path = history_database_path(paths.data_dir());
+    let context = HistoryOperationContext {
+        runtime: state.runtime(),
+        config_store: &config_store,
+        history_key_store: &history_key_store,
+        history_path: &history_path,
+        control: &control,
+    };
     if operation == "rotate" {
         control.begin()?;
-        let result = rotate_history_keys(
-            state.runtime(),
-            &config_store,
-            &history_key_store,
-            &history_path,
-            &control,
-        );
+        let result = rotate_history_keys(&context);
         control.finish();
         if !result? {
             return Ok("cancelled".to_string());
         }
     } else {
         control.begin()?;
-        let result = run_history_admin(
-            state.runtime(),
-            &config_store,
-            &history_key_store,
-            &history_path,
-            &operation,
-            input,
-            &control,
-            true,
-        );
+        let result = run_history_admin(&context, &operation, input, true);
         control.finish();
         if matches!(result?, HistoryAdminOutcome::Cancelled) {
             return Ok("cancelled".to_string());
@@ -881,53 +879,56 @@ enum HistoryAdminOutcome {
     Cancelled,
 }
 
+struct HistoryOperationContext<'a, H>
+where
+    H: CredentialBackend,
+{
+    runtime: &'a RuntimeController,
+    config_store: &'a ConfigStore,
+    history_key_store: &'a HistoryKeyStore<H>,
+    history_path: &'a Path,
+    control: &'a HistoryOperationControl,
+}
+
 fn run_history_admin<H>(
-    runtime: &RuntimeController,
-    config_store: &ConfigStore,
-    history_key_store: &HistoryKeyStore<H>,
-    history_path: &Path,
+    context: &HistoryOperationContext<'_, H>,
     operation: &str,
     input: Value,
-    control: &HistoryOperationControl,
     cancellable: bool,
 ) -> Result<HistoryAdminOutcome, String>
 where
     H: CredentialBackend,
 {
     let stream = start_history_admin_stream(
-        runtime,
-        config_store,
-        history_key_store,
-        history_path,
+        context.runtime,
+        context.config_store,
+        context.history_key_store,
+        context.history_path,
         operation,
         input,
     )?;
-    collect_history_admin(stream, control, cancellable)
+    collect_history_admin(stream, context.control, cancellable)
 }
 
 fn run_history_admin_for_generation<H>(
-    runtime: &RuntimeController,
-    config_store: &ConfigStore,
-    history_key_store: &HistoryKeyStore<H>,
-    history_path: &Path,
+    context: &HistoryOperationContext<'_, H>,
     operation: &str,
     input: Value,
-    control: &HistoryOperationControl,
     generation: &PrivateRuntimeGeneration,
 ) -> Result<HistoryAdminOutcome, String>
 where
     H: CredentialBackend,
 {
     let stream = start_history_admin_stream_for_generation(
-        runtime,
-        config_store,
-        history_key_store,
-        history_path,
+        context.runtime,
+        context.config_store,
+        context.history_key_store,
+        context.history_path,
         operation,
         input,
         generation,
     )?;
-    collect_history_admin(stream, control, false)
+    collect_history_admin(stream, context.control, false)
 }
 
 fn collect_history_admin(
@@ -970,12 +971,8 @@ fn collect_history_admin(
 }
 
 fn run_history_export<H>(
-    runtime: &RuntimeController,
-    config_store: &ConfigStore,
-    history_key_store: &HistoryKeyStore<H>,
-    history_path: &Path,
+    context: &HistoryOperationContext<'_, H>,
     input: Value,
-    control: &HistoryOperationControl,
     target: &Path,
     export_journal: &Path,
 ) -> Result<bool, String>
@@ -983,10 +980,10 @@ where
     H: CredentialBackend,
 {
     let mut stream = start_history_admin_stream(
-        runtime,
-        config_store,
-        history_key_store,
-        history_path,
+        context.runtime,
+        context.config_store,
+        context.history_key_store,
+        context.history_path,
         "export",
         input,
     )?;
@@ -994,7 +991,7 @@ where
         crate::history_export::AtomicExportWriter::new_registered(target, export_journal)
             .map_err(str::to_string)?;
     loop {
-        if control.is_cancelled() {
+        if context.control.is_cancelled() {
             stream.cancel();
             return Ok(false);
         }
@@ -1018,7 +1015,7 @@ where
                 writer.write_chunk(&decoded).map_err(str::to_string)?;
             }
             Some("result") => {
-                return commit_history_export(writer, control);
+                return commit_history_export(writer, context.control);
             }
             Some("cancelled" | "error") | None => {
                 return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
@@ -1106,49 +1103,34 @@ where
     Ok(commands)
 }
 
-fn rotate_history_keys<H>(
-    runtime: &RuntimeController,
-    config_store: &ConfigStore,
-    history_key_store: &HistoryKeyStore<H>,
-    history_path: &Path,
-    control: &HistoryOperationControl,
-) -> Result<bool, String>
+fn rotate_history_keys<H>(context: &HistoryOperationContext<'_, H>) -> Result<bool, String>
 where
     H: CredentialBackend,
 {
-    if resume_promoted_rotation(history_key_store, |active| {
-        match run_history_admin(
-            runtime,
-            config_store,
-            history_key_store,
-            history_path,
-            "rotate",
-            serde_json::json!({"action": "resume", "target_version": format!("v{active}")}),
-            control,
-            false,
-        )? {
-            HistoryAdminOutcome::Completed(response) => {
-                Ok(response.data.get("resumed").and_then(Value::as_bool) == Some(true))
-            }
-            HistoryAdminOutcome::Cancelled => Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
+    if resume_promoted_rotation(context.history_key_store, |active| match run_history_admin(
+        context,
+        "rotate",
+        serde_json::json!({"action": "resume", "target_version": format!("v{active}")}),
+        false,
+    )? {
+        HistoryAdminOutcome::Completed(response) => {
+            Ok(response.data.get("resumed").and_then(Value::as_bool) == Some(true))
         }
+        HistoryAdminOutcome::Cancelled => Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string()),
     })? {
         return Ok(true);
     }
-    let status = history_key_store
+    let status = context
+        .history_key_store
         .begin_rotation()
         .map_err(|_| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
     let target = status
         .pending_version
         .ok_or_else(|| HISTORY_OPERATION_ERROR_MESSAGE.to_string())?;
     let prepared = run_history_admin(
-        runtime,
-        config_store,
-        history_key_store,
-        history_path,
+        context,
         "rotate",
         serde_json::json!({"action": "prepare", "target_version": format!("v{target}")}),
-        control,
         true,
     );
     let Some(prepared) = resolve_rotation_prepare(prepared)? else {
@@ -1163,15 +1145,11 @@ where
         return Err(HISTORY_OPERATION_ERROR_MESSAGE.to_string());
     }
     let generation = prepared.generation;
-    promote_history_rotation_or_rollback(history_key_store, || {
+    promote_history_rotation_or_rollback(context.history_key_store, || {
         match run_history_admin_for_generation(
-            runtime,
-            config_store,
-            history_key_store,
-            history_path,
+            context,
             "rotate",
             serde_json::json!({"action": "rollback", "target_version": format!("v{target}")}),
-            control,
             &generation,
         )? {
             HistoryAdminOutcome::Completed(_) => Ok(()),
@@ -1179,13 +1157,9 @@ where
         }
     })?;
     let finalized = run_history_admin(
-        runtime,
-        config_store,
-        history_key_store,
-        history_path,
+        context,
         "rotate",
         serde_json::json!({"action": "finalize", "target_version": format!("v{target}")}),
-        control,
         false,
     )?;
     if matches!(finalized, HistoryAdminOutcome::Completed(_)) {
@@ -1772,11 +1746,13 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&directory);
         let config_store = ConfigStore::new(PathBuf::from(&directory));
-        let mut config = AppConfig::default();
-        config.history_enabled = true;
-        config.privacy_mode = true;
-        config.history_redaction = "none".to_string();
-        config.enabled_plugins = vec!["translator".to_string(), "../unsafe".to_string()];
+        let config = AppConfig {
+            history_enabled: true,
+            privacy_mode: true,
+            history_redaction: "none".to_string(),
+            enabled_plugins: vec!["translator".to_string(), "../unsafe".to_string()],
+            ..AppConfig::default()
+        };
         config_store.save(&config).unwrap();
 
         let backend = MemoryCredentialBackend::default();
@@ -1881,8 +1857,10 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&directory);
         let config_store = ConfigStore::new(PathBuf::from(&directory));
-        let mut config = AppConfig::default();
-        config.privacy_mode = true;
+        let config = AppConfig {
+            privacy_mode: true,
+            ..AppConfig::default()
+        };
         config_store.save(&config).unwrap();
         let backend = MemoryCredentialBackend::default();
         let history_store = HistoryKeyStore::new(backend);
@@ -2303,8 +2281,10 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&directory);
         let config_store = ConfigStore::new(PathBuf::from(&directory));
-        let mut config = AppConfig::default();
-        config.history_enabled = true;
+        let config = AppConfig {
+            history_enabled: true,
+            ..AppConfig::default()
+        };
         config_store.save(&config).unwrap();
         let provider_backend = MemoryCredentialBackend::default();
         let secret_store = SecretStore::new(provider_backend);
@@ -2341,8 +2321,10 @@ mod tests {
     #[test]
     fn history_enable_failure_prevents_the_persist_callback() {
         let old = AppConfig::default();
-        let mut new = AppConfig::default();
-        new.history_enabled = true;
+        let new = AppConfig {
+            history_enabled: true,
+            ..AppConfig::default()
+        };
         let store = HistoryKeyStore::new(FailingCredentialBackend);
         let persisted = Arc::new(Mutex::new(false));
 

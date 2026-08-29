@@ -10,17 +10,18 @@ import {
   type BrowserClipboard
 } from "./clipboardBridge";
 import type { TauriHostApi } from "./coreBridge";
+import { createTauriHostStub } from "./testHost";
 
 describe("clipboard bridge", () => {
   it("reads clipboard text through the Tauri host when available", async () => {
     const calls: unknown[] = [];
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       invoke: async (command, args) => {
         calls.push({ command, args });
         return "来自宿主剪贴板";
       },
       listen: async () => () => undefined
-    };
+    });
 
     const reader = createClipboardReader(host);
 
@@ -68,13 +69,13 @@ describe("clipboard bridge", () => {
 
   it("writes clipboard text through the Tauri host when available", async () => {
     const calls: unknown[] = [];
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       invoke: async (command, args) => {
         calls.push({ command, args });
         return undefined;
       },
       listen: async () => () => undefined
-    };
+    });
 
     const result = await writeClipboardText(createClipboardWriter(host), "优化结果");
 

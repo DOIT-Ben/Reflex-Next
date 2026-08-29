@@ -10,13 +10,14 @@ import {
   type PluginEventEnvelope
 } from "./capabilityBridge";
 import type { TauriEvent, TauriHostApi } from "./coreBridge";
+import { createTauriHostStub } from "./testHost";
 
 describe("capability bridge", () => {
   it("registers the capability listener before invoking and returns safe descriptors only", async () => {
     const order: string[] = [];
-    let listener: ((event: TauriEvent<CapabilityListEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<CapabilityListEnvelope>) => void = () => {};
     let unlistenCalled = false;
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async (_name, handler) => {
         order.push("listen");
         listener = handler as (event: TauriEvent<CapabilityListEnvelope>) => void;
@@ -47,7 +48,7 @@ describe("capability bridge", () => {
           }
         });
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "list-1" });
 
     await expect(bridge.listPlugins()).resolves.toEqual([
@@ -67,9 +68,9 @@ describe("capability bridge", () => {
   });
 
   it("filters request plugin and operation then queues through one terminal event", async () => {
-    let listener: ((event: TauriEvent<PluginEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<PluginEventEnvelope>) => void = () => {};
     let unlistenCalled = false;
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async (_name, handler) => {
         listener = handler as (event: TauriEvent<PluginEventEnvelope>) => void;
         return () => {
@@ -93,7 +94,7 @@ describe("capability bridge", () => {
         emit(pluginEvent("plugin-1", "translator", "translate", "result", { text: "AB" }));
         emit(pluginEvent("plugin-1", "translator", "translate", "chunk", { text: "late" }));
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "plugin-1" });
 
     const events = [];
@@ -112,9 +113,9 @@ describe("capability bridge", () => {
   });
 
   it("aborts only its own request and drops any late response", async () => {
-    let listener: ((event: TauriEvent<PluginEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<PluginEventEnvelope>) => void = () => {};
     const calls: Array<{ command: string; args: unknown }> = [];
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async (_name, handler) => {
         listener = handler as (event: TauriEvent<PluginEventEnvelope>) => void;
         return () => undefined;
@@ -122,7 +123,7 @@ describe("capability bridge", () => {
       invoke: async (command, args) => {
         calls.push({ command, args });
       }
-    };
+    });
     const controller = new AbortController();
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "abort-own" });
     const iterator = bridge.invoke(
@@ -162,14 +163,14 @@ describe("capability bridge", () => {
 
   it("uses one fixed safe error and always unlistens when invoke fails", async () => {
     let unlistenCalled = false;
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async () => () => {
         unlistenCalled = true;
       },
       invoke: async () => {
         throw new Error("module=C:\\private\\plugin.py token=fixture-private");
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "plugin-error" });
 
     const pending = bridge.invoke("translator", "translate", {}).next();
@@ -180,8 +181,8 @@ describe("capability bridge", () => {
   });
 
   it("rejects descriptors containing module paths with the same safe error", async () => {
-    let listener: ((event: TauriEvent<CapabilityListEnvelope>) => void) | null = null;
-    const host: TauriHostApi = {
+    let listener: (event: TauriEvent<CapabilityListEnvelope>) => void = () => {};
+    const host: TauriHostApi = createTauriHostStub({
       listen: async (_name, handler) => {
         listener = handler as (event: TauriEvent<CapabilityListEnvelope>) => void;
         return () => undefined;
@@ -208,15 +209,15 @@ describe("capability bridge", () => {
           }
         });
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "unsafe-list" });
 
     await expect(bridge.listPlugins()).rejects.toThrow(CAPABILITY_UNAVAILABLE_MESSAGE);
   });
 
   it("rejects plugin data with Runtime-invalid keys without exposing the payload", async () => {
-    let listener: ((event: TauriEvent<PluginEventEnvelope>) => void) | null = null;
-    const host: TauriHostApi = {
+    let listener: (event: TauriEvent<PluginEventEnvelope>) => void = () => {};
+    const host: TauriHostApi = createTauriHostStub({
       listen: async (_name, handler) => {
         listener = handler as (event: TauriEvent<PluginEventEnvelope>) => void;
         return () => undefined;
@@ -228,7 +229,7 @@ describe("capability bridge", () => {
           })
         });
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, {
       requestIdFactory: () => "invalid-data"
     });
@@ -239,9 +240,9 @@ describe("capability bridge", () => {
   });
 
   it("rejects a pending consumer when a malformed matching event arrives", async () => {
-    let listener: ((event: TauriEvent<PluginEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<PluginEventEnvelope>) => void = () => {};
     let unlistenCalled = false;
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async (_name, handler) => {
         listener = handler as (event: TauriEvent<PluginEventEnvelope>) => void;
         return () => {
@@ -249,7 +250,7 @@ describe("capability bridge", () => {
         };
       },
       invoke: async () => undefined
-    };
+    });
     const bridge = new CapabilityBridge(host, {
       requestIdFactory: () => "pending-invalid"
     });
@@ -274,14 +275,14 @@ describe("capability bridge", () => {
   it("times out list requests, cancels only that request, and unlistens", async () => {
     const calls: Array<{ command: string; args: unknown }> = [];
     let unlistenCalled = false;
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async () => () => {
         unlistenCalled = true;
       },
       invoke: async (command, args) => {
         calls.push({ command, args });
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "list-timeout" });
 
     await expect(bridge.listPlugins({ timeoutMs: 5 })).rejects.toThrow(
@@ -306,7 +307,7 @@ describe("capability bridge", () => {
     async () => {
       let unlistenCalled = false;
       const calls: string[] = [];
-      const host: TauriHostApi = {
+      const host: TauriHostApi = createTauriHostStub({
         listen: async () => () => {
           unlistenCalled = true;
         },
@@ -316,7 +317,7 @@ describe("capability bridge", () => {
             await new Promise(() => undefined);
           }
         }
-      };
+      });
       const bridge = new CapabilityBridge(host, {
         requestIdFactory: () => "list-hanging-invoke"
       });
@@ -334,14 +335,14 @@ describe("capability bridge", () => {
     const calls: Array<{ command: string; args: unknown }> = [];
     let unlistenCalled = false;
     const controller = new AbortController();
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async () => () => {
         unlistenCalled = true;
       },
       invoke: async (command, args) => {
         calls.push({ command, args });
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "list-abort" });
     const pending = bridge.listPlugins({ signal: controller.signal, timeoutMs: 1_000 });
     await Promise.resolve();
@@ -357,10 +358,10 @@ describe("capability bridge", () => {
   });
 
   it("cancels an unterminated generator when the consumer breaks", async () => {
-    let listener: ((event: TauriEvent<PluginEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<PluginEventEnvelope>) => void = () => {};
     const calls: Array<{ command: string; args: unknown }> = [];
     let unlistenCalled = false;
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async (_name, handler) => {
         listener = handler as (event: TauriEvent<PluginEventEnvelope>) => void;
         return () => {
@@ -375,7 +376,7 @@ describe("capability bridge", () => {
           });
         }
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "plugin-break" });
 
     for await (const _event of bridge.invoke("translator", "translate", {})) {
@@ -390,10 +391,10 @@ describe("capability bridge", () => {
   });
 
   it("abort clears buffered plugin events and rejects the pending consumer", async () => {
-    let listener: ((event: TauriEvent<PluginEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<PluginEventEnvelope>) => void = () => {};
     let unlistenCalled = false;
     const controller = new AbortController();
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async (_name, handler) => {
         listener = handler as (event: TauriEvent<PluginEventEnvelope>) => void;
         return () => {
@@ -414,7 +415,7 @@ describe("capability bridge", () => {
           });
         }
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "buffer-abort" });
     const iterator = bridge.invoke(
       "translator",
@@ -434,9 +435,9 @@ describe("capability bridge", () => {
   });
 
   it("still unlistens when generator cancellation cannot be delivered", async () => {
-    let listener: ((event: TauriEvent<PluginEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<PluginEventEnvelope>) => void = () => {};
     let unlistenCalled = false;
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async (_name, handler) => {
         listener = handler as (event: TauriEvent<PluginEventEnvelope>) => void;
         return () => {
@@ -449,7 +450,7 @@ describe("capability bridge", () => {
           payload: pluginEvent("cancel-fails", "translator", "translate", "started", {})
         });
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "cancel-fails" });
 
     for await (const _event of bridge.invoke("translator", "translate", {})) {
@@ -465,7 +466,7 @@ describe("capability bridge", () => {
       const controller = new AbortController();
       const calls: string[] = [];
       let unlistenCalls = 0;
-      const host: TauriHostApi = {
+      const host: TauriHostApi = createTauriHostStub({
         listen: async () => () => {
           unlistenCalls += 1;
         },
@@ -475,7 +476,7 @@ describe("capability bridge", () => {
             await new Promise(() => undefined);
           }
         }
-      };
+      });
       const bridge = new CapabilityBridge(host, { requestIdFactory: () => "pending-abort" });
       const iterator = bridge.invoke(
         "translator",
@@ -501,7 +502,7 @@ describe("capability bridge", () => {
     async () => {
       const calls: string[] = [];
       let unlistenCalls = 0;
-      const host: TauriHostApi = {
+      const host: TauriHostApi = createTauriHostStub({
         listen: async () => () => {
           unlistenCalls += 1;
         },
@@ -511,7 +512,7 @@ describe("capability bridge", () => {
             await new Promise(() => undefined);
           }
         }
-      };
+      });
       const bridge = new CapabilityBridge(host, { requestIdFactory: () => "pending-timeout" });
 
       await expect(
@@ -525,14 +526,14 @@ describe("capability bridge", () => {
 
   it("cleans the plugin listener exactly once when the initial invoke rejects", async () => {
     let unlistenCalls = 0;
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async () => () => {
         unlistenCalls += 1;
       },
       invoke: async (command) => {
         if (command === "runtime_plugin_call") throw new Error("fixture invoke failure");
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "invoke-cleanup" });
 
     await expect(bridge.invoke("translator", "translate", {}).next()).rejects.toThrow(
@@ -544,9 +545,9 @@ describe("capability bridge", () => {
   it(
     "does not block generator cleanup when the cancel invoke stays pending",
     async () => {
-      let listener: ((event: TauriEvent<PluginEventEnvelope>) => void) | null = null;
+      let listener: (event: TauriEvent<PluginEventEnvelope>) => void = () => {};
       let unlistenCalls = 0;
-      const host: TauriHostApi = {
+      const host: TauriHostApi = createTauriHostStub({
         listen: async (_name, handler) => {
           listener = handler as (event: TauriEvent<PluginEventEnvelope>) => void;
           return () => {
@@ -561,7 +562,7 @@ describe("capability bridge", () => {
             payload: pluginEvent("pending-cancel", "translator", "translate", "started", {})
           });
         }
-      };
+      });
       const bridge = new CapabilityBridge(host, { requestIdFactory: () => "pending-cancel" });
 
       for await (const _event of bridge.invoke("translator", "translate", {})) {
@@ -575,10 +576,10 @@ describe("capability bridge", () => {
 
   it("keeps a valid progressing stream alive beyond the ten second window", async () => {
     vi.useFakeTimers();
-    let listener: ((event: TauriEvent<PluginEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<PluginEventEnvelope>) => void = () => {};
     let unlistenCalls = 0;
     const calls: string[] = [];
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async (_name, handler) => {
         listener = handler as (event: TauriEvent<PluginEventEnvelope>) => void;
         return () => {
@@ -588,7 +589,7 @@ describe("capability bridge", () => {
       invoke: async (command) => {
         calls.push(command);
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "long-progress" });
     const iterator = bridge.invoke("translator", "translate", {});
 
@@ -636,10 +637,10 @@ describe("capability bridge", () => {
 
   it("cancels after one inactivity window following the last valid event", async () => {
     vi.useFakeTimers();
-    let listener: ((event: TauriEvent<PluginEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<PluginEventEnvelope>) => void = () => {};
     let unlistenCalls = 0;
     const calls: string[] = [];
-    const host: TauriHostApi = {
+    const host: TauriHostApi = createTauriHostStub({
       listen: async (_name, handler) => {
         listener = handler as (event: TauriEvent<PluginEventEnvelope>) => void;
         return () => {
@@ -649,7 +650,7 @@ describe("capability bridge", () => {
       invoke: async (command) => {
         calls.push(command);
       }
-    };
+    });
     const bridge = new CapabilityBridge(host, { requestIdFactory: () => "stalled-progress" });
     const iterator = bridge.invoke("translator", "translate", {});
 

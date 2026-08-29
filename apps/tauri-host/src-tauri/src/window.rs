@@ -111,7 +111,7 @@ pub fn show_history_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'stati
     .title(HISTORY_WINDOW_TITLE)
     .inner_size(HISTORY_DEFAULT_SIZE.0, HISTORY_DEFAULT_SIZE.1)
     .min_inner_size(HISTORY_MINIMUM_SIZE.0, HISTORY_MINIMUM_SIZE.1)
-    .on_navigation(|url| is_local_history_url(url))
+    .on_navigation(is_local_history_url)
     .on_new_window(|_, _| NewWindowResponse::Deny)
     .build()
     .map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)?;

@@ -137,7 +137,6 @@
   import {
     normalizeViewScale,
     stepViewScale,
-    viewScaleLabel,
     type WindowSizePreset
   } from "./domain/viewControls";
   import {
@@ -1451,7 +1450,7 @@
     translation = cancelTranslation(translation, request);
   }
 
-  function closeTranslationView(restoreFocus = false) {
+  function closeTranslationView() {
     translationRun?.abort();
     translationRun = null;
     translation = closeTranslation(translation);
@@ -1521,7 +1520,7 @@
     }
   }
 
-  function closeMarkdownPreviewView(restoreFocus = false) {
+  function closeMarkdownPreviewView() {
     markdownPreviewRun?.abort();
     markdownPreviewRun = null;
     markdownPreview = closeMarkdownPreview(markdownPreview);
@@ -1535,7 +1534,7 @@
     batchFileNotice = null;
   }
 
-  function closeBatchView(restoreFocus = false) {
+  function closeBatchView() {
     batchRun?.abort();
     batchRun = null;
     batch = closeBatch(batch);
@@ -1551,7 +1550,7 @@
     state = { ...state, overlay: "template_manager" };
   }
 
-  function closeTemplateManager(restoreFocus = false) {
+  function closeTemplateManager() {
     state = { ...state, overlay: null };
     templateNotice = null;
   }
@@ -2428,13 +2427,6 @@
     if (value === "missing") return tr("未配置");
     if (value === "unavailable") return tr("暂不可用");
     return tr("检查中");
-  }
-
-  function providerStatusAriaLabel(): string {
-    return tr("Provider：{provider}，{status}", {
-      provider: tr(providerName(state.requestDraft.provider, providerOptions)),
-      status: providerStatusText
-    });
   }
 
   function modeLabel(value: OptimizeMode): string {

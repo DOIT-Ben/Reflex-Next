@@ -32,7 +32,9 @@ function New-CleanFixture {
   Write-Utf8Json (Join-Path $Path "python-licenses.json") @(
     @{ Name = "httpx"; Version = "0.28.1"; License = "BSD-3-Clause" },
     @{ Name = "anyio"; Version = "4.14.1"; License = "UNKNOWN" },
-    @{ Name = "certifi"; Version = "2026.6.17"; "License-Metadata" = "MPL-2.0"; "License-Classifier" = "Mozilla Public License 2.0" }
+    @{ Name = "certifi"; Version = "2026.6.17"; License = "UNKNOWN"; "License-Metadata" = "MPL-2.0"; "License-Classifier" = "Mozilla Public License 2.0" },
+    @{ Name = "classifier-license"; Version = "1"; License = "UNKNOWN"; "License-Metadata" = "UNKNOWN"; "License-Classifier" = "MIT License" },
+    @{ Name = "annotated-doc"; Version = "0.0.5"; License = "UNKNOWN"; "License-Metadata" = "GPL-3.0-only" }
   )
   Write-Utf8Json (Join-Path $Path "rust-vulnerabilities.json") @{ vulnerabilities = @{ found = 0; list = @() } }
   Write-Utf8Json (Join-Path $Path "rust-licenses.json") @(@{ name = "serde"; version = "1.0.0"; license = "Apache-2.0 OR MIT" })
@@ -70,20 +72,27 @@ Assert-True (@($registry.projects | Where-Object {
   }).Count -gt 0) "Project registry must contain verifiable Python projects."
 $expectedPythonLicenseOverrides = @{
   "annotated-doc@0.0.4" = "MIT"
+  "annotated-doc@0.0.5" = "MIT"
   "annotated-types@0.7.0" = "MIT"
+  "annotated-types@0.8.0" = "MIT"
   "anyio@4.14.2" = "MIT"
   "click@8.4.2" = "BSD-3-Clause"
   "colorama@0.4.6" = "BSD-3-Clause"
   "fastapi@0.139.0" = "MIT"
+  "fastapi@0.141.1" = "MIT"
   "greenlet@3.5.3" = "MIT AND PSF-2.0"
   "httptools@0.8.0" = "MIT"
   "pydantic@2.13.4" = "MIT"
   "pydantic-settings@2.14.2" = "MIT"
   "pydantic_core@2.46.4" = "MIT"
   "starlette@1.3.1" = "BSD-3-Clause"
+  "starlette@1.6.0" = "BSD-3-Clause"
   "typing-inspection@0.4.2" = "MIT"
+  "typing-inspection@0.4.4" = "MIT"
   "uvicorn@0.51.0" = "BSD-3-Clause"
+  "uvicorn@0.52.3" = "BSD-3-Clause"
   "websockets@16.1" = "BSD-3-Clause"
+  "websockets@17.0.1" = "BSD-3-Clause"
 }
 foreach ($entry in $expectedPythonLicenseOverrides.GetEnumerator()) {
   $override = @($policy.licenses.package_overrides.python.PSObject.Properties | Where-Object { $_.Name -eq $entry.Key }) | Select-Object -First 1
@@ -104,6 +113,22 @@ foreach ($entry in $expectedRustLicenseOverrides.GetEnumerator()) {
   Assert-True ([string]$override.Value -eq $entry.Value) ("Rust license override drifted: " + $entry.Key)
   Assert-True (@($policy.licenses.allowed_expressions.rust) -contains $entry.Value) ("Reviewed Rust license must remain explicitly allowed: " + $entry.Key)
 }
+$expectedNpmLicenseOverrides = @{
+  "@typescript-eslint/typescript-estree/node_modules/minimatch@10.2.6" = "BlueOak-1.0.0"
+  "argparse@2.0.1" = "Python-2.0"
+  "eslint-scope@8.4.0" = "BSD-2-Clause"
+  "espree@10.4.0" = "BSD-2-Clause"
+  "esrecurse@4.3.0" = "BSD-2-Clause"
+  "estraverse@5.3.0" = "BSD-2-Clause"
+  "esutils@2.0.3" = "BSD-2-Clause"
+  "uri-js@4.4.1" = "BSD-2-Clause"
+}
+foreach ($entry in $expectedNpmLicenseOverrides.GetEnumerator()) {
+  $override = @($policy.licenses.package_overrides.npm.PSObject.Properties | Where-Object { $_.Name -eq $entry.Key }) | Select-Object -First 1
+  Assert-True ($null -ne $override) ("Missing reviewed npm license override: " + $entry.Key)
+  Assert-True ([string]$override.Value -eq $entry.Value) ("npm license override drifted: " + $entry.Key)
+  Assert-True (@($policy.licenses.allowed_expressions.npm) -contains $entry.Value) ("Reviewed npm license must remain explicitly allowed: " + $entry.Key)
+}
 foreach ($exception in @($policy.rust_advisory_exceptions)) {
   Assert-True ([string]$exception.scope -eq "non-windows-transitive-only") "Rust advisory exceptions must be limited to non-Windows transitive dependencies."
   Assert-True ([string]$exception.expires_on -match '^[0-9]{4}-[0-9]{2}-[0-9]{2}$') "Rust advisory exceptions require an expiry date."
@@ -117,6 +142,7 @@ Assert-True ($auditSource -notmatch '--omit=dev') "npm auditing must include dev
 Assert-True ($auditSource -match 'npm@.*audit.*--json') "npm auditing must use the pinned npm tool against the full lockfile."
 Assert-True ($auditSource -match 'project_registry\.ps1' -and $auditSource -match 'Get-ReflexProjectRegistry') "Dependency auditing must resolve Python projects from the central project registry loader."
 Assert-True ($auditSource -notmatch '\$policy\.python_projects') "Dependency auditing must not maintain a second Python project list in policy."
+Assert-True ($auditSource -match 'Test-UnknownLicenseValue' -and $auditSource -match 'ConvertTo-PythonLicenseExpression') "Python license auditing must fall back from UNKNOWN metadata and normalize recognized classifiers."
 
 $probeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-dependency-audit-contract-" + [guid]::NewGuid().ToString("N"))
 try {

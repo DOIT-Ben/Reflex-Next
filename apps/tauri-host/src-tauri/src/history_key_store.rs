@@ -461,7 +461,7 @@ fn status_from_state(state: &HistoryKeyState) -> HistoryKeyStatus {
 fn validate_state(state: &HistoryKeyState) -> Result<(), HistoryKeyStoreError> {
     let valid_active = state
         .active_version
-        .is_none_or(|version| (1..=MAX_KEY_VERSION).contains(&version));
+        .map_or(true, |version| (1..=MAX_KEY_VERSION).contains(&version));
     let valid_pending = match (state.active_version, state.pending_version) {
         (_, None) => true,
         (Some(active), Some(pending)) => pending > active && pending <= MAX_KEY_VERSION,

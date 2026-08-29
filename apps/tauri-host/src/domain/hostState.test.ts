@@ -638,7 +638,9 @@ describe("host state", () => {
       history_redaction: "none",
       enabled_plugins: ["translator"],
       language: "zh-CN",
-      theme: "system"
+      theme: "system",
+      provider_endpoints: {},
+      provider_models: {}
     });
 
     expect(saved.overlay).toBeNull();

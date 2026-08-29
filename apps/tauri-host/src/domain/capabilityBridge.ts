@@ -377,9 +377,10 @@ function parseDescriptor(value: unknown): CapabilityDescriptor {
   ) {
     throw createSafeError();
   }
-  if (unavailable ? !isSafeId(value.error_code) : value.error_code !== undefined) {
-    throw createSafeError();
-  }
+  const errorCode = unavailable ? value.error_code : undefined;
+  if (unavailable) {
+    if (!isSafeId(errorCode)) throw createSafeError();
+  } else if (errorCode !== undefined) throw createSafeError();
   const descriptor: CapabilityDescriptor = {
     id: value.id,
     name: value.name,
@@ -390,7 +391,7 @@ function parseDescriptor(value: unknown): CapabilityDescriptor {
     enabled: value.enabled,
     state
   };
-  if (unavailable) descriptor.error_code = value.error_code;
+  if (unavailable) descriptor.error_code = errorCode;
   return descriptor;
 }
 
@@ -430,9 +431,10 @@ function parsePluginEventEnvelope(value: Record<string, unknown>): PluginEventEn
   ) {
     throw createSafeError();
   }
-  if (error ? !isSafeId(value.code) || Object.keys(value.data).length !== 0 : value.code !== undefined) {
-    throw createSafeError();
-  }
+  const errorCode = error ? value.code : undefined;
+  if (error) {
+    if (!isSafeId(errorCode) || Object.keys(value.data).length !== 0) throw createSafeError();
+  } else if (errorCode !== undefined) throw createSafeError();
   const event: PluginEventEnvelope = {
     version: 1,
     request_id: value.request_id,
@@ -442,7 +444,7 @@ function parsePluginEventEnvelope(value: Record<string, unknown>): PluginEventEn
     status,
     data: value.data
   };
-  if (error) event.code = value.code;
+  if (error) event.code = errorCode;
   return event;
 }
 

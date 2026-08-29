@@ -4,7 +4,6 @@ import {
   createDefaultCoreBridge,
   CloudCoreBridge,
   createOptimizeCommand,
-  DemoCoreBridge,
   isSuccessfulCompletionEvent,
   parseNdjsonEnvelopes,
   parseNdjsonEvents,
@@ -16,6 +15,7 @@ import {
   type TauriEvent
 } from "./coreBridge";
 import { createDraftRequest } from "./reflexSession";
+import { createTauriHostStub } from "./testHost";
 
 describe("core bridge", () => {
   it("treats only a result event as successful completion", () => {
@@ -73,13 +73,13 @@ describe("core bridge", () => {
 
   it("never falls back to demo output when a Tauri Runtime probe returns false", async () => {
     const calls: string[] = [];
-    const host = {
+    const host = createTauriHostStub({
       invoke: async (command: string) => {
         calls.push(command);
         return false;
       },
       listen: async () => () => undefined
-    };
+    });
 
     const initialized = await createDefaultCoreBridge(host);
     const events = [];
@@ -104,10 +104,10 @@ describe("core bridge", () => {
   });
 
   it("creates a Tauri runtime bridge only when runtime_available returns true", async () => {
-    const host = {
+    const host = createTauriHostStub({
       invoke: async () => true,
       listen: async () => () => undefined
-    };
+    });
 
     const initialized = await createDefaultCoreBridge(host);
 
@@ -116,12 +116,12 @@ describe("core bridge", () => {
   });
 
   it("never falls back to demo output when a Tauri Runtime probe rejects", async () => {
-    const host = {
+    const host = createTauriHostStub({
       invoke: async () => {
         throw new Error("probe failed");
       },
       listen: async () => () => undefined
-    };
+    });
 
     const initialized = await createDefaultCoreBridge(host);
     const events = [];
@@ -160,11 +160,11 @@ describe("core bridge", () => {
   });
 
   it("sends optimize through Tauri invoke and yields only matching request events", async () => {
-    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<CoreEventEnvelope>) => void = () => {};
     let unlistenCalled = false;
     const invoked: Array<{ command: string; args: unknown }> = [];
     const request = createDraftRequest("写一封邮件");
-    const host = {
+    const host = createTauriHostStub({
       invoke: async (command: string, args: unknown) => {
         invoked.push({ command, args });
         queueMicrotask(() => {
@@ -204,7 +204,7 @@ describe("core bridge", () => {
           unlistenCalled = true;
         };
       }
-    };
+    });
     const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-tauri" });
 
     const events = [];
@@ -227,8 +227,8 @@ describe("core bridge", () => {
   });
 
   it("closes a done-only Runtime stream after a bounded fallback", async () => {
-    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
-    const host = {
+    let listener: (event: TauriEvent<CoreEventEnvelope>) => void = () => {};
+    const host = createTauriHostStub({
       invoke: async () => {
         queueMicrotask(() => {
           listener?.({
@@ -244,11 +244,11 @@ describe("core bridge", () => {
         listener = handler;
         return () => undefined;
       }
-    };
+    });
     const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-done-only" });
 
     vi.useFakeTimers();
-    let events: Array<{ type: string; data: Record<string, unknown> }> = [];
+    const events: Array<{ type: string; data: Record<string, unknown> }> = [];
     try {
       const run = (async () => {
         for await (const event of bridge.optimize(createDraftRequest("只返回结果"))) {
@@ -265,8 +265,8 @@ describe("core bridge", () => {
   });
 
   it("keeps a metric that arrives after the old short completion window", async () => {
-    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
-    const host = {
+    let listener: (event: TauriEvent<CoreEventEnvelope>) => void = () => {};
+    const host = createTauriHostStub({
       invoke: async () => {
         queueMicrotask(() => {
           listener?.({
@@ -291,7 +291,7 @@ describe("core bridge", () => {
         listener = handler;
         return () => undefined;
       }
-    };
+    });
     const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-delayed-metric" });
     const events = [];
     for await (const event of bridge.optimize(createDraftRequest("延迟元数据"))) events.push(event);
@@ -301,13 +301,13 @@ describe("core bridge", () => {
 
   it("fails a Runtime stream that never emits an event instead of waiting forever", async () => {
     const invoked: Array<{ command: string; args?: unknown }> = [];
-    const host = {
+    const host = createTauriHostStub({
       invoke: async (command: string, args?: unknown) => {
         invoked.push({ command, args });
         return undefined;
       },
       listen: async () => () => undefined
-    };
+    });
     const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-no-events" });
 
     vi.useFakeTimers();
@@ -343,14 +343,14 @@ describe("core bridge", () => {
 
   it("unblocks when the Runtime invoke itself never settles", async () => {
     const invoked: string[] = [];
-    const host = {
+    const host = createTauriHostStub({
       invoke: async (command: string) => {
         invoked.push(command);
         if (command === "runtime_optimize") return new Promise<never>(() => undefined);
         return undefined;
       },
       listen: async () => () => undefined
-    };
+    });
     const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-hung-invoke" });
 
     vi.useFakeTimers();
@@ -372,8 +372,8 @@ describe("core bridge", () => {
   });
 
   it("unblocks when a terminal Runtime event arrives before a hanging invoke settles", async () => {
-    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
-    const host = {
+    let listener: (event: TauriEvent<CoreEventEnvelope>) => void = () => {};
+    const host = createTauriHostStub({
       invoke: async (command: string) => {
         if (command === "runtime_optimize") {
           queueMicrotask(() => {
@@ -401,7 +401,7 @@ describe("core bridge", () => {
         listener = handler;
         return () => undefined;
       }
-    };
+    });
     const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-terminal-first" });
     const events = [];
 
@@ -412,8 +412,8 @@ describe("core bridge", () => {
   });
 
   it("rejects a metric that arrives before the result event", async () => {
-    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
-    const host = {
+    let listener: (event: TauriEvent<CoreEventEnvelope>) => void = () => {};
+    const host = createTauriHostStub({
       invoke: async () => {
         queueMicrotask(() => {
           listener?.({
@@ -429,7 +429,7 @@ describe("core bridge", () => {
         listener = handler;
         return () => undefined;
       }
-    };
+    });
     const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-metric-first" });
     const events = [];
     for await (const event of bridge.optimize(createDraftRequest("乱序元数据"))) events.push(event);
@@ -448,9 +448,9 @@ describe("core bridge", () => {
   });
 
   it("routes Reflex Cloud requests through authenticated cloud commands only", async () => {
-    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<CoreEventEnvelope>) => void = () => {};
     const invoked: Array<{ command: string; args: unknown }> = [];
-    const host = {
+    const host = createTauriHostStub({
       invoke: async (command: string, args: unknown) => {
         invoked.push({ command, args });
         if (command !== "cloud_optimize") return;
@@ -469,7 +469,7 @@ describe("core bridge", () => {
         listener = handler;
         return () => undefined;
       }
-    };
+    });
     const bridge = new RoutedCoreBridge(host, { requestIdFactory: () => "req-cloud" });
     const request = { ...createDraftRequest("云端优化"), provider: "reflex-cloud" };
 
@@ -510,12 +510,12 @@ describe("core bridge", () => {
     ] as const;
 
     for (const [message, code, recoverable, action] of cases) {
-      const host = {
+      const host = createTauriHostStub({
         invoke: async (command: string) => {
           if (command === "cloud_optimize") throw message;
         },
         listen: async () => () => undefined
-      };
+      });
       const bridge = new RoutedCoreBridge(host, { requestIdFactory: () => `req-${code}` });
       const events = [];
 
@@ -531,14 +531,14 @@ describe("core bridge", () => {
   });
 
   it("redacts unknown Cloud host failures instead of echoing internal details", async () => {
-    const host = {
+    const host = createTauriHostStub({
       invoke: async (command: string) => {
         if (command === "cloud_optimize") {
           throw new Error("provider failed with api_key=private-value");
         }
       },
       listen: async () => () => undefined
-    };
+    });
     const bridge = new RoutedCoreBridge(host, { requestIdFactory: () => "req-cloud-error" });
     const events = [];
 
@@ -564,8 +564,8 @@ describe("core bridge", () => {
   });
 
   it("normalizes Cloud SSE errors and drops untrusted event fields", async () => {
-    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
-    const host = {
+    let listener: (event: TauriEvent<CoreEventEnvelope>) => void = () => {};
+    const host = createTauriHostStub({
       invoke: async (command: string) => {
         if (command === "cloud_optimize") {
           queueMicrotask(() => {
@@ -592,7 +592,7 @@ describe("core bridge", () => {
         listener = handler;
         return () => undefined;
       }
-    };
+    });
     const bridge = new RoutedCoreBridge(host, { requestIdFactory: () => "req-cloud-sse-error" });
     const events = [];
 
@@ -618,11 +618,11 @@ describe("core bridge", () => {
   });
 
   it("sends cancel through Tauri invoke when an active run is aborted", async () => {
-    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<CoreEventEnvelope>) => void = () => {};
     const invoked: Array<{ command: string; args: unknown }> = [];
     const request = createDraftRequest("写一封邮件");
     const controller = new AbortController();
-    const host = {
+    const host = createTauriHostStub({
       invoke: async (command: string, args: unknown) => {
         invoked.push({ command, args });
       },
@@ -630,7 +630,7 @@ describe("core bridge", () => {
         listener = handler;
         return () => undefined;
       }
-    };
+    });
     const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-cancel" });
     const iterator = bridge.optimize(request, { signal: controller.signal });
 
@@ -654,10 +654,10 @@ describe("core bridge", () => {
   });
 
   it("does not leak cancel rejection or buffered events after Runtime abort", async () => {
-    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
-    let resolveOptimize: (() => void) | null = null;
+    let listener: (event: TauriEvent<CoreEventEnvelope>) => void = () => {};
+    let resolveOptimize: () => void = () => {};
     const controller = new AbortController();
-    const host = {
+    const host = createTauriHostStub({
       invoke: (command: string) => {
         if (command === "runtime_optimize") {
           return new Promise<void>((resolve) => {
@@ -671,7 +671,7 @@ describe("core bridge", () => {
         listener = handler;
         return () => undefined;
       }
-    };
+    });
     const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-abort-buffer" });
     const iterator = bridge.optimize(createDraftRequest("写一封邮件"), { signal: controller.signal });
     const pending = iterator.next();
@@ -692,10 +692,10 @@ describe("core bridge", () => {
   });
 
   it("does not send Cloud cancel after the stream already reached a terminal metric", async () => {
-    let listener: ((event: TauriEvent<CoreEventEnvelope>) => void) | null = null;
+    let listener: (event: TauriEvent<CoreEventEnvelope>) => void = () => {};
     const invoked: string[] = [];
     const controller = new AbortController();
-    const host = {
+    const host = createTauriHostStub({
       invoke: async (command: string) => {
         invoked.push(command);
         if (command === "cloud_optimize") {
@@ -713,7 +713,7 @@ describe("core bridge", () => {
         listener = handler;
         return () => undefined;
       }
-    };
+    });
     const bridge = new CloudCoreBridge(host, { requestIdFactory: () => "req-cloud-terminal" });
     const iterator = bridge.optimize(
       { ...createDraftRequest("云端结果"), provider: "reflex-cloud" },
@@ -732,7 +732,7 @@ describe("core bridge", () => {
 
   it("turns Runtime launch failures into one safe recoverable error event", async () => {
     let unlistenCalled = false;
-    const host = {
+    const host = createTauriHostStub({
       invoke: async (command: string) => {
         if (command === "runtime_optimize") {
           throw new Error("uv failed with api_key=secret-value");
@@ -741,7 +741,7 @@ describe("core bridge", () => {
       listen: async () => () => {
         unlistenCalled = true;
       }
-    };
+    });
     const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-error" });
 
     const events = [];
@@ -765,12 +765,12 @@ describe("core bridge", () => {
   });
 
   it("turns Runtime listener failures into one safe recoverable error event", async () => {
-    const host = {
+    const host = createTauriHostStub({
       invoke: async () => undefined,
       listen: async () => {
         throw new Error("listener failed with token=secret-value");
       }
-    };
+    });
     const bridge = new TauriRuntimeBridge(host, { requestIdFactory: () => "req-listener" });
 
     const events = [];
