@@ -20,6 +20,8 @@ from reflex_runtime.protocol import parse_command
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PACKAGE_ROOT.parents[1]
+RUNTIME_STARTUP_TIMEOUT_SECONDS = 30.0
+RUNTIME_COMMAND_TIMEOUT_SECONDS = 5.0
 
 
 class RuntimeProcess:
@@ -54,6 +56,11 @@ class RuntimeProcess:
         self._stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
         self._stdout_thread.start()
         self._stderr_thread.start()
+        try:
+            self._wait_until_ready()
+        except Exception:
+            self.close()
+            raise
 
     def send(self, message: dict | str) -> None:
         assert self.process.stdin is not None
@@ -61,10 +68,15 @@ class RuntimeProcess:
         self.process.stdin.write(line + "\n")
         self.process.stdin.flush()
 
-    def read_event(self, timeout: float = 5.0) -> dict:
+    def read_event(self, timeout: float = RUNTIME_COMMAND_TIMEOUT_SECONDS) -> dict:
         return self.stdout.get(timeout=timeout)
 
-    def read_until(self, request_id: str, event_type: str, timeout: float = 5.0) -> list[dict]:
+    def read_until(
+        self,
+        request_id: str,
+        event_type: str,
+        timeout: float = RUNTIME_COMMAND_TIMEOUT_SECONDS,
+    ) -> list[dict]:
         deadline = time.monotonic() + timeout
         events: list[dict] = []
         while time.monotonic() < deadline:
@@ -76,6 +88,39 @@ class RuntimeProcess:
             if envelope.get("request_id") == request_id and envelope.get("event", {}).get("type") == event_type:
                 return events
         raise AssertionError(f"did not receive {event_type} for {request_id}: {events}")
+
+    def _wait_until_ready(self) -> None:
+        request_id = "runtime-startup"
+        self.send(
+            {
+                "version": 1,
+                "request_id": request_id,
+                "type": "ping",
+                "payload": {},
+            }
+        )
+        deadline = time.monotonic() + RUNTIME_STARTUP_TIMEOUT_SECONDS
+        while True:
+            if self.process.poll() is not None:
+                raise AssertionError("runtime exited during startup")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError("runtime startup timed out")
+            try:
+                envelope = self.read_event(timeout=min(0.2, remaining))
+            except queue.Empty:
+                continue
+            event = envelope.get("event")
+            data = event.get("data") if isinstance(event, dict) else None
+            if (
+                envelope.get("request_id") == request_id
+                and isinstance(event, dict)
+                and event.get("type") == "status"
+                and isinstance(data, dict)
+                and data.get("phase") == "completed"
+                and data.get("message") == "pong"
+            ):
+                return
 
     def close(self) -> None:
         if self.process.poll() is None:

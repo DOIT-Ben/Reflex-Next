@@ -27,6 +27,7 @@ CORE_SOURCE = REPO_ROOT / "packages" / "reflex-core" / "src"
 DEFAULT_SAMPLES = 10
 MAX_SAMPLES = 100
 DEFAULT_TIMEOUT_SECONDS = 5.0
+DEFAULT_STARTUP_TIMEOUT_SECONDS = 30.0
 MAX_TIMEOUT_SECONDS = 30.0
 MAX_PROTOCOL_EVENTS = 256
 
@@ -106,8 +107,14 @@ def _utc_now() -> str:
 class RuntimeSession:
     """One isolated development Runtime process using only the built-in mock."""
 
-    def __init__(self, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        timeout_seconds: float,
+        *,
+        startup_timeout_seconds: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
+    ) -> None:
         self.timeout_seconds = timeout_seconds
+        self.startup_timeout_seconds = startup_timeout_seconds
         self._sequence = 0
         self._events: queue.Queue[dict[str, Any]] = queue.Queue(
             maxsize=MAX_PROTOCOL_EVENTS
@@ -178,6 +185,7 @@ class RuntimeSession:
         self._wait_for(
             request_id,
             lambda event: event.get("type") == "status",
+            timeout=self.startup_timeout_seconds,
         )
         return self._elapsed_ms(self._started_at)
 
@@ -291,8 +299,12 @@ class RuntimeSession:
         self,
         request_id: str,
         predicate: Callable[[dict[str, Any]], bool],
+        *,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
-        deadline = time.monotonic() + self.timeout_seconds
+        deadline = time.monotonic() + (
+            self.timeout_seconds if timeout is None else timeout
+        )
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:

@@ -37,8 +37,12 @@ foreach ($required in @(
     "legacy_config_triggered_recovery",
     "legacy-config-start",
     'isolated_data_root = $hostProbe.IsolatedDataRoot',
-    "host_graceful_shutdown_timeout",
-    "legacy_config_graceful_shutdown_timeout",
+    "host_close_request_failed",
+    "host_closed_instead_of_tray",
+    "legacy_config_close_request_failed",
+    "legacy_config_closed_instead_of_tray",
+    "closeToTray",
+    "CleanupTermination",
     "process.Kill()",
     "steps.ToArray()"
   )) {

@@ -188,16 +188,16 @@ function Invoke-HostProbe {
       throw "host_exited_before_start_probe"
     }
     $closeRequested = $process.CloseMainWindow()
-    $forcedTermination = $false
-    $process.WaitForExit(5000) | Out-Null
-    if (-not $process.HasExited) {
-      $process.Kill()
-      $process.WaitForExit()
-      $forcedTermination = $true
+    if (-not $closeRequested) {
+      throw "host_close_request_failed"
     }
-    if ($forcedTermination) {
-      throw "host_graceful_shutdown_timeout"
+    Start-Sleep -Seconds 1
+    $closeToTray = -not $process.HasExited
+    if (-not $closeToTray) {
+      throw "host_closed_instead_of_tray"
     }
+    $process.Kill()
+    $process.WaitForExit()
     $diagnostics = Join-Path $data "diagnostics\host-diagnostics.jsonl"
     if (-not (Test-Path -LiteralPath $diagnostics -PathType Leaf)) {
       throw "host_isolation_diagnostics_missing"
@@ -213,7 +213,8 @@ function Invoke-HostProbe {
     }
     return [PSCustomObject]@{
       CloseRequested = [bool]$closeRequested
-      ForcedTermination = $forcedTermination
+      CloseToTray = $closeToTray
+      CleanupTermination = "test_only"
       IsolatedDataRoot = $true
     }
   }
@@ -275,13 +276,16 @@ function Invoke-LegacyConfigProbe {
     if ($process.HasExited) {
       throw "legacy_config_host_exited_before_probe"
     }
-    $process.CloseMainWindow() | Out-Null
-    $process.WaitForExit(5000) | Out-Null
-    if (-not $process.HasExited) {
-      $process.Kill()
-      $process.WaitForExit()
-      throw "legacy_config_graceful_shutdown_timeout"
+    $closeRequested = $process.CloseMainWindow()
+    if (-not $closeRequested) {
+      throw "legacy_config_close_request_failed"
     }
+    Start-Sleep -Seconds 1
+    if ($process.HasExited) {
+      throw "legacy_config_closed_instead_of_tray"
+    }
+    $process.Kill()
+    $process.WaitForExit()
     if (-not (Test-Path -LiteralPath $diagnostics -PathType Leaf)) {
       throw "legacy_config_diagnostics_missing"
     }
@@ -300,6 +304,7 @@ function Invoke-LegacyConfigProbe {
       LegacyVersion = 0
       RecoveryEvents = 0
       HostStarted = $true
+      CloseToTray = $true
     }
   }
   finally {
@@ -374,7 +379,8 @@ try {
     -TemporaryRoot $root
   Add-Pass -Step "host-start" -Details @{
     close_requested = $hostProbe.CloseRequested
-    forced_termination = $hostProbe.ForcedTermination
+    close_to_tray = $hostProbe.CloseToTray
+    cleanup_termination = $hostProbe.CleanupTermination
     isolated_data_root = $hostProbe.IsolatedDataRoot
   }
 

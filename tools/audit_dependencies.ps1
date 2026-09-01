@@ -329,17 +329,26 @@ function Invoke-LiveInputs {
     }
     $sitePaths = @(ConvertFrom-StrictJson -Content $site.Stdout -Label "python-site")
 
-    $auditArguments = @("--from", ("pip-audit==" + [string]$Policy.tools.pip_audit), "pip-audit", "--format", "json", "--progress-spinner", "off", "--desc", "off", "--aliases", "off")
-    foreach ($sitePath in $sitePaths) {
-      $auditArguments += @("--path", [string]$sitePath)
+    $auditOutputPath = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-pip-audit-" + [guid]::NewGuid().ToString("N") + ".json")
+    try {
+      $auditArguments = @("--from", ("pip-audit==" + [string]$Policy.tools.pip_audit), "pip-audit", "--format", "json", "--progress-spinner", "off", "--desc", "off", "--aliases", "off", "--output", $auditOutputPath)
+      foreach ($sitePath in $sitePaths) {
+        $auditArguments += @("--path", [string]$sitePath)
+      }
+      $audit = Invoke-CapturedCommand -Executable "uvx" -Arguments $auditArguments -WorkDir $projectPath
+      if (-not (Test-Path -LiteralPath $auditOutputPath -PathType Leaf)) {
+        throw "tool_failed:pip_audit"
+      }
+      $auditJson = Read-JsonFile -Path $auditOutputPath -Label "python-vulnerabilities"
+      if ($audit.ExitCode -ne 0 -and @($auditJson.dependencies | ForEach-Object { @($_.vulns) }).Count -eq 0) {
+        throw "tool_failed:pip_audit"
+      }
+      foreach ($dependency in @($auditJson.dependencies)) {
+        $pythonVulnerabilities.Add($dependency)
+      }
     }
-    $audit = Invoke-CapturedCommand -Executable "uvx" -Arguments $auditArguments -WorkDir $projectPath
-    $auditJson = ConvertFrom-StrictJson -Content $audit.Stdout -Label "python-vulnerabilities"
-    if ($audit.ExitCode -ne 0 -and @($auditJson.dependencies | ForEach-Object { @($_.vulns) }).Count -eq 0) {
-      throw "tool_failed:pip_audit"
-    }
-    foreach ($dependency in @($auditJson.dependencies)) {
-      $pythonVulnerabilities.Add($dependency)
+    finally {
+      Remove-Item -LiteralPath $auditOutputPath -Force -ErrorAction SilentlyContinue
     }
 
     $licenses = Invoke-CapturedCommand -Executable "uvx" -Arguments @("--from", ("pip-licenses==" + [string]$Policy.tools.pip_licenses), "pip-licenses", "--python", $pythonPath, "--from", "all", "--format", "json") -WorkDir $projectPath

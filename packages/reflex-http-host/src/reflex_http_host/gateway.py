@@ -26,6 +26,7 @@ MAX_BUFFERED_EVENTS = 64
 MAX_QUEUED_EVENTS = 4_096
 MAX_STDERR_BYTES = 8 * 1024 * 1024
 DEFAULT_SESSION_TIMEOUT_SECONDS = 5.0
+DEFAULT_STARTUP_TIMEOUT_SECONDS = 30.0
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
 MAX_REQUEST_ID_TOMBSTONES = 4_096
 
@@ -132,8 +133,14 @@ class _Subscription:
 class RuntimeSession:
     """One bounded ``reflex_runtime.cli`` subprocess with an event queue."""
 
-    def __init__(self, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        timeout_seconds: float,
+        *,
+        startup_timeout_seconds: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
+    ) -> None:
         self.timeout_seconds = timeout_seconds
+        self.startup_timeout_seconds = startup_timeout_seconds
         self._events: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=MAX_QUEUED_EVENTS)
         self._reader_failure = threading.Event()
         self._diagnostic_overflow = threading.Event()
@@ -161,6 +168,11 @@ class RuntimeSession:
         )
         self._stdout_thread.start()
         self._stderr_thread.start()
+        try:
+            self._wait_until_ready()
+        except Exception:
+            self._abort_startup()
+            raise
 
     def events(self) -> queue.Queue[dict[str, Any]]:
         return self._events
@@ -176,6 +188,57 @@ class RuntimeSession:
             self._process.stdin.flush()
         except (BrokenPipeError, OSError, ValueError) as error:
             raise GatewayError("runtime_command_failed", "Could not send command.") from error
+
+    def _wait_until_ready(self) -> None:
+        """Complete a private ping handshake before exposing the session."""
+        request_id = f"startup-{new_request_id()}"
+        self.send(
+            {
+                "version": RUNTIME_PROTOCOL_VERSION,
+                "request_id": request_id,
+                "type": "ping",
+                "payload": {},
+            }
+        )
+        deadline = time.monotonic() + self.startup_timeout_seconds
+        while True:
+            if self._reader_failure.is_set() or self._diagnostic_overflow.is_set():
+                raise GatewayError(
+                    "runtime_start_failed", "Runtime startup response was invalid."
+                )
+            if self.poll() is not None:
+                raise GatewayError(
+                    "runtime_start_failed", "Runtime exited during startup."
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise GatewayError("runtime_startup_timeout", "Runtime startup timed out.")
+            try:
+                envelope = self._events.get(timeout=min(0.2, remaining))
+            except queue.Empty:
+                continue
+            if envelope.get("request_id") != request_id:
+                continue
+            event = envelope.get("event")
+            data = event.get("data") if isinstance(event, dict) else None
+            if not isinstance(event, dict) or not isinstance(data, dict):
+                raise GatewayError(
+                    "runtime_start_failed", "Runtime startup response was invalid."
+                )
+            if event.get("type") != "status":
+                raise GatewayError(
+                    "runtime_start_failed", "Runtime startup response was invalid."
+                )
+            phase = data.get("phase")
+            if phase == "completed" and data.get("message") == "pong":
+                return
+            if phase == "error":
+                raise GatewayError("runtime_start_failed", "Runtime failed during startup.")
+
+    def _abort_startup(self) -> None:
+        if self._process.poll() is None:
+            self._terminate_hard()
+        self._close_streams()
 
     def close(self) -> bool:
         graceful = False
@@ -195,6 +258,15 @@ class RuntimeSession:
                 self._terminate_hard()
         else:
             graceful = self._process.returncode == 0
+        self._close_streams()
+        return (
+            graceful
+            and not self._reader_failure.is_set()
+            and not self._diagnostic_overflow.is_set()
+            and self._process.poll() is not None
+        )
+
+    def _close_streams(self) -> None:
         for stream in (self._process.stdin, self._process.stdout, self._process.stderr):
             if stream is not None:
                 try:
@@ -203,12 +275,6 @@ class RuntimeSession:
                     pass
         self._stdout_thread.join(timeout=1.0)
         self._stderr_thread.join(timeout=1.0)
-        return (
-            graceful
-            and not self._reader_failure.is_set()
-            and not self._diagnostic_overflow.is_set()
-            and self._process.poll() is not None
-        )
 
     def _terminate_hard(self) -> None:
         try:

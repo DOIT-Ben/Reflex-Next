@@ -29,6 +29,7 @@ const MAX_PROVIDER_DISPLAY_NAME_LENGTH: usize = 80;
 const MAX_PROVIDER_MODELS: usize = 256;
 const MAX_PROVIDER_MODEL_ID_LENGTH: usize = 256;
 const PRIVATE_CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(2);
+const RUNTIME_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const PUBLIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const REQUEST_CANCEL_GRACE: Duration = Duration::from_secs(2);
 pub const CORE_EVENT_NAME: &str = "reflex://core-event";
@@ -677,6 +678,7 @@ where
     F: ProcessFactory,
 {
     factory: F,
+    startup_probe: bool,
     emitter: Arc<dyn EventEmitter>,
     request_registry: Arc<HostRequestRegistry>,
     running: Arc<Mutex<Option<RunningProcess>>>,
@@ -692,13 +694,32 @@ where
         Self::new_with_registry(factory, emitter, Arc::new(HostRequestRegistry::default()))
     }
 
+    #[cfg(test)]
     fn new_with_registry(
         factory: F,
         emitter: Arc<dyn EventEmitter>,
         request_registry: Arc<HostRequestRegistry>,
     ) -> Self {
+        Self::new_with_registry_options(factory, emitter, request_registry, false)
+    }
+
+    fn new_with_registry_and_startup_probe(
+        factory: F,
+        emitter: Arc<dyn EventEmitter>,
+        request_registry: Arc<HostRequestRegistry>,
+    ) -> Self {
+        Self::new_with_registry_options(factory, emitter, request_registry, true)
+    }
+
+    fn new_with_registry_options(
+        factory: F,
+        emitter: Arc<dyn EventEmitter>,
+        request_registry: Arc<HostRequestRegistry>,
+        startup_probe: bool,
+    ) -> Self {
         Self {
             factory,
+            startup_probe,
             emitter,
             request_registry,
             running: Arc::new(Mutex::new(None)),
@@ -1178,7 +1199,7 @@ where
         });
         let stderr_reader = process.take_stderr().map(spawn_stderr_drainer);
 
-        Ok(RunningProcess {
+        let mut child = RunningProcess {
             process,
             terminator,
             active_requests,
@@ -1186,7 +1207,87 @@ where
             unhealthy,
             stdout_reader,
             stderr_reader,
-        })
+        };
+        if self.startup_probe {
+            if let Err(error) = self.probe_startup(&mut child) {
+                self.abort_process(&mut child);
+                return Err(error);
+            }
+        }
+        Ok(child)
+    }
+
+    fn probe_startup(&self, child: &mut RunningProcess) -> Result<(), &'static str> {
+        let request_id = self.request_registry.claim_internal("runtime-startup")?;
+        let queued_events = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (sender, receiver) = mpsc::sync_channel(MAX_PRIVATE_BUFFERED_EVENTS + 1);
+        let request = Arc::new(ActiveRequest::new(
+            request_id.clone(),
+            ResponseContract::Core,
+            RequestRoute::Private(PrivateRoute {
+                sender,
+                queued_events,
+            }),
+        ));
+        child
+            .active_requests
+            .lock()
+            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?
+            .insert(request_id.clone(), request);
+
+        let result = (|| {
+            let command = ValidatedCommand {
+                request_id: request_id.clone(),
+                kind: crate::runtime_commands::CommandKind::Ping,
+                payload: serde_json::json!({}),
+            };
+            let bytes = serialize_command(&command)?;
+            child
+                .process
+                .write_stdin(bytes.as_bytes())
+                .and_then(|_| child.process.flush_stdin())
+                .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+
+            let deadline = Instant::now() + RUNTIME_STARTUP_TIMEOUT;
+            loop {
+                if child.unhealthy.load(Ordering::Acquire)
+                    || child.process.has_exited().unwrap_or(true)
+                {
+                    return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+                }
+                let remaining = deadline
+                    .checked_duration_since(Instant::now())
+                    .ok_or(RUNTIME_UNAVAILABLE_MESSAGE)?;
+                match receiver.recv_timeout(remaining.min(Duration::from_millis(200))) {
+                    Ok(PrivateDelivery::Terminal(payload)) => {
+                        if is_expected_private_success(&payload, "pong") {
+                            return Ok(());
+                        }
+                        return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+                    }
+                    Ok(PrivateDelivery::Event(_)) => {
+                        return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err(RUNTIME_UNAVAILABLE_MESSAGE);
+                    }
+                }
+            }
+        })();
+        if let Ok(mut active_requests) = child.active_requests.lock() {
+            active_requests.remove(&request_id);
+        }
+        result
+    }
+
+    fn abort_process(&self, child: &mut RunningProcess) {
+        child.stopping.store(true, Ordering::Release);
+        fail_all_requests(&self.emitter, &child.active_requests);
+        child.process.close_stdin();
+        let _ = child.process.terminate();
+        let _ = child.process.wait_for(Duration::from_millis(300));
+        let _ = child.wait_for_readers(Duration::from_millis(300));
     }
 }
 
@@ -1428,11 +1529,13 @@ impl RuntimeController {
                     build_launch_spec(resolve_python_launcher()?, &paths)?
                 }
             };
-            *sidecar = Some(Arc::new(RuntimeSidecar::new_with_registry(
-                OsProcessFactory::new(launch),
-                self.emitter.clone(),
-                self.request_registry.clone(),
-            )));
+            *sidecar = Some(Arc::new(
+                RuntimeSidecar::new_with_registry_and_startup_probe(
+                    OsProcessFactory::new(launch),
+                    self.emitter.clone(),
+                    self.request_registry.clone(),
+                ),
+            ));
         }
         sidecar.as_ref().cloned().ok_or(RUNTIME_UNAVAILABLE_MESSAGE)
     }
@@ -3788,6 +3891,53 @@ mod tests {
     }
 
     #[test]
+    fn production_sidecar_probes_readiness_before_first_public_command() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
+        let process = FakeProcess::with_stdout_reader(
+            writes.clone(),
+            Box::new(CommandResponseReader::new(writes.clone(), release.clone())),
+        );
+        let sidecar = RuntimeSidecar::new_with_registry_and_startup_probe(
+            FakeProcessFactory::new(vec![process]),
+            Arc::new(FakeEmitter),
+            Arc::new(HostRequestRegistry::default()),
+        );
+
+        sidecar
+            .send(ValidatedCommand {
+                request_id: "public-after-startup".to_string(),
+                kind: CommandKind::ListPlugins,
+                payload: json!({}),
+            })
+            .unwrap();
+
+        assert_eq!(written_command_types(&writes), ["ping", "list_plugins"]);
+        release.store(true, Ordering::Release);
+        sidecar.shutdown();
+    }
+
+    #[test]
+    fn startup_probe_removes_its_internal_route_after_readiness() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(AtomicBool::new(false));
+        let process = FakeProcess::with_stdout_reader(
+            writes.clone(),
+            Box::new(CommandResponseReader::new(writes, release.clone())),
+        );
+        let sidecar = RuntimeSidecar::new_with_registry_and_startup_probe(
+            FakeProcessFactory::new(vec![process]),
+            Arc::new(FakeEmitter),
+            Arc::new(HostRequestRegistry::default()),
+        );
+
+        let mut child = sidecar.start_process().unwrap();
+        assert!(child.active_requests.lock().unwrap().is_empty());
+        release.store(true, Ordering::Release);
+        sidecar.abort_process(&mut child);
+    }
+
+    #[test]
     fn private_admin_sequence_delivers_chunks_only_to_waiter() {
         let writes = Arc::new(Mutex::new(Vec::new()));
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -4812,7 +4962,12 @@ mod tests {
                 if let Some(command) = command {
                     self.processed += 1;
                     let command: Value = serde_json::from_slice(&command).unwrap();
-                    if command["type"] == "configure_provider" {
+                    if command["type"] == "ping" {
+                        self.response = Cursor::new(core_status(
+                            command["request_id"].as_str().unwrap(),
+                            "pong",
+                        ));
+                    } else if command["type"] == "configure_provider" {
                         self.response = Cursor::new(core_status(
                             command["request_id"].as_str().unwrap(),
                             "provider_configured",
