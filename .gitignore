@@ -53,3 +53,4 @@ Thumbs.db
 
 # ZCode local workspace data
 .zcode/
+output/

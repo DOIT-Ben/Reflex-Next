@@ -1,6 +1,7 @@
 <script lang="ts">
   import ThumbsDown from "@lucide/svelte/icons/thumbs-down";
   import ThumbsUp from "@lucide/svelte/icons/thumbs-up";
+  import Spinner from "../ui/Spinner.svelte";
 
   import type {
     ResultMetaItem,
@@ -84,7 +85,7 @@
       </div>
     {:else if phase === "running" && !hasOutput}
       <div class="center-state" role="status" aria-live="polite">
-        <span class="spinner" aria-hidden="true"></span>
+        <Spinner size={25} thickness={3} />
         <div>
           <h3>{statusMessage}</h3>
           <p>{translate("正在与模型服务通信，请稍候。")}</p>
@@ -413,22 +414,6 @@
     border-radius: 3px;
   }
 
-  .spinner {
-    width: 25px;
-    height: 25px;
-    flex: 0 0 25px;
-    border: 3px solid color-mix(in srgb, var(--accent, #5065c7) 18%, transparent);
-    border-top-color: var(--accent, #5065c7);
-    border-radius: 50%;
-    animation: spin 850ms linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
   .state-actions {
     justify-content: center;
     flex-wrap: wrap;
@@ -753,10 +738,6 @@
   @media (prefers-reduced-motion: reduce) {
     button {
       transition: none;
-    }
-
-    .spinner {
-      animation-duration: 1.8s;
     }
 
     .stream-caret {

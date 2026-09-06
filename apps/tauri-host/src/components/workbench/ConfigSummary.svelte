@@ -7,6 +7,7 @@
   } from "./types";
   import type { WorkbenchModelOption } from "../../domain/providerCatalog";
   import SelectField from "../ui/SelectField.svelte";
+  import Spinner from "../ui/Spinner.svelte";
 
   export let items: ReadonlyArray<ConfigSummaryItem> = [];
   export let phase: WorkbenchPhase = "empty";
@@ -99,7 +100,7 @@
         {cancelLabel}
       </button>
       <p class="run-status" role="status" aria-live="polite">
-        <span class="spinner" aria-hidden="true"></span>
+        <Spinner size={13} thickness={2} />
         <span>{statusMessage}</span>
       </p>
     {:else}
@@ -346,22 +347,6 @@
     white-space: nowrap;
   }
 
-  .spinner {
-    width: 13px;
-    height: 13px;
-    flex: 0 0 13px;
-    border: 2px solid color-mix(in srgb, var(--accent, #5065c7) 20%, transparent);
-    border-top-color: var(--accent, #5065c7);
-    border-radius: 50%;
-    animation: spin 850ms linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
   @container (max-width: 420px) {
     .summary-row {
       align-items: stretch;
@@ -409,10 +394,6 @@
   @media (prefers-reduced-motion: reduce) {
     button {
       transition: none;
-    }
-
-    .spinner {
-      animation-duration: 1.8s;
     }
   }
 </style>

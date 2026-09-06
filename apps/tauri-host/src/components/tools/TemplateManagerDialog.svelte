@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import Plus from "@lucide/svelte/icons/plus";
-  import X from "@lucide/svelte/icons/x";
+  import DialogShell from "../ui/DialogShell.svelte";
   import { templateVariables, type PromptTemplate, type TemplateDraft } from "../../domain/templateLibrary";
   import SelectField from "../ui/SelectField.svelte";
 
@@ -55,22 +54,15 @@
     ...categories.map((item) => ({ value: item, label: item }))
   ]);
 
-  let closeButton: HTMLButtonElement;
   let variables = $derived(templateVariables(draft.content));
-  onMount(() => closeButton?.focus());
 
   function patchDraft(patch: Partial<TemplateDraft>) {
     onDraftChange({ ...draft, ...patch });
   }
 </script>
 
-<div class="template-layer" role="presentation">
-  <div class="template-dialog" role="dialog" aria-modal="true" aria-label={translate("模板管理")}>
-    <header class="template-head">
-      <div><h2>{translate("模板管理")}</h2><p>{translate("自定义模板仅保存在本机配置中。")}</p></div>
-      <button class="icon-button" type="button" aria-label={translate("关闭模板管理")} bind:this={closeButton} onclick={onClose}><X size={17} strokeWidth={2} /></button>
-    </header>
-    <div class="template-layout">
+<DialogShell title={translate("模板管理")} description={translate("自定义模板仅保存在本机配置中。")} z={11} closeLabel={translate("关闭模板管理")} onClose={onClose} size="lg" contentClass="template-content">
+  <div class="template-layout">
       <aside class="template-list">
         <input aria-label={translate("搜索模板")} value={query} placeholder={translate("搜索名称、分类或标签")} oninput={(event) => onQueryChange(event.currentTarget.value)} />
         <SelectField ariaLabel={translate("模板分类")} value={category ?? ""} options={categoryOptions} size="compact" onValueChange={(value) => onCategoryChange(value || null)} />
@@ -110,6 +102,5 @@
           <button class="primary small" type="button" onclick={onApply}>{translate("应用到输入区")}</button>
         </footer>
       </section>
-    </div>
   </div>
-</div>
+</DialogShell>

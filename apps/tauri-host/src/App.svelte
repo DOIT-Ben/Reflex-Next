@@ -369,12 +369,49 @@
   } | null = null;
   let activeNavId = "workbench";
   let workbenchPhase: WorkbenchPhase = "empty";
+  let workbenchSurfaceEl: HTMLElement | null = null;
+  let lastScrollPhase = state.phase;
   let workbenchStatusMessage = "准备就绪";
   let statusTone: StatusTone = "idle";
   let navItems: NavRailItem[] = [];
   let configSummaryItems: ConfigSummaryItem[] = [];
   let resultMetaItems: ResultMetaItem[] = [];
   let tr: (source: string, values?: Record<string, string | number>) => string = (source) => source;
+
+  function workbenchScrollSurface(): HTMLElement | null {
+    const surface = workbenchSurfaceEl;
+    if (!surface || surface.scrollHeight <= surface.clientHeight) return null;
+    return surface;
+  }
+
+  function revealResultPane() {
+    const surface = workbenchScrollSurface();
+    const resultPane = workbenchSurfaceEl?.querySelector<HTMLElement>(".result-pane") ?? null;
+    if (!surface || !resultPane) return;
+    const delta = resultPane.getBoundingClientRect().top - surface.getBoundingClientRect().top;
+    if (Math.abs(delta) < 4) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    surface.scrollTo({
+      top: surface.scrollTop + delta,
+      behavior: reduceMotion ? "auto" : "smooth"
+    });
+  }
+
+  function revealRunControls() {
+    const surface = workbenchScrollSurface();
+    if (!surface || surface.scrollTop <= 0) return;
+    surface.scrollTo({ top: 0 });
+  }
+
+  function syncWorkbenchScroll(phase: HostState["phase"]) {
+    if (phase === lastScrollPhase) return;
+    lastScrollPhase = phase;
+    if (phase === "completed" || phase === "error") {
+      void tick().then(revealResultPane);
+    } else if (isGenerating(phase)) {
+      revealRunControls();
+    }
+  }
 
   onMount(() => {
     let disposed = false;
@@ -522,6 +559,7 @@
           : state.output
             ? "completed"
             : "empty";
+  $: syncWorkbenchScroll(state.phase);
   $: workbenchStatusMessage = coreBridgeState === "initializing" && !isGenerating(state.phase)
     ? tr("正在连接运行服务")
     : bridgeUnavailable && !isGenerating(state.phase)
@@ -2485,7 +2523,7 @@
 
     <div class="shell-main">
       <NavRail items={navItems} {activeNavId} onSelect={handleNavigation} />
-      <section class="workbench-surface" aria-label={tr("工作台")}>
+      <section class="workbench-surface" aria-label={tr("工作台")} bind:this={workbenchSurfaceEl}>
         <div class="workbench-grid">
           <div class="input-column">
             <InputPane

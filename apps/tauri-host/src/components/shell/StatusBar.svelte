@@ -52,7 +52,8 @@
     gap: 12px;
     width: 100%;
     min-width: 0;
-    height: 24px;
+    height: 100%;
+    min-height: 24px;
     padding: 0 10px;
     color: var(--muted, #697386);
     background: var(--surface, #fff);

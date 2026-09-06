@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import Download from "@lucide/svelte/icons/download";
   import Upload from "@lucide/svelte/icons/upload";
-  import X from "@lucide/svelte/icons/x";
+  import DialogShell from "../ui/DialogShell.svelte";
   import {
     batchCanExport,
     batchCompletedCount,
@@ -50,7 +49,6 @@
     onClose
   }: Props = $props();
 
-  let closeButton: HTMLButtonElement;
   let fileInput: HTMLInputElement;
   let locked = $derived(state.phase === "parsing" || state.phase === "running");
   let styleOptions = $derived(styles.map((item) => ({ value: item.id, label: translate(item.label) })));
@@ -59,7 +57,6 @@
     ...scenes.map((scene) => ({ value: scene.id, label: translate(scene.label) }))
   ]);
   const concurrencyOptions = [1, 2, 3, 4].map((value) => ({ value: String(value), label: String(value) }));
-  onMount(() => closeButton?.focus());
 
   function chooseFile() {
     if (!locked) fileInput?.click();
@@ -77,14 +74,8 @@
   }
 </script>
 
-<div class="batch-layer" role="presentation">
-  <div class="batch-dialog" role="dialog" aria-modal="true" aria-label={translate("批量处理")}>
-    <header class="batch-head">
-      <div><h2>{translate("批量处理")}</h2><p>{translate("最多导入 200 条提示词，结果在本机导出。")}</p></div>
-      <button class="icon-button" type="button" aria-label={translate("关闭批量处理")} bind:this={closeButton} onclick={onClose}><X size={17} strokeWidth={2} /></button>
-    </header>
-
-    <div class="batch-controls">
+<DialogShell title={translate("批量处理")} description={translate("最多导入 200 条提示词，结果在本机导出。")} z={10} closeLabel={translate("关闭批量处理")} onClose={onClose} size="lg">
+  <div class="batch-controls">
       <div class="batch-format" role="group" aria-label={translate("导入格式")}>
         {#each ([{ id: "txt", label: "TXT 每行一条" }, { id: "csv", label: "CSV prompt 列" }] satisfies Array<{ id: BatchFormat; label: string }>) as item}
           <button type="button" class:active={state.format === item.id} aria-pressed={state.format === item.id} disabled={locked} onclick={() => onStateChange(setBatchFormat(state, item.id))}>{translate(item.label)}</button>
@@ -138,9 +129,8 @@
       {/if}
     </div>
 
-    <footer class="batch-footer">
+    <footer slot="footer">
       {#if state.phase === "running"}<button class="outline" type="button" onclick={onCancel}>{translate("停止")}</button>
       {:else}<button class="outline" type="button" disabled={!batchCanExport(state)} onclick={onExport}>{translate("导出结果")}</button><button class="primary small" type="button" disabled={!state.items.length} onclick={onRun}>{translate("开始处理")}</button>{/if}
     </footer>
-  </div>
-</div>
+</DialogShell>

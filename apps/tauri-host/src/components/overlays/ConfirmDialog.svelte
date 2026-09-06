@@ -29,12 +29,10 @@
   });
 </script>
 
-<div class="modal-layer confirm-layer" role="presentation">
-  <DialogShell title={title} description={description}>
+<DialogShell title={title} description={description} z={80} size="sm">
     <span class="confirm-icon warning" aria-hidden="true"><TriangleAlert size={19} strokeWidth={2} /></span>
     <div class="confirm-actions">
       <BaseButton variant="secondary" bind:this={cancelButton} onclick={onCancel}>{cancelLabel}</BaseButton>
       <BaseButton variant={danger ? "danger" : "primary"} onclick={onConfirm}>{confirmLabel}</BaseButton>
     </div>
   </DialogShell>
-</div>
