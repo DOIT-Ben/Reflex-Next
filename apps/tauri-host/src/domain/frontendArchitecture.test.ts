@@ -149,12 +149,17 @@ describe("production frontend architecture", () => {
     expect(appSource).toContain("createDefaultCoreBridge(");
     expect(appSource).toContain("createTauriHostApi(");
     expect(appSource).not.toContain("new DemoCoreBridge()");
-    expect(appSource).toContain(
-      "const promptPersisted = await persistFeedbackPrompt(decision.state);"
+    const feedbackFlowSource = readFileSync(
+      join(sourceRoot, "domain", "feedbackFlow.ts"),
+      "utf8"
     );
-    expect(appSource).toMatch(/decision\.shouldPrompt\s*&&\s*promptPersisted/);
+    expect(feedbackFlowSource).toContain(
+      "const promptPersisted = await persistPrompt(decision.state);"
+    );
+    expect(feedbackFlowSource).toMatch(/decision\.shouldPrompt\s*&&\s*promptPersisted/);
+    expect(feedbackFlowSource).toContain("createPromptFeedbackPayload({");
     expect(appSource).toContain("const promptAvailable =");
-    expect(appSource).toContain("createPromptFeedbackPayload({");
+    expect(appSource).toContain("await feedbackFlow.recordCompletion(promptAvailable);");
     expect(appSource).not.toContain('openFeedback(sentiment, "prompt", false)');
     const mainStart = appSource.indexOf("<main");
     const windowStart = /<section\s+class="window"/.exec(appSource)?.index ?? -1;

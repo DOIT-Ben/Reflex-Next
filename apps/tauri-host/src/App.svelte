@@ -46,23 +46,14 @@
   import { createDiagnosticFlow } from "./domain/diagnosticFlow";
   import { createSettingsFlow } from "./domain/settingsFlow";
   import {
-    createPromptFeedbackPayload,
     createFeedbackBridge,
-    feedbackSubmitErrorMessage,
     type FeedbackBridge,
     type FeedbackContext,
     type FeedbackFormValue,
-    type FeedbackScreenshot,
     type FeedbackSentiment
   } from "./domain/feedbackBridge";
-  import {
-    createFeedbackPromptState,
-    disableFeedbackPrompt,
-    normalizeFeedbackPromptState,
-    recordSuccessfulGeneration,
-    snoozeFeedbackPrompt,
-    type FeedbackPromptState
-  } from "./domain/feedbackPrompt";
+  import { normalizeFeedbackPromptState } from "./domain/feedbackPrompt";
+  import { createFeedbackFlow } from "./domain/feedbackFlow";
   import {
     createDefaultCoreBridge,
     createDemoCoreBridge,
@@ -209,18 +200,6 @@
   const toast = createToastController({ translate: (message) => tr(message) });
   const showToast = toast.show;
   let resultRatingBusy = false;
-  let feedbackOpen = false;
-  let feedbackPromptOpen = false;
-  let feedbackPromptBusy = false;
-  let feedbackPromptNotice: string | null = null;
-  let feedbackPromptState: FeedbackPromptState = createFeedbackPromptState();
-  let feedbackPromptEnabledDraft = feedbackPromptState.enabled;
-  let feedbackSource: "manual" | "prompt" = "manual";
-  let feedbackSentiment: FeedbackSentiment = "negative";
-  let feedbackScreenshot: FeedbackScreenshot | null = null;
-  let feedbackCaptureNotice: string | null = null;
-  let feedbackSubmitBusy = false;
-  let feedbackSubmitNotice: string | null = null;
   let appVersion = __REFLEX_APP_VERSION__;
   let windowSizePreset: WindowSizePreset = "default";
   let commandPaletteOpen = false;
@@ -373,6 +352,30 @@
     showToast
   });
   const clipboardNotice = clipboardFlow.notice;
+
+  const feedbackFlow = createFeedbackFlow({
+    feedbackBridge: () => feedbackBridge,
+    persistConfigPatch: (build) => settingsFlow.persistConfigPatch(build),
+    hasPersistedConfig: () => Boolean(settingsApi && $persistedConfig),
+    settle: () => tick(),
+    appVersion: () => appVersion,
+    buildContext: () => feedbackContextFor(state),
+    promptText: () => state.currentResult?.sourceText ?? state.inputText,
+    resultText: () => state.currentResult?.output ?? null,
+    updateConsent: (latest) => cloudConsent.set(latest),
+    showToast
+  });
+  const feedbackOpen = feedbackFlow.open;
+  const feedbackPromptOpen = feedbackFlow.promptOpen;
+  const feedbackPromptBusy = feedbackFlow.promptBusy;
+  const feedbackPromptNotice = feedbackFlow.promptNotice;
+  const feedbackPromptState = feedbackFlow.promptState;
+  const feedbackPromptEnabledDraft = feedbackFlow.promptEnabledDraft;
+  const feedbackSentiment = feedbackFlow.sentiment;
+  const feedbackScreenshot = feedbackFlow.screenshot;
+  const feedbackCaptureNotice = feedbackFlow.captureNotice;
+  const feedbackSubmitBusy = feedbackFlow.submitBusy;
+  const feedbackSubmitNotice = feedbackFlow.submitNotice;
 
   function workbenchScrollSurface(): HTMLElement | null {
     const surface = workbenchSurfaceEl;
@@ -730,7 +733,7 @@
     if ($translation.phase !== "closed") closeTranslationView();
     state = openSettings(state);
     settingsDraft = { ...(state.settingsDraft ?? settingsDraft) };
-    feedbackPromptEnabledDraft = feedbackPromptState.enabled;
+    feedbackPromptEnabledDraft.set($feedbackPromptState.enabled);
     settingsSection = "provider";
     secretInput = "";
     settingsNotice.set(null);
@@ -776,8 +779,7 @@
         ...configFromSettingsDraft(latest, draftToSave),
         feedback_prompt: nextFeedbackPromptState
       }));
-      feedbackPromptState = normalizeFeedbackPromptState(saved.feedback_prompt);
-      feedbackPromptEnabledDraft = feedbackPromptState.enabled;
+      feedbackFlow.hydratePromptState(normalizeFeedbackPromptState(saved.feedback_prompt));
       settingsDraft = settingsDraftFromConfig(saved);
       state = applySettingsDraft(applyPersistedConfig(state, saved), settingsDraft);
       draft = { ...state.requestDraft };
@@ -816,7 +818,7 @@
     secretInput = "";
     settingsNotice.set(null);
     secretNotice.set(null);
-    feedbackPromptEnabledDraft = feedbackPromptState.enabled;
+    feedbackPromptEnabledDraft.set($feedbackPromptState.enabled);
     void settingsFlow.refreshSecretStatus(state.requestDraft.provider ?? "minimax");
   }
 
@@ -825,8 +827,7 @@
     if (!config) return;
     activationState = normalizeActivationState(config.first_run_activation);
     activationOpen = !activationState.completed;
-    feedbackPromptState = normalizeFeedbackPromptState(config.feedback_prompt);
-    feedbackPromptEnabledDraft = feedbackPromptState.enabled;
+    feedbackFlow.hydratePromptState(normalizeFeedbackPromptState(config.feedback_prompt));
     templateFlow.hydrate(readCustomTemplates(config.custom_templates));
     state = applyPersistedConfig(state, config);
     settingsDraft = settingsDraftFromConfig(config);
@@ -948,30 +949,12 @@
     );
   }
 
-  async function persistFeedbackPrompt(next: FeedbackPromptState): Promise<boolean> {
-    feedbackPromptState = next;
-    feedbackPromptEnabledDraft = next.enabled;
-    if (!settingsApi || !$persistedConfig) return false;
-    try {
-      const saved = await settingsFlow.persistConfigPatch((latest) => ({
-        ...latest,
-        feedback_prompt: next
-      }));
-      feedbackPromptState = normalizeFeedbackPromptState(saved.feedback_prompt);
-      feedbackPromptEnabledDraft = feedbackPromptState.enabled;
-      return true;
-    } catch {
-      // Keep the in-memory schedule for this session; a later settings save retries persistence.
-      return false;
-    }
-  }
-
   async function recordFeedbackPromptCompletion() {
-    if (!cloudFeedbackAvailable || !state.currentResult?.output.trim()) return;
+    if (!$cloudFeedbackAvailable || !state.currentResult?.output.trim()) return;
     const promptAvailable =
-      !feedbackOpen &&
-      !feedbackPromptOpen &&
-      !feedbackPromptBusy &&
+      !$feedbackOpen &&
+      !$feedbackPromptOpen &&
+      !$feedbackPromptBusy &&
       !confirmation &&
       !commandPaletteOpen &&
       !scenePromptOpen &&
@@ -980,17 +963,7 @@
       $translation.phase === "closed" &&
       $markdownPreview.phase === "closed" &&
       state.phase === "completed";
-    const decision = recordSuccessfulGeneration(
-      feedbackPromptState,
-      Date.now(),
-      Math.random,
-      promptAvailable
-    );
-    const promptPersisted = await persistFeedbackPrompt(decision.state);
-    if (decision.shouldPrompt && promptPersisted) {
-      feedbackPromptNotice = null;
-      feedbackPromptOpen = true;
-    }
+    await feedbackFlow.recordCompletion(promptAvailable);
   }
 
   async function runOptimization() {
@@ -1275,7 +1248,7 @@
 
   function beginFeedback(sentiment: FeedbackSentiment) {
     if (!state.currentResult?.output) return;
-    feedbackPromptOpen = false;
+    feedbackPromptOpen.set(false);
     confirmation = {
       title: sentiment === "negative" ? "反馈这次不满意的结果？" : "反馈这次满意的结果？",
       description: "继续后只截取 Reflex 当前窗口，并在发送前显示预览。输入、结果和截图都可以单独移除。",
@@ -1285,70 +1258,24 @@
     };
   }
 
-  async function openFeedback(
+  function openFeedback(
     sentiment: FeedbackSentiment,
     source: "manual" | "prompt",
     captureScreenshot: boolean
   ) {
-    feedbackSentiment = sentiment;
-    feedbackSource = source;
-    feedbackScreenshot = null;
-    feedbackCaptureNotice = null;
-    feedbackSubmitNotice = null;
-    await tick();
-    if (captureScreenshot && feedbackBridge) {
-      try {
-        feedbackScreenshot = await feedbackBridge.captureWindow();
-      } catch {
-        feedbackCaptureNotice = "窗口截图失败，可以不附加截图继续反馈。";
-      }
-    } else if (captureScreenshot) {
-      feedbackCaptureNotice = "当前环境无法截取应用窗口。";
-    }
-    feedbackOpen = true;
+    return feedbackFlow.startDialog(sentiment, source, captureScreenshot);
   }
 
-  async function answerFeedbackPrompt(sentiment: FeedbackSentiment) {
-    const result = state.currentResult;
-    const bridge = feedbackBridge;
-    if (feedbackPromptBusy) return;
-    if (!result || !bridge) {
-      feedbackPromptNotice = "反馈服务暂不可用，请稍后重试。";
-      return;
-    }
-
-    feedbackPromptBusy = true;
-    feedbackPromptNotice = null;
-    try {
-      const latestConsent = await bridge.getConsent();
-      cloudConsent.set(latestConsent);
-      await bridge.submit(createPromptFeedbackPayload({
-        sentiment,
-        context: feedbackContextFor(result),
-        consentVersion: latestConsent.policy_version
-      }));
-      feedbackPromptOpen = false;
-      showToast("反馈已记录，谢谢。", "success");
-    } catch (error) {
-      feedbackPromptNotice = feedbackSubmitErrorMessage(error);
-    } finally {
-      feedbackPromptBusy = false;
-    }
+  function answerFeedbackPrompt(sentiment: FeedbackSentiment) {
+    return feedbackFlow.answerPrompt(sentiment);
   }
 
   function postponeFeedbackPrompt() {
-    if (feedbackPromptBusy) return;
-    feedbackPromptOpen = false;
-    feedbackPromptNotice = null;
-    void persistFeedbackPrompt(snoozeFeedbackPrompt(feedbackPromptState));
+    feedbackFlow.postponePrompt();
   }
 
   function turnOffFeedbackPrompt() {
-    if (feedbackPromptBusy) return;
-    feedbackPromptOpen = false;
-    feedbackPromptNotice = null;
-    void persistFeedbackPrompt(disableFeedbackPrompt(feedbackPromptState));
-    showToast("已关闭主动反馈询问");
+    feedbackFlow.disablePrompt();
   }
 
   function feedbackContextFor(result: CurrentResult): FeedbackContext {
@@ -1368,55 +1295,15 @@
   }
 
   function closeFeedback() {
-    if (feedbackSubmitBusy) return;
-    feedbackOpen = false;
-    feedbackScreenshot = null;
-    feedbackCaptureNotice = null;
-    feedbackSubmitNotice = null;
-    feedbackSource = "manual";
+    feedbackFlow.closeDialog();
   }
 
   function removeFeedbackScreenshot() {
-    feedbackScreenshot = null;
+    feedbackFlow.removeScreenshot();
   }
 
-  async function submitFeedback(form: FeedbackFormValue) {
-    const result = state.currentResult;
-    if (!result || !feedbackBridge || feedbackSubmitBusy) {
-      feedbackSubmitNotice = "反馈服务暂不可用，请稍后重试。";
-      return;
-    }
-    feedbackSubmitBusy = true;
-    feedbackSubmitNotice = null;
-    const sourceText = result.sourceText ?? state.inputText;
-    try {
-      const latestConsent = await feedbackBridge.getConsent();
-      cloudConsent.set(latestConsent);
-      await feedbackBridge.submit({
-        source: feedbackSource,
-        sentiment: feedbackSentiment,
-        category: form.category,
-        message: form.message,
-        expected_output: form.expectedOutput,
-        contact: form.contact,
-        context: feedbackContextFor(result),
-        include_prompt: form.includePrompt,
-        include_result: form.includeResult,
-        include_screenshot: form.includeScreenshot && feedbackScreenshot !== null,
-        prompt_text: form.includePrompt ? sourceText : null,
-        result_text: form.includeResult ? result.output : null,
-        screenshot: form.includeScreenshot ? feedbackScreenshot : null,
-        consent_version: latestConsent.policy_version
-      });
-      feedbackOpen = false;
-      feedbackScreenshot = null;
-      feedbackSource = "manual";
-      showToast("反馈已发送，谢谢。", "success");
-    } catch (error) {
-      feedbackSubmitNotice = feedbackSubmitErrorMessage(error);
-    } finally {
-      feedbackSubmitBusy = false;
-    }
+  function submitFeedback(form: FeedbackFormValue) {
+    return feedbackFlow.submit(form);
   }
 
   async function handleCompletionClipboard() {
@@ -2094,7 +1981,7 @@
         onDiagnosticCancel={cancelDiagnosticBundleExport}
         onCloudUsageMetricsChange={(enabled) => cloudUsageMetricsDraft.set(enabled)}
         onCloudImprovementChange={(enabled) => cloudImprovementDraft.set(enabled)}
-        onFeedbackPromptEnabledChange={(enabled) => (feedbackPromptEnabledDraft = enabled)}
+        onFeedbackPromptEnabledChange={(enabled) => feedbackPromptEnabledDraft.set(enabled)}
         onCloudRefresh={hydrateCloudPrivacy}
         onCloudDeleteData={confirmDeleteCloudData}
       />
