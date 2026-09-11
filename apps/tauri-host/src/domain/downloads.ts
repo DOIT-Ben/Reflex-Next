@@ -16,18 +16,19 @@ export type DownloadScheduler = {
 };
 
 export function triggerDownload(
-  document: DownloadDocument,
+  document: Document | DownloadDocument,
   content: string,
   filename: string,
   mime: string,
   scheduler: DownloadScheduler
 ): void {
+  const doc = document as DownloadDocument;
   const url = URL.createObjectURL(new Blob([content], { type: mime }));
-  const anchor = document.createElement("a");
+  const anchor = doc.createElement("a");
   anchor.href = url;
   anchor.download = filename;
   anchor.style.display = "none";
-  document.body.append(anchor);
+  doc.body.append(anchor);
   anchor.click();
   anchor.remove();
   scheduler.setTimeout(() => URL.revokeObjectURL(url), 0);

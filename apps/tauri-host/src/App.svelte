@@ -127,6 +127,7 @@
   import { createTauriHostApi } from "./domain/tauriHostApi";
   import { createTranslationFlow } from "./domain/translationFlow";
   import { createMarkdownPreviewFlow } from "./domain/markdownPreviewFlow";
+  import { createBatchFlow } from "./domain/batchFlow";
   import type { TranslationLanguage, TranslationTarget } from "./domain/translationState";
   import {
     createProviderCatalogBridge,
@@ -147,30 +148,6 @@
     type SettingsApi
   } from "./domain/settingsApi";
   import type { CoreBridge, TauriHostApi } from "./domain/coreBridge";
-  import {
-    batchCanExport,
-    beginBatchParse,
-    beginBatchRun,
-    cancelBatch,
-    closeBatch,
-    completeBatchItem,
-    completeBatchParse,
-    createBatchState,
-    failBatchItem,
-    failBatchParse,
-    finalizeBatchRun,
-    openBatch,
-    runBatchWorkerPool,
-    setBatchFormat,
-    setBatchSourceText,
-    startBatchItem,
-    type BatchFormat
-  } from "./domain/batchState";
-  import {
-    batchTemplateContent,
-    readBatchImportFile,
-    type BatchImportFailure
-  } from "./domain/batchFileImport";
   import {
     createTemplateDraft,
     filterTemplates,
@@ -209,7 +186,7 @@
   } from "./domain/semanticModelState";
   import { t, translate } from "./domain/i18n";
   import { resultMarkdownContent, resultMarkdownFilename } from "./domain/resultExport";
-  import { triggerDownload, plainTextMime, TEXT_MARKDOWN_MIME } from "./domain/downloads";
+  import { triggerDownload, TEXT_MARKDOWN_MIME } from "./domain/downloads";
   import { createToastController } from "./domain/toastState";
   import { createViewScaleStore, type ViewScaleStorage } from "./domain/viewScaleStore";
   import {
@@ -248,11 +225,8 @@
   let draft: RequestSettings = { ...state.requestDraft };
   let settingsDraft: HostSettingsDraft = createDefaultSettingsDraft(state.requestDraft);
   let activeRun: AbortController | null = null;
-  let batch = createBatchState();
-  let batchRun: AbortController | null = null;
   let semanticModel = createSemanticModelState();
   let semanticModelRun: AbortController | null = null;
-  let batchFileNotice: string | null = null;
   let customTemplates: PromptTemplate[] = [];
   let templateDraft: TemplateDraft = createTemplateDraft();
   let selectedTemplateId: string | null = null;
@@ -378,6 +352,21 @@
   });
   const markdownPreview = markdownPreviewFlow.state;
 
+  const batchFlow = createBatchFlow({
+    coreBridge: () => coreBridge,
+    capabilityBridge: () => capabilityBridge,
+    requestContext: () => ({
+      mode: state.requestDraft.mode,
+      provider: state.requestDraft.provider,
+      model: state.requestDraft.model
+    }),
+    language: () => (persistedConfig?.language === "en-US" ? "en-US" : "zh-CN"),
+    translate: (source, values) => tr(source, values),
+    showToast
+  });
+  const batch = batchFlow.state;
+  const batchFileNotice = batchFlow.fileNotice;
+
   function workbenchScrollSurface(): HTMLElement | null {
     const surface = workbenchSurfaceEl;
     if (!surface || surface.scrollHeight <= surface.clientHeight) return null;
@@ -497,7 +486,7 @@
       activeRun?.abort();
       translationFlow.close();
       markdownPreviewFlow.close();
-      batchRun?.abort();
+      batchFlow.close();
       semanticModelRun?.abort();
     };
   });
@@ -593,7 +582,7 @@
       ? "plugins"
       : state.overlay === "settings"
         ? "settings"
-        : batch.phase !== "closed"
+        : $batch.phase !== "closed"
           ? "batch"
           : $translation.phase !== "closed"
             ? "translation"
@@ -658,7 +647,7 @@
     if (state.phase === "adjusting") cancelAdjustView();
     if (state.overlay === "template_manager") closeTemplateManager();
     else if (state.overlay !== null) closeOverlay();
-    if (batch.phase !== "closed") closeBatchView();
+    if ($batch.phase !== "closed") closeBatchView();
     if ($translation.phase !== "closed") closeTranslationView();
     if ($markdownPreview.phase !== "closed") closeMarkdownPreviewView();
   }
@@ -1216,7 +1205,7 @@
       !commandPaletteOpen &&
       !scenePromptOpen &&
       state.overlay === null &&
-      batch.phase === "closed" &&
+      $batch.phase === "closed" &&
       $translation.phase === "closed" &&
       $markdownPreview.phase === "closed" &&
       state.phase === "completed";
@@ -1402,19 +1391,15 @@
     if (!batchRunnerEnabled) return;
     if ($markdownPreview.phase !== "closed") closeMarkdownPreviewView();
     if ($translation.phase !== "closed") closeTranslationView();
-    batch = openBatch(batch);
-    batchFileNotice = null;
+    batchFlow.open();
   }
 
   function closeBatchView() {
-    batchRun?.abort();
-    batchRun = null;
-    batch = closeBatch(batch);
-    batchFileNotice = null;
+    batchFlow.close();
   }
 
   function openTemplateManager() {
-    if (batch.phase !== "closed") closeBatchView();
+    if ($batch.phase !== "closed") closeBatchView();
     selectedTemplateId = null;
     templateDraft = createTemplateDraft();
     templateValues = {};
@@ -1505,177 +1490,28 @@
     showToast("模板已应用到输入区");
   }
 
-  async function parseBatchSource() {
-    const started = beginBatchParse(batch);
-    if (!started) return;
-    const bridge = capabilityBridge;
-    batch = started.state;
-    if (!bridge) {
-      batch = failBatchParse(batch, started.request, "批处理暂时不可用，请重试。");
-      return;
-    }
-    try {
-      for await (const event of bridge.invoke(
-        "batch-runner",
-        "parse",
-        { format: batch.format, content: batch.sourceText },
-        { timeoutMs: 20_000 }
-      )) {
-        if (batch.request !== started.request) return;
-        if (event.status === "result") {
-          batch = completeBatchParse(batch, started.request, event.data);
-        } else if (event.status === "error" || event.status === "cancelled") {
-          batch = failBatchParse(batch, started.request, "导入内容格式不正确，请检查后重试。");
-        }
-      }
-    } catch {
-      batch = failBatchParse(batch, started.request, "批处理暂时不可用，请重试。");
-    }
+  function parseBatchSource() {
+    return batchFlow.parse();
   }
 
-  async function importBatchFile(file: File) {
-    if (!file || batch.phase === "parsing" || batch.phase === "running") return;
-
-    const imported = await readBatchImportFile(file);
-    if (!imported.ok) {
-      batchFileNotice = batchImportFailureMessage(imported.reason);
-      return;
-    }
-
-    batch = setBatchFormat(batch, imported.format);
-    batch = setBatchSourceText(batch, imported.content);
-    batchFileNotice = null;
-    await parseBatchSource();
-    if (batch.phase === "ready") {
-      showToast(tr("已从 {name} 导入 {count} 条提示词", { name: file.name, count: batch.items.length }));
-    }
+  function importBatchFile(file: File) {
+    return batchFlow.importFile(file);
   }
 
   function downloadBatchTemplate() {
-    triggerDownload(
-      document,
-      batchTemplateContent(batch.format),
-      `reflex-batch-template.${batch.format}`,
-      plainTextMime(batch.format),
-      window
-    );
+    batchFlow.downloadTemplate();
   }
 
-  function batchImportFailureMessage(reason: BatchImportFailure): string {
-    const messages: Record<BatchImportFailure, string> = {
-      unsupported_file: "请选择 CSV 或 TXT 文件。",
-      file_too_large: "文件超过 200 万字符限制。",
-      empty_file: "文件中没有可导入的内容。",
-      read_failed: "无法读取该文件，请重试。"
-    };
-    return messages[reason];
-  }
-
-  async function runBatch() {
-    const started = beginBatchRun(batch);
-    if (!started) return;
-    const controller = new AbortController();
-    batchRun = controller;
-    batch = started.state;
-    const run = started.request;
-    const items = batch.items;
-    const language = persistedConfig?.language === "en-US" ? "en-US" : "zh-CN";
-
-    await runBatchWorkerPool(items, batch.concurrency, controller.signal, async (item) => {
-      if (controller.signal.aborted || batch.request !== run) return;
-      batch = startBatchItem(batch, run, item.id);
-      let output = "";
-      try {
-        const request = {
-          text: item.prompt,
-          mode: state.requestDraft.mode,
-          style: batch.style,
-          scene: batch.scene,
-          scene_policy: batch.scene ? "manual" as const : "auto" as const,
-          provider: state.requestDraft.provider,
-          model: state.requestDraft.model,
-          stream: true,
-          metadata: { host: "tauri" as const, surface: "quick-panel" as const, language }
-        };
-        for await (const event of coreBridge.optimize(request, { signal: controller.signal })) {
-          if (controller.signal.aborted || batch.request !== run) return;
-          if (event.type === "chunk") output += batchEventText(event.data);
-          if (event.type === "done") {
-            const completed = batchEventText(event.data);
-            if (completed) output = completed;
-          }
-          if (event.type === "error") {
-            batch = failBatchItem(batch, run, item.id, "此条处理失败，请稍后重试。");
-            return;
-          }
-        }
-        if (!controller.signal.aborted && batch.request === run) {
-          batch = completeBatchItem(batch, run, item.id, output);
-        }
-      } catch {
-        if (!controller.signal.aborted && batch.request === run) {
-          batch = failBatchItem(batch, run, item.id, "此条处理失败，请稍后重试。");
-        }
-      }
-    });
-
-    if (batchRun === controller) batchRun = null;
-    if (!controller.signal.aborted) batch = finalizeBatchRun(batch, run);
+  function runBatch() {
+    return batchFlow.run();
   }
 
   function cancelBatchRun() {
-    batchRun?.abort();
-    batchRun = null;
-    batch = cancelBatch(batch);
+    batchFlow.cancel();
   }
 
-  async function exportBatch() {
-    if (!batchCanExport(batch)) return;
-    const bridge = capabilityBridge;
-    if (!bridge) {
-      showToast("导出暂时不可用，请重试。");
-      return;
-    }
-    let content = "";
-    try {
-      for await (const event of bridge.invoke(
-        "batch-runner",
-        "export",
-        {
-          format: batch.format,
-          items: batch.items.map(({ id, prompt, result, status }) => ({ id, prompt, result, status }))
-        },
-        { timeoutMs: 20_000 }
-      )) {
-        if (event.status === "result" && typeof event.data.content === "string") content = event.data.content;
-        if (event.status === "error" || event.status === "cancelled") break;
-      }
-    } catch {
-      content = "";
-    }
-    if (!content) {
-      showToast("导出暂时不可用，请重试。");
-      return;
-    }
-    downloadBatchContent(content, batch.format);
-    showToast("批处理结果已导出");
-  }
-
-  function batchEventText(data: Record<string, unknown>): string {
-    for (const key of ["text", "output", "result"]) {
-      if (typeof data[key] === "string") return data[key].replace(/\u0000/g, "").replace(/\r\n?/g, "\n");
-    }
-    return "";
-  }
-
-  function downloadBatchContent(content: string, format: BatchFormat) {
-    triggerDownload(
-      document,
-      content,
-      `reflex-batch-results.${format}`,
-      plainTextMime(format),
-      window
-    );
+  function exportBatch() {
+    return batchFlow.export();
   }
 
   async function rateCurrentResult(rating: number) {
@@ -2189,10 +2025,10 @@
       }
       return;
     }
-    if (batch.phase !== "closed") {
+    if ($batch.phase !== "closed") {
       if (event.key === "Escape") {
         event.preventDefault();
-        closeBatchView(true);
+        closeBatchView();
       }
       return;
     }
@@ -2507,21 +2343,21 @@
       />
     {/if}
 
-    {#if batch.phase !== "closed"}
+    {#if $batch.phase !== "closed"}
       <BatchDialog
-        state={batch}
-        fileNotice={batchFileNotice}
+        state={$batch}
+        fileNotice={$batchFileNotice}
         {styles}
         {scenes}
 
-        onStateChange={(value) => (batch = value)}
+        onStateChange={(value) => ($batch = value)}
         onFileSelected={importBatchFile}
         onDownloadTemplate={downloadBatchTemplate}
         onParse={parseBatchSource}
         onCancel={cancelBatchRun}
         onExport={exportBatch}
         onRun={runBatch}
-        onClose={() => closeBatchView(true)}
+        onClose={closeBatchView}
       />
     {/if}
 
