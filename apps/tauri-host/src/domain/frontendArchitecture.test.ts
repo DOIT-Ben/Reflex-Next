@@ -128,6 +128,37 @@ describe("production frontend architecture", () => {
     expect(manifest.dependencies?.["@tauri-apps/api"]).toBeTruthy();
   });
 
+  it("keeps the host composition slim with flow controllers outside components", () => {
+    const appSource = readFileSync(join(sourceRoot, "App.svelte"), "utf8");
+    const lineCount = appSource.split("\n").length;
+    expect(lineCount).toBeLessThanOrEqual(2000);
+
+    const flowModules = [
+      "batchFlow",
+      "clipboardFlow",
+      "cloudPrivacyFlow",
+      "diagnosticFlow",
+      "downloads",
+      "feedbackFlow",
+      "firstRunFlow",
+      "markdownPreviewFlow",
+      "optimizationFlow",
+      "semanticModelFlow",
+      "settingsFlow",
+      "templateFlow",
+      "toastState",
+      "translationFlow",
+      "viewScaleStore"
+    ];
+    for (const flowModule of flowModules) {
+      const source = readFileSync(join(sourceRoot, "domain", `${flowModule}.ts`), "utf8");
+      const svelteImports = collectModuleSpecifiers(source).filter((specifier) =>
+        specifier.endsWith(".svelte")
+      );
+      expect(svelteImports).toEqual([]);
+    }
+  });
+
   it("keeps the executable Tauri host and CoreBridge contract wired into App", () => {
     const host: TauriHostApi = createTauriHostStub({
       invoke: async () => undefined,

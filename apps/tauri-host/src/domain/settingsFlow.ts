@@ -161,18 +161,19 @@ export function createSettingsFlow(deps: SettingsFlowDeps): SettingsFlow {
   ) {
     if (get(secretBusy)) return;
     const api = deps.settingsApi();
+    const trimmed = value.trim();
     if (!api) {
       secretNotice.set("当前环境无法保存密钥。");
       return;
     }
-    if (!value) {
+    if (!trimmed) {
       secretNotice.set("请输入 API Key。");
       return;
     }
     secretBusy.set(true);
     secretNotice.set(null);
     try {
-      secretStatus.set(await api.saveProviderSecret(providerId, value));
+      secretStatus.set(await api.saveProviderSecret(providerId, trimmed));
       providerStatusError.set(false);
       secretNotice.set("密钥已安全保存。");
       if (onByokSaved) {
