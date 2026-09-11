@@ -3,7 +3,7 @@
 日期：2026-07-10
 目标版本：`v1.0.0`
 设计状态：待用户复核
-行为基线：`D:\Desktop\AI\11_Products\prod\Reflex`
+行为基线：旧版 Reflex（Classic 参考实现）
 
 ## 1. 目标
 

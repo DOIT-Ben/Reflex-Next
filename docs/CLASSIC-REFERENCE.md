@@ -1,10 +1,6 @@
 # Reflex Classic 参考映射
 
-旧版参考实现位置：
-
-```text
-D:\Desktop\AI\11_Products\prod\Reflex
-```
+旧版参考实现位置：作者本地的 Classic 私有仓库（未随本项目开源）。
 
 ## 可迁移资产
 

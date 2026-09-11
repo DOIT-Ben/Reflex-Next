@@ -10,8 +10,8 @@
 
 迁移来源：
 
-- `D:\Desktop\AI\11_Products\prod\Reflex\utils\scene_classifier.py`
-- `D:\Desktop\AI\11_Products\prod\Reflex\utils\model_downloader.py`
+- 旧版 Reflex（Classic）的 `utils/scene_classifier.py`
+- 旧版 Reflex（Classic）的 `utils/model_downloader.py`
 
 首版约束：
 
