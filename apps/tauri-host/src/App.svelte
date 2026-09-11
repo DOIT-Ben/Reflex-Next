@@ -178,12 +178,9 @@
     quickActions
   } from "./domain/productExperience";
   import {
-    applySemanticModelEvent,
-    beginSemanticModelOperation,
-    createSemanticModelState,
-    failSemanticModelOperation,
     semanticModelSizeLabel
   } from "./domain/semanticModelState";
+  import { createSemanticModelFlow } from "./domain/semanticModelFlow";
   import { t, translate } from "./domain/i18n";
   import { resultMarkdownContent, resultMarkdownFilename } from "./domain/resultExport";
   import { triggerDownload, TEXT_MARKDOWN_MIME } from "./domain/downloads";
@@ -225,8 +222,6 @@
   let draft: RequestSettings = { ...state.requestDraft };
   let settingsDraft: HostSettingsDraft = createDefaultSettingsDraft(state.requestDraft);
   let activeRun: AbortController | null = null;
-  let semanticModel = createSemanticModelState();
-  let semanticModelRun: AbortController | null = null;
   let customTemplates: PromptTemplate[] = [];
   let templateDraft: TemplateDraft = createTemplateDraft();
   let selectedTemplateId: string | null = null;
@@ -367,6 +362,12 @@
   const batch = batchFlow.state;
   const batchFileNotice = batchFlow.fileNotice;
 
+  const semanticModelFlow = createSemanticModelFlow({
+    capabilityBridge: () => capabilityBridge,
+    isEnabled: () => Boolean(persistedConfig?.enabled_plugins.includes("semantic-detector"))
+  });
+  const semanticModel = semanticModelFlow.state;
+
   function workbenchScrollSurface(): HTMLElement | null {
     const surface = workbenchSurfaceEl;
     if (!surface || surface.scrollHeight <= surface.clientHeight) return null;
@@ -487,7 +488,7 @@
       translationFlow.close();
       markdownPreviewFlow.close();
       batchFlow.close();
-      semanticModelRun?.abort();
+      semanticModelFlow.cancel();
     };
   });
 
@@ -873,8 +874,7 @@
       if (saved.enabled_plugins.includes("semantic-detector")) {
         await runSemanticModelOperation("status");
       } else {
-        semanticModelRun?.abort();
-        semanticModel = createSemanticModelState();
+        semanticModelFlow.reset();
       }
       const cloudSaved = await saveCloudPrivacyDraft();
       showToast(cloudSaved ? "✓ 设置已保存" : "本地设置已保存，云端授权未更新。", cloudSaved ? "success" : "error");
@@ -1873,8 +1873,7 @@
   function setPluginEnabled(pluginId: SettingsPluginId, enabled: boolean) {
     settingsDraft = updatePluginSettingsDraft(settingsDraft, pluginId, enabled);
     if (pluginId === "semantic-detector" && !enabled) {
-      semanticModelRun?.abort();
-      semanticModel = createSemanticModelState();
+      semanticModelFlow.reset();
     }
   }
 
@@ -1908,55 +1907,29 @@
   }
 
   function cancelSemanticModelDownload() {
-    semanticModelRun?.abort();
+    semanticModelFlow.cancel();
   }
 
-  async function runSemanticModelOperation(operation: "status" | "download" | "delete") {
-    const bridge = capabilityBridge;
-    if (!bridge || !persistedConfig?.enabled_plugins.includes("semantic-detector")) return;
-    semanticModelRun?.abort();
-    const controller = new AbortController();
-    semanticModelRun = controller;
-    semanticModel = beginSemanticModelOperation(semanticModel, operation);
-    try {
-      for await (const event of bridge.invoke("semantic-detector", operation, {}, {
-        signal: controller.signal,
-        timeoutMs: operation === "download" ? 1_800_000 : 30_000
-      })) {
-        if (semanticModelRun !== controller || controller.signal.aborted) return;
-        semanticModel = applySemanticModelEvent(semanticModel, event);
-      }
-    } catch {
-      if (semanticModelRun !== controller) return;
-      semanticModel = controller.signal.aborted
-        ? {
-            ...semanticModel,
-            phase: semanticModel.sizeBytes > 0 ? "ready" : "missing",
-            percent: 0,
-            errorCode: null
-          }
-        : failSemanticModelOperation(semanticModel);
-    } finally {
-      if (semanticModelRun === controller) semanticModelRun = null;
-    }
+  function runSemanticModelOperation(operation: "status" | "download" | "delete") {
+    return semanticModelFlow.run(operation);
   }
 
   function semanticModelStatusText(): string {
     if (!semanticDetectorActive && semanticDetectorEnabled) return "保存设置后即可管理本地模型。";
-    if (semanticModel.phase === "loading") return "正在检查本地模型…";
-    if (semanticModel.phase === "downloading") return tr("正在下载 {percent}%", { percent: semanticModel.percent });
-    if (semanticModel.phase === "deleting") return "正在删除本地模型…";
-    if (semanticModel.phase === "ready") return tr("模型已就绪 · {size}", { size: semanticModelSizeLabel(semanticModel.sizeBytes) });
-    if (semanticModel.phase === "missing") {
-      return semanticModel.runtimeReady
+    if ($semanticModel.phase === "loading") return "正在检查本地模型…";
+    if ($semanticModel.phase === "downloading") return tr("正在下载 {percent}%", { percent: $semanticModel.percent });
+    if ($semanticModel.phase === "deleting") return "正在删除本地模型…";
+    if ($semanticModel.phase === "ready") return tr("模型已就绪 · {size}", { size: semanticModelSizeLabel($semanticModel.sizeBytes) });
+    if ($semanticModel.phase === "missing") {
+      return $semanticModel.runtimeReady
         ? "尚未下载本地语义模型。"
         : "本地语义运行组件尚未安装。";
     }
-    if (semanticModel.phase === "error") {
-      if (semanticModel.errorCode === "model_runtime_missing") return "缺少本地模型下载组件。";
-      if (semanticModel.errorCode === "model_download_failed") return "模型下载失败，请检查网络后重试。";
-      if (semanticModel.errorCode === "model_download_incomplete") return "模型文件不完整，请重新下载。";
-      if (semanticModel.errorCode === "model_delete_failed") return "本地模型删除失败。";
+    if ($semanticModel.phase === "error") {
+      if ($semanticModel.errorCode === "model_runtime_missing") return "缺少本地模型下载组件。";
+      if ($semanticModel.errorCode === "model_download_failed") return "模型下载失败，请检查网络后重试。";
+      if ($semanticModel.errorCode === "model_download_incomplete") return "模型文件不完整，请重新下载。";
+      if ($semanticModel.errorCode === "model_delete_failed") return "本地模型删除失败。";
       return "本地模型状态暂时不可用。";
     }
     return "检查本地模型后可启用更准确的场景识别。";
@@ -2426,7 +2399,7 @@
         {modes}
         {styles}
         {desktopStatus}
-        {semanticModel}
+        semanticModel={$semanticModel}
         semanticEnabled={semanticDetectorEnabled}
         semanticActive={semanticDetectorActive}
         semanticStatusText={semanticModelStatusText()}
