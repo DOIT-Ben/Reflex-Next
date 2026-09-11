@@ -139,17 +139,8 @@
   import type { SettingsApi } from "./domain/settingsApi";
   import { createSettingsApi } from "./domain/settingsApi";
   import type { CoreBridge, TauriHostApi } from "./domain/coreBridge";
-  import {
-    createTemplateDraft,
-    filterTemplates,
-    readCustomTemplates,
-    removeCustomTemplate,
-    renderTemplate,
-    saveCustomTemplate,
-    templateVariables,
-    type PromptTemplate,
-    type TemplateDraft
-  } from "./domain/templateLibrary";
+  import { createTemplateFlow } from "./domain/templateFlow";
+  import { readCustomTemplates, type PromptTemplate } from "./domain/templateLibrary";
   import {
     providerDefaultModel,
     providerName,
@@ -208,16 +199,6 @@
   let draft: RequestSettings = { ...state.requestDraft };
   let settingsDraft: HostSettingsDraft = createDefaultSettingsDraft(state.requestDraft);
   let activeRun: AbortController | null = null;
-  let customTemplates: PromptTemplate[] = [];
-  let templateDraft: TemplateDraft = createTemplateDraft();
-  let selectedTemplateId: string | null = null;
-  let templateQuery = "";
-  let templateCategory: string | null = null;
-  let templateValues: Record<string, string> = {};
-  let templateNotice: string | null = null;
-  let templateBusy = false;
-  let templateCategories: string[] = [];
-  let visibleTemplates: PromptTemplate[] = [];
   let activationState: ActivationState = createActivationState();
   let activationOpen = false;
   let activationNotice = "";
@@ -354,6 +335,25 @@
   });
   const diagnosticExportBusy = diagnosticFlow.busy;
   const diagnosticExportNotice = diagnosticFlow.notice;
+
+  const templateFlow = createTemplateFlow({
+    persistConfigPatch: (build) => settingsFlow.persistConfigPatch(build),
+    hasPersistedConfig: () => Boolean($persistedConfig),
+    updateHostState: (updater) => {
+      state = updater(state);
+    },
+    closeManager: () => closeTemplateManager(),
+    showToast
+  });
+  const templateDraft = templateFlow.draft;
+  const selectedTemplateId = templateFlow.selectedId;
+  const templateQuery = templateFlow.query;
+  const templateCategory = templateFlow.category;
+  const templateValues = templateFlow.values;
+  const templateNotice = templateFlow.notice;
+  const templateBusy = templateFlow.busy;
+  const templateCategories = templateFlow.categories;
+  const visibleTemplates = templateFlow.visible;
 
   function workbenchScrollSurface(): HTMLElement | null {
     const surface = workbenchSurfaceEl;
@@ -496,8 +496,6 @@
     : "zh-CN";
   $: tr = (source, values = {}) => translate(uiLanguage, source, values);
   $: setTranslator(tr);
-  $: templateCategories = [...new Set(customTemplates.map((template) => template.category))].sort((left, right) => left.localeCompare(right, "zh-CN"));
-  $: visibleTemplates = filterTemplates(customTemplates, templateQuery, templateCategory);
   $: settingsProviderModels = providerModels(settingsDraft.default_provider, $providerOptions);
   $: selectableModels = workbenchModelOptions($persistedConfig, $providerOptions);
   $: activeProviderId = (state.requestDraft.provider ?? "minimax").trim().toLowerCase();
@@ -810,7 +808,7 @@
     activationOpen = !activationState.completed;
     feedbackPromptState = normalizeFeedbackPromptState(config.feedback_prompt);
     feedbackPromptEnabledDraft = feedbackPromptState.enabled;
-    customTemplates = readCustomTemplates(config.custom_templates);
+    templateFlow.hydrate(readCustomTemplates(config.custom_templates));
     state = applyPersistedConfig(state, config);
     settingsDraft = settingsDraftFromConfig(config);
     settingsFlow.applyConfiguredModels(config.provider_models);
@@ -1154,92 +1152,35 @@
 
   function openTemplateManager() {
     if ($batch.phase !== "closed") closeBatchView();
-    selectedTemplateId = null;
-    templateDraft = createTemplateDraft();
-    templateValues = {};
-    templateNotice = null;
+    templateFlow.newDraft();
     state = { ...state, overlay: "template_manager" };
   }
 
   function closeTemplateManager() {
     state = { ...state, overlay: null };
-    templateNotice = null;
+    templateNotice.set(null);
   }
 
   function selectTemplate(template: PromptTemplate) {
-    selectedTemplateId = template.id;
-    templateDraft = createTemplateDraft(template);
-    templateValues = Object.fromEntries(templateVariables(template.content).map((name) => [name, ""]));
-    templateNotice = null;
+    templateFlow.select(template);
   }
 
-  async function saveTemplate() {
-    if (templateBusy || !persistedConfig || !settingsApi) {
-      templateNotice = "模板暂时无法保存，请重试。";
-      return;
-    }
-    const next = saveCustomTemplate(customTemplates, templateDraft, selectedTemplateId ?? undefined);
-    if (!next) {
-      templateNotice = "请填写名称、分类和模板内容。";
-      return;
-    }
-    templateBusy = true;
-    try {
-      const saved = await settingsFlow.persistConfigPatch((latest) => ({
-        ...latest,
-        custom_templates: next
-      }));
-      customTemplates = readCustomTemplates(saved.custom_templates);
-      const selected = customTemplates.find((template) => template.id === (selectedTemplateId ?? next.at(-1)?.id));
-      if (selected) selectTemplate(selected);
-      templateNotice = "模板已保存。";
-    } catch {
-      templateNotice = "模板暂时无法保存，请重试。";
-    } finally {
-      templateBusy = false;
-    }
+  function saveTemplate() {
+    return templateFlow.save();
   }
 
-  async function deleteTemplate() {
-    if (!selectedTemplateId || templateBusy || !persistedConfig || !settingsApi) return;
+  function deleteTemplate() {
+    if (!templateFlow.beginDelete()) return;
     confirmation = {
       title: tr("删除当前模板？"),
       description: tr("删除后无法恢复，但不会影响已经生成的内容。"),
       confirmLabel: tr("删除模板"),
-      run: performDeleteTemplate
+      run: () => templateFlow.performDelete()
     };
   }
 
-  async function performDeleteTemplate() {
-    if (!selectedTemplateId || templateBusy || !persistedConfig || !settingsApi) return;
-    templateBusy = true;
-    try {
-      const next = removeCustomTemplate(customTemplates, selectedTemplateId);
-      const saved = await settingsFlow.persistConfigPatch((latest) => ({
-        ...latest,
-        custom_templates: next
-      }));
-      customTemplates = readCustomTemplates(saved.custom_templates);
-      selectedTemplateId = null;
-      templateDraft = createTemplateDraft();
-      templateValues = {};
-      templateNotice = "模板已删除。";
-    } catch {
-      templateNotice = "模板暂时无法删除，请重试。";
-    } finally {
-      templateBusy = false;
-    }
-  }
-
   function applyTemplate() {
-    const rendered = renderTemplate(templateDraft.content, templateValues);
-    if (!rendered) {
-      templateNotice = "请填写全部变量后再应用。";
-      return;
-    }
-    state = updateInput(state, rendered);
-    closeTemplateManager();
-    showToast("模板已应用到输入区");
+    templateFlow.apply();
   }
 
   function parseBatchSource() {
@@ -2036,26 +1977,26 @@
 
     {#if state.overlay === "template_manager"}
       <TemplateManagerDialog
-        query={templateQuery}
-        category={templateCategory}
-        categories={templateCategories}
-        templates={visibleTemplates}
-        selectedId={selectedTemplateId}
-        draft={templateDraft}
-        values={templateValues}
-        notice={templateNotice}
-        busy={templateBusy}
+        query={$templateQuery}
+        category={$templateCategory}
+        categories={$templateCategories}
+        templates={$visibleTemplates}
+        selectedId={$selectedTemplateId}
+        draft={$templateDraft}
+        values={$templateValues}
+        notice={$templateNotice}
+        busy={$templateBusy}
 
-        onQueryChange={(value) => (templateQuery = value)}
-        onCategoryChange={(value) => (templateCategory = value)}
-        onNew={() => { selectedTemplateId = null; templateDraft = createTemplateDraft(); templateValues = {}; templateNotice = null; }}
+        onQueryChange={(value) => templateQuery.set(value)}
+        onCategoryChange={(value) => templateCategory.set(value)}
+        onNew={() => templateFlow.newDraft()}
         onSelect={selectTemplate}
-        onDraftChange={(value) => (templateDraft = value)}
-        onValuesChange={(value) => (templateValues = value)}
+        onDraftChange={(value) => templateDraft.set(value)}
+        onValuesChange={(value) => templateValues.set(value)}
         onDelete={deleteTemplate}
         onSave={saveTemplate}
         onApply={applyTemplate}
-        onClose={() => closeTemplateManager(true)}
+        onClose={closeTemplateManager}
       />
     {/if}
 
