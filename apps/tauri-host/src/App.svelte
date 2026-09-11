@@ -42,14 +42,13 @@
     type ActivationRoute,
     type ActivationState
   } from "./domain/activationState";
-  import { createDiagnosticBundleBridge, type DiagnosticBundleBridge } from "./domain/diagnosticBundleBridge";
+  import { createCloudPrivacyFlow } from "./domain/cloudPrivacyFlow";
+  import { createDiagnosticFlow } from "./domain/diagnosticFlow";
+  import { createSettingsFlow } from "./domain/settingsFlow";
   import {
     createPromptFeedbackPayload,
     createFeedbackBridge,
     feedbackSubmitErrorMessage,
-    type CloudConsent,
-    type CloudQualityRelease,
-    type CloudQuota,
     type FeedbackBridge,
     type FeedbackContext,
     type FeedbackFormValue,
@@ -121,7 +120,6 @@
     createDesktopBridge,
     safeDesktopSettingsError,
     type DesktopBridge,
-    type DesktopStatus,
     type HostAction
   } from "./domain/desktopBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
@@ -129,24 +127,17 @@
   import { createMarkdownPreviewFlow } from "./domain/markdownPreviewFlow";
   import { createBatchFlow } from "./domain/batchFlow";
   import type { TranslationLanguage, TranslationTarget } from "./domain/translationState";
-  import {
-    createProviderCatalogBridge,
-    PROVIDER_CATALOG_UNAVAILABLE_MESSAGE,
-    type ProviderCatalogBridge
-  } from "./domain/providerCatalogBridge";
-  import {
-    createProviderConnectionBridge,
-    type ProviderConnectionBridge
-  } from "./domain/providerConnectionBridge";
+  import type { ProviderCatalogBridge } from "./domain/providerCatalogBridge";
+  import { createProviderCatalogBridge } from "./domain/providerCatalogBridge";
+  import type { ProviderConnectionBridge } from "./domain/providerConnectionBridge";
+  import { createProviderConnectionBridge } from "./domain/providerConnectionBridge";
+  import type { DiagnosticBundleBridge } from "./domain/diagnosticBundleBridge";
+  import { createDiagnosticBundleBridge } from "./domain/diagnosticBundleBridge";
   import {
     type WindowSizePreset
   } from "./domain/viewControls";
-  import {
-    createSettingsApi,
-    type AppConfig,
-    type SecretStatus,
-    type SettingsApi
-  } from "./domain/settingsApi";
+  import type { SettingsApi } from "./domain/settingsApi";
+  import { createSettingsApi } from "./domain/settingsApi";
   import type { CoreBridge, TauriHostApi } from "./domain/coreBridge";
   import {
     createTemplateDraft,
@@ -160,15 +151,11 @@
     type TemplateDraft
   } from "./domain/templateLibrary";
   import {
-    fallbackProviderCatalog,
     providerDefaultModel,
     providerName,
-    providerOptionsFromRuntime,
     providerModels,
     workbenchModelOptions,
     resolveProviderAvailability,
-    withConfiguredModels,
-    type ProviderOption,
     type ProviderAvailability
   } from "./domain/providerCatalog";
   import {
@@ -214,7 +201,6 @@
   let providerConnectionBridge: ProviderConnectionBridge | null = null;
   let hostApi: TauriHostApi | null = null;
   let settingsApi: SettingsApi | null = null;
-  let configWriteChain: Promise<void> = Promise.resolve();
   let desktopBridge: DesktopBridge | null = null;
   let clipboardReader: ClipboardReader = createClipboardReader();
   let clipboardWriter: ClipboardWriter = createClipboardWriter();
@@ -232,39 +218,17 @@
   let templateBusy = false;
   let templateCategories: string[] = [];
   let visibleTemplates: PromptTemplate[] = [];
-  let persistedConfig: AppConfig | null = null;
   let activationState: ActivationState = createActivationState();
   let activationOpen = false;
   let activationNotice = "";
   let secretInput = "";
-  let secretStatus: SecretStatus = {
-    providerId: "minimax",
-    configured: false,
-    maskedTail: null
-  };
   let settingsSection: SettingsSection = "provider";
-  let settingsBusy = false;
-  let secretBusy = false;
-  let providerConnectionBusy: "models" | "test" | null = null;
-  let providerConnectionNotice: string | null = null;
-  let providerStatusError = false;
-  let providerCatalogNotice: string | null = null;
-  let providerOptions: ProviderOption[] = [...fallbackProviderCatalog];
   let providerStatus: ProviderAvailability = "checking";
   let activeProviderId = "minimax";
   let providerStatusText = "";
-  let settingsNotice: string | null = null;
-  let diagnosticExportBusy = false;
-  let diagnosticExportNotice: string | null = null;
-  let secretNotice: string | null = null;
   let clipboardReading = false;
   let startupClipboardRead = false;
   let clipboardNotice: string | null = null;
-  let desktopStatus: DesktopStatus = {
-    hotkey: "Ctrl+Alt+R",
-    hotkeyActive: false,
-    message: null
-  };
   const toast = createToastController({ translate: (message) => tr(message) });
   const showToast = toast.show;
   let resultRatingBusy = false;
@@ -280,21 +244,6 @@
   let feedbackCaptureNotice: string | null = null;
   let feedbackSubmitBusy = false;
   let feedbackSubmitNotice: string | null = null;
-  let cloudConsent: CloudConsent = {
-    usage_metrics: false,
-    improvement_data: false,
-    feedback_attachments: false,
-    policy_version: "2026-07-14",
-    updated_at: null
-  };
-  let cloudUsageMetricsDraft = false;
-  let cloudImprovementDraft = false;
-  let cloudQualityRelease: CloudQualityRelease | null = null;
-  let cloudQuota: CloudQuota | null = null;
-  let cloudPrivacyBusy = false;
-  let cloudPrivacyNotice: string | null = null;
-  let cloudFeedbackAvailable = false;
-  let cloudAvailability: ProviderAvailability = "checking";
   let appVersion = __REFLEX_APP_VERSION__;
   let windowSizePreset: WindowSizePreset = "default";
   let commandPaletteOpen = false;
@@ -355,7 +304,7 @@
       provider: state.requestDraft.provider,
       model: state.requestDraft.model
     }),
-    language: () => (persistedConfig?.language === "en-US" ? "en-US" : "zh-CN"),
+    language: () => ($persistedConfig?.language === "en-US" ? "en-US" : "zh-CN"),
     translate: (source, values) => tr(source, values),
     showToast
   });
@@ -364,9 +313,47 @@
 
   const semanticModelFlow = createSemanticModelFlow({
     capabilityBridge: () => capabilityBridge,
-    isEnabled: () => Boolean(persistedConfig?.enabled_plugins.includes("semantic-detector"))
+    isEnabled: () => Boolean($persistedConfig?.enabled_plugins.includes("semantic-detector"))
   });
   const semanticModel = semanticModelFlow.state;
+
+  const settingsFlow = createSettingsFlow({
+    settingsApi: () => settingsApi,
+    providerCatalogBridge: () => providerCatalogBridge,
+    providerConnectionBridge: () => providerConnectionBridge,
+    desktopBridge: () => desktopBridge,
+    currentProviderModels: () => settingsDraft.provider_models
+  });
+  const persistedConfig = settingsFlow.persistedConfig;
+  const providerOptions = settingsFlow.providerOptions;
+  const secretStatus = settingsFlow.secretStatus;
+  const secretBusy = settingsFlow.secretBusy;
+  const secretNotice = settingsFlow.secretNotice;
+  const providerStatusError = settingsFlow.providerStatusError;
+  const providerCatalogNotice = settingsFlow.providerCatalogNotice;
+  const providerConnectionBusy = settingsFlow.providerConnectionBusy;
+  const providerConnectionNotice = settingsFlow.providerConnectionNotice;
+  const settingsBusy = settingsFlow.settingsBusy;
+  const settingsNotice = settingsFlow.settingsNotice;
+  const desktopStatus = settingsFlow.desktopStatus;
+  const cloudPrivacy = createCloudPrivacyFlow({
+    feedbackBridge: () => feedbackBridge,
+    showToast
+  });
+  const cloudConsent = cloudPrivacy.consent;
+  const cloudUsageMetricsDraft = cloudPrivacy.usageMetricsDraft;
+  const cloudImprovementDraft = cloudPrivacy.improvementDraft;
+  const cloudQualityRelease = cloudPrivacy.qualityRelease;
+  const cloudQuota = cloudPrivacy.quota;
+  const cloudPrivacyBusy = cloudPrivacy.busy;
+  const cloudPrivacyNotice = cloudPrivacy.notice;
+  const cloudFeedbackAvailable = cloudPrivacy.feedbackAvailable;
+  const cloudAvailability = cloudPrivacy.availability;
+  const diagnosticFlow = createDiagnosticFlow({
+    diagnosticBundleBridge: () => diagnosticBundleBridge
+  });
+  const diagnosticExportBusy = diagnosticFlow.busy;
+  const diagnosticExportNotice = diagnosticFlow.notice;
 
   function workbenchScrollSurface(): HTMLElement | null {
     const surface = workbenchSurfaceEl;
@@ -449,10 +436,10 @@
         })
         .catch(() => {
           if (disposed) return;
-          desktopStatus = {
-            ...desktopStatus,
+          desktopStatus.update((current) => ({
+            ...current,
             message: "桌面入口暂不可用。"
-          };
+          }));
         });
 
       void host
@@ -499,38 +486,38 @@
   );
   $: bridgeUnavailable = coreBridgeState === "unavailable" && !bridgeReady;
   $: canGenerate = state.canGenerate && activeRun === null && !isGenerating(state.phase) && bridgeReady;
-  $: translatorEnabled = persistedConfig?.enabled_plugins.includes("translator") ?? true;
-  $: markdownPreviewEnabled = persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
-  $: batchRunnerEnabled = persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
+  $: translatorEnabled = $persistedConfig?.enabled_plugins.includes("translator") ?? true;
+  $: markdownPreviewEnabled = $persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
+  $: batchRunnerEnabled = $persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
   $: semanticDetectorEnabled = settingsDraft.enabled_plugins.includes("semantic-detector");
-  $: semanticDetectorActive = persistedConfig?.enabled_plugins.includes("semantic-detector") ?? false;
-  $: uiLanguage = settingsDraft.language === "en-US" || persistedConfig?.language === "en-US"
+  $: semanticDetectorActive = $persistedConfig?.enabled_plugins.includes("semantic-detector") ?? false;
+  $: uiLanguage = settingsDraft.language === "en-US" || $persistedConfig?.language === "en-US"
     ? "en-US"
     : "zh-CN";
   $: tr = (source, values = {}) => translate(uiLanguage, source, values);
   $: setTranslator(tr);
   $: templateCategories = [...new Set(customTemplates.map((template) => template.category))].sort((left, right) => left.localeCompare(right, "zh-CN"));
   $: visibleTemplates = filterTemplates(customTemplates, templateQuery, templateCategory);
-  $: settingsProviderModels = providerModels(settingsDraft.default_provider, providerOptions);
-  $: selectableModels = workbenchModelOptions(persistedConfig, providerOptions);
+  $: settingsProviderModels = providerModels(settingsDraft.default_provider, $providerOptions);
+  $: selectableModels = workbenchModelOptions($persistedConfig, $providerOptions);
   $: activeProviderId = (state.requestDraft.provider ?? "minimax").trim().toLowerCase();
   $: providerStatus = resolveProviderAvailability(
     activeProviderId,
-    secretStatus,
-    persistedConfig !== null,
-    providerStatusError,
-    cloudAvailability
+    $secretStatus,
+    $persistedConfig !== null,
+    $providerStatusError,
+    $cloudAvailability
   );
   $: providerStatusText = providerAvailabilityLabel(providerStatus);
-  $: activationRoutes = availableActivationRoutes(cloudAvailability);
+  $: activationRoutes = availableActivationRoutes($cloudAvailability);
   $: activationProviderReady = providerStatus === "ready";
-  $: activeProviderLabel = tr(providerName(activeProviderId, providerOptions));
+  $: activeProviderLabel = tr(providerName(activeProviderId, $providerOptions));
   $: generationTrust = generationTrustSummary(
     {
       route: activationRouteForProvider(activeProviderId),
       providerLabel: activeProviderLabel,
-      historyEnabled: persistedConfig?.history_enabled ?? false,
-      privacyMode: persistedConfig?.privacy_mode ?? false,
+      historyEnabled: $persistedConfig?.history_enabled ?? false,
+      privacyMode: $persistedConfig?.privacy_mode ?? false,
       quota: activeProviderId === "reflex-cloud" && cloudQuota
         ? { requestsUsed: cloudQuota.requests_used, requestsLimit: cloudQuota.requests_limit }
         : null
@@ -618,7 +605,7 @@
     {
       id: "provider",
       label: "Provider",
-      value: tr(providerName(state.currentResult?.provider ?? state.requestDraft.provider, providerOptions))
+      value: tr(providerName(state.currentResult?.provider ?? state.requestDraft.provider, $providerOptions))
     }
   ];
 
@@ -682,7 +669,7 @@
   }
 
   async function readStartupClipboard() {
-    const policy = persistedConfig?.clipboard_policy;
+    const policy = $persistedConfig?.clipboard_policy;
     if (!policy || !shouldReadClipboardOnStartup(policy, startupClipboardRead)) return;
     startupClipboardRead = true;
     await readClipboard();
@@ -729,72 +716,19 @@
     feedbackPromptEnabledDraft = feedbackPromptState.enabled;
     settingsSection = "provider";
     secretInput = "";
-    settingsNotice = null;
-    secretNotice = null;
+    settingsNotice.set(null);
+    secretNotice.set(null);
     void hydrateSettings(preferredProviderId);
-    void refreshProviderCatalog();
+    void settingsFlow.refreshCatalog();
     void hydrateCloudPrivacy();
   }
 
-  async function hydrateCloudPrivacy() {
-    const bridge = feedbackBridge;
-    if (!bridge || cloudPrivacyBusy) return;
-    cloudPrivacyBusy = true;
-    cloudAvailability = "checking";
-    cloudPrivacyNotice = null;
-    try {
-      const [consent, quota, qualityRelease] = await Promise.all([
-        bridge.getConsent(),
-        bridge.getQuota(),
-        bridge.getQualityRelease().catch(() => null)
-      ]);
-      cloudConsent = consent;
-      cloudUsageMetricsDraft = consent.usage_metrics;
-      cloudImprovementDraft = consent.improvement_data;
-      cloudQualityRelease = qualityRelease;
-      cloudQuota = quota;
-      cloudFeedbackAvailable = true;
-      cloudAvailability = "ready";
-    } catch {
-      cloudFeedbackAvailable = false;
-      cloudAvailability = "unavailable";
-      cloudPrivacyNotice = "云端隐私设置暂不可用。";
-    } finally {
-      cloudPrivacyBusy = false;
-    }
+  function hydrateCloudPrivacy() {
+    return cloudPrivacy.hydrate();
   }
 
-  async function saveCloudPrivacyDraft(): Promise<boolean> {
-    if (
-      cloudUsageMetricsDraft === cloudConsent.usage_metrics &&
-      cloudImprovementDraft === cloudConsent.improvement_data
-    ) return true;
-    const bridge = feedbackBridge;
-    if (!bridge) {
-      cloudPrivacyNotice = "当前环境无法保存云端隐私设置。";
-      return false;
-    }
-    cloudPrivacyBusy = true;
-    cloudPrivacyNotice = null;
-    try {
-      cloudConsent = await bridge.updateConsent({
-        ...cloudConsent,
-        usage_metrics: cloudUsageMetricsDraft,
-        improvement_data: cloudImprovementDraft,
-        policy_version: cloudConsent.policy_version
-      });
-      cloudUsageMetricsDraft = cloudConsent.usage_metrics;
-      cloudImprovementDraft = cloudConsent.improvement_data;
-      cloudPrivacyNotice = "云端隐私设置已更新。";
-      return true;
-    } catch {
-      cloudUsageMetricsDraft = cloudConsent.usage_metrics;
-      cloudImprovementDraft = cloudConsent.improvement_data;
-      cloudPrivacyNotice = "云端隐私设置保存失败，请重试。";
-      return false;
-    } finally {
-      cloudPrivacyBusy = false;
-    }
+  function saveCloudPrivacyDraft(): Promise<boolean> {
+    return cloudPrivacy.saveDraft();
   }
 
   function confirmDeleteCloudData() {
@@ -803,74 +737,35 @@
       description: "将删除当前安装身份、反馈附件和改进计划数据。此操作无法撤销。",
       confirmLabel: "删除云端数据",
       danger: true,
-      run: performDeleteCloudData
+      run: () => cloudPrivacy.deleteAllData()
     };
   }
 
-  async function performDeleteCloudData() {
-    const bridge = feedbackBridge;
-    if (!bridge || cloudPrivacyBusy) return;
-    cloudPrivacyBusy = true;
-    cloudPrivacyNotice = null;
-    try {
-      await bridge.deleteCloudData();
-      cloudConsent = {
-        usage_metrics: false,
-        improvement_data: false,
-        feedback_attachments: false,
-        policy_version: "2026-07-14",
-        updated_at: null
-      };
-      cloudUsageMetricsDraft = false;
-      cloudImprovementDraft = false;
-      cloudQuota = null;
-      cloudPrivacyNotice = "云端数据已删除。";
-      showToast("云端数据已删除。", "success");
-    } catch {
-      cloudPrivacyNotice = "云端数据删除失败，请重试。";
-    } finally {
-      cloudPrivacyBusy = false;
-    }
-  }
-
-  async function saveConfigSerial(
-    api: SettingsApi,
-    buildConfig: (latest: AppConfig) => AppConfig
-  ): Promise<AppConfig> {
-    const write = configWriteChain.then(async () => {
-      const latest = await api.loadConfig();
-      return api.saveConfig(buildConfig(latest));
-    });
-    configWriteChain = write.then(() => undefined, () => undefined);
-    return write;
-  }
-
   async function saveSettings() {
-    if (settingsBusy) return;
-    if (!settingsApi || !persistedConfig) {
-      settingsNotice = "当前环境无法保存设置。";
+    if ($settingsBusy) return;
+    if (!settingsApi || !$persistedConfig) {
+      settingsNotice.set("当前环境无法保存设置。");
       return;
     }
-    settingsBusy = true;
-    settingsNotice = null;
+    settingsBusy.set(true);
+    settingsNotice.set(null);
     try {
       const nextFeedbackPromptState = {
         ...feedbackPromptState,
         enabled: feedbackPromptEnabledDraft
       };
       const draftToSave = settingsDraft;
-      const saved = await saveConfigSerial(settingsApi, (latest) => ({
+      const saved = await settingsFlow.persistConfigPatch((latest) => ({
         ...configFromSettingsDraft(latest, draftToSave),
         feedback_prompt: nextFeedbackPromptState
       }));
-      persistedConfig = saved;
       feedbackPromptState = normalizeFeedbackPromptState(saved.feedback_prompt);
       feedbackPromptEnabledDraft = feedbackPromptState.enabled;
       settingsDraft = settingsDraftFromConfig(saved);
       state = applySettingsDraft(applyPersistedConfig(state, saved), settingsDraft);
       draft = { ...state.requestDraft };
-      await refreshDesktopStatus();
-      await refreshProviderSecretStatus(saved.provider);
+      await settingsFlow.refreshDesktopStatus();
+      await settingsFlow.refreshSecretStatus(saved.provider);
       if (saved.enabled_plugins.includes("semantic-detector")) {
         await runSemanticModelOperation("status");
       } else {
@@ -882,236 +777,124 @@
         await finishFirstRunFromSettings(saved.provider);
       }
     } catch (error) {
-      settingsNotice = safeDesktopSettingsError(error);
+      settingsNotice.set(safeDesktopSettingsError(error));
     } finally {
-      settingsBusy = false;
+      settingsBusy.set(false);
     }
   }
 
   async function exportDiagnosticBundle() {
-    if (diagnosticExportBusy) return;
-    if (!diagnosticBundleBridge) {
-      diagnosticExportNotice = "当前环境无法导出诊断包。";
-      return;
-    }
-    diagnosticExportBusy = true;
-    diagnosticExportNotice = "正在导出诊断包...";
-    try {
-      const result = await diagnosticBundleBridge.exportBundle();
-      diagnosticExportNotice = result === "completed" ? "诊断包已导出。" : "诊断包导出已取消。";
-    } catch (error) {
-      diagnosticExportNotice = error instanceof Error ? error.message : "诊断包导出失败，请重试。";
-    } finally {
-      diagnosticExportBusy = false;
-    }
+    return diagnosticFlow.exportBundle();
   }
 
   async function cancelDiagnosticBundleExport() {
-    if (!diagnosticExportBusy || !diagnosticBundleBridge) return;
-    try {
-      await diagnosticBundleBridge.cancel();
-      diagnosticExportNotice = "正在取消诊断包导出...";
-    } catch (error) {
-      diagnosticExportNotice = error instanceof Error ? error.message : "诊断包导出失败，请重试。";
-    }
+    return diagnosticFlow.cancelExport();
   }
 
   function cancelSettingsView() {
     state = cancelSettings(state);
-    settingsDraft = persistedConfig
-      ? settingsDraftFromConfig(persistedConfig)
+    settingsDraft = $persistedConfig
+      ? settingsDraftFromConfig($persistedConfig)
       : createDefaultSettingsDraft(state.requestDraft);
     secretInput = "";
-    settingsNotice = null;
-    secretNotice = null;
+    settingsNotice.set(null);
+    secretNotice.set(null);
     feedbackPromptEnabledDraft = feedbackPromptState.enabled;
-    void refreshProviderSecretStatus(state.requestDraft.provider ?? "minimax");
+    void settingsFlow.refreshSecretStatus(state.requestDraft.provider ?? "minimax");
   }
 
   async function hydrateSettings(preferredProviderId: string | null = null) {
-    if (!settingsApi) return;
-    settingsBusy = true;
-    providerStatusError = false;
-    settingsNotice = null;
-    secretNotice = null;
-    let config: AppConfig;
-    try {
-      config = await settingsApi.loadConfig();
-      persistedConfig = config;
-      activationState = normalizeActivationState(config.first_run_activation);
-      activationOpen = !activationState.completed;
-      feedbackPromptState = normalizeFeedbackPromptState(config.feedback_prompt);
-      feedbackPromptEnabledDraft = feedbackPromptState.enabled;
-      customTemplates = readCustomTemplates(config.custom_templates);
-      state = applyPersistedConfig(state, config);
-      settingsDraft = settingsDraftFromConfig(config);
-      providerOptions = withConfiguredModels(providerOptions, config.provider_models);
-    } catch {
-      providerStatusError = true;
-      settingsNotice = "设置加载失败，请重试。";
-      settingsBusy = false;
-      return;
-    }
+    const config = await settingsFlow.loadConfig();
+    if (!config) return;
+    activationState = normalizeActivationState(config.first_run_activation);
+    activationOpen = !activationState.completed;
+    feedbackPromptState = normalizeFeedbackPromptState(config.feedback_prompt);
+    feedbackPromptEnabledDraft = feedbackPromptState.enabled;
+    customTemplates = readCustomTemplates(config.custom_templates);
+    state = applyPersistedConfig(state, config);
+    settingsDraft = settingsDraftFromConfig(config);
+    settingsFlow.applyConfiguredModels(config.provider_models);
     const preferredProvider = preferredProviderId?.trim().toLowerCase();
-    if (preferredProvider && providerOptions.some((provider) => provider.id === preferredProvider)) {
-      const models = providerModels(preferredProvider, providerOptions);
+    if (preferredProvider && $providerOptions.some((provider) => provider.id === preferredProvider)) {
+      const models = providerModels(preferredProvider, $providerOptions);
       settingsDraft = {
         ...settingsDraft,
         default_provider: preferredProvider,
-        default_model: providerDefaultModel(preferredProvider, providerOptions) ?? models[0]?.id ?? null
+        default_model: providerDefaultModel(preferredProvider, $providerOptions) ?? models[0]?.id ?? null
       };
     }
-    await refreshProviderSecretStatus(settingsDraft.default_provider ?? config.provider);
-    settingsBusy = false;
+    await settingsFlow.refreshSecretStatus(settingsDraft.default_provider ?? config.provider);
+    settingsBusy.set(false);
   }
 
-  async function refreshProviderCatalog() {
-    const bridge = providerCatalogBridge;
-    if (!bridge) return;
-    try {
-      const descriptors = await bridge.listProviders();
-      providerOptions = withConfiguredModels(
-        providerOptionsFromRuntime(descriptors),
-        settingsDraft.provider_models
-      );
-      providerCatalogNotice = null;
-    } catch {
-      // Keep the browser-safe catalog visible while the Runtime recovers.
-      providerCatalogNotice = PROVIDER_CATALOG_UNAVAILABLE_MESSAGE;
-    }
+  function refreshProviderCatalog() {
+    return settingsFlow.refreshCatalog();
   }
 
-  async function refreshDesktopStatus() {
-    if (!desktopBridge) return;
-    try {
-      desktopStatus = await desktopBridge.status();
-    } catch {
-      desktopStatus = {
-        ...desktopStatus,
-        message: "快捷键状态暂不可用。"
-      };
-    }
+  function refreshDesktopStatus() {
+    return settingsFlow.refreshDesktopStatus();
   }
 
-  async function refreshProviderSecretStatus(providerId: string) {
-    if (providerId === "reflex-cloud") {
-      secretStatus = { providerId, configured: true, maskedTail: null };
-      providerStatusError = false;
-      secretNotice = null;
-      return;
-    }
-    const api = settingsApi;
-    if (!api) return;
-    try {
-      secretStatus = await api.getProviderSecretStatus(providerId);
-      providerStatusError = false;
-    } catch {
-      providerStatusError = true;
-      secretStatus = { providerId, configured: false, maskedTail: null };
-      secretNotice = "密钥状态读取失败，请重试。";
-    }
+  function refreshProviderSecretStatus(providerId: string) {
+    return settingsFlow.refreshSecretStatus(providerId);
   }
 
   async function saveSecret() {
-    if (secretBusy) return;
-    const api = settingsApi;
-    const value = secretInput.trim();
-    if (!api) {
-      secretNotice = "当前环境无法保存密钥。";
-      secretInput = "";
-      return;
-    }
-    if (!value) {
-      secretNotice = "请输入 API Key。";
-      return;
-    }
-    secretBusy = true;
-    secretNotice = null;
-    try {
-      secretStatus = await api.saveProviderSecret(
-        settingsDraft.default_provider ?? "minimax",
-        value
-      );
-      providerStatusError = false;
-      secretNotice = "密钥已安全保存。";
-      if (activationOpen && activationState.route === "byok") {
-        const savedProvider = settingsDraft.default_provider ?? "minimax";
-        const savedModel = settingsDraft.default_model ?? providerDefaultModel(savedProvider, providerOptions);
-        if (savedModel) state = selectRequestModel(state, savedProvider, savedModel);
-        let defaultProviderSaved = true;
-        if (persistedConfig) {
-          try {
-            const draftToSave = settingsDraft;
-            persistedConfig = await saveConfigSerial(api, (latest) =>
-              configFromSettingsDraft(latest, draftToSave)
-            );
-          } catch {
-            defaultProviderSaved = false;
-          }
-        }
-        if (defaultProviderSaved && providerReadyForActivation(savedProvider)) {
-          await finishFirstRunFromSettings(savedProvider);
-        }
-        showToast(
-          defaultProviderSaved
-            ? "✓ 密钥已保存，可以开始生成"
-            : "密钥已保存，本次可继续生成；默认 Provider 尚未保存。",
-          defaultProviderSaved ? "success" : "error"
-        );
-      }
-    } catch {
-      providerStatusError = true;
-      secretNotice = "密钥保存失败，请重试。";
-    } finally {
-      secretInput = "";
-      secretBusy = false;
-    }
+    const savedProvider = settingsDraft.default_provider ?? "minimax";
+    const byokActivation = activationOpen && activationState.route === "byok";
+    await settingsFlow.saveSecret(
+      savedProvider,
+      secretInput.trim(),
+      byokActivation ? handleByokSecretSaved : undefined
+    );
+    secretInput = "";
   }
 
-  async function deleteSecret() {
-    if (secretBusy || !secretStatus.configured) return;
+  async function handleByokSecretSaved(savedProvider: string) {
+    const savedModel = settingsDraft.default_model ?? providerDefaultModel(savedProvider, $providerOptions);
+    if (savedModel) state = selectRequestModel(state, savedProvider, savedModel);
+    let defaultProviderSaved = true;
+    if ($persistedConfig) {
+      try {
+        await settingsFlow.persistConfigPatch((latest) =>
+          configFromSettingsDraft(latest, settingsDraft)
+        );
+      } catch {
+        defaultProviderSaved = false;
+      }
+    }
+    if (defaultProviderSaved && providerReadyForActivation(savedProvider)) {
+      await finishFirstRunFromSettings(savedProvider);
+    }
+    showToast(
+      defaultProviderSaved
+        ? "✓ 密钥已保存，可以开始生成"
+        : "密钥已保存，本次可继续生成；默认 Provider 尚未保存。",
+      defaultProviderSaved ? "success" : "error"
+    );
+  }
+
+  function deleteSecret() {
+    if (!settingsFlow.beginSecretDelete()) return;
     confirmation = {
       title: tr("删除已保存的 API Key？"),
       description: tr("删除后当前 Provider 将无法调用，之后仍可重新保存。"),
       confirmLabel: tr("删除密钥"),
-      run: performDeleteSecret
+      run: () => settingsFlow.performSecretDelete(settingsDraft.default_provider ?? "minimax")
     };
-  }
-
-  async function performDeleteSecret() {
-    const api = settingsApi;
-    if (!api) {
-      secretNotice = "当前环境无法删除密钥。";
-      return;
-    }
-    secretBusy = true;
-    secretNotice = null;
-    try {
-      secretStatus = await api.deleteProviderSecret(
-        settingsDraft.default_provider ?? "minimax"
-      );
-      providerStatusError = false;
-      secretNotice = "密钥已删除。";
-    } catch {
-      providerStatusError = true;
-      secretNotice = "密钥删除失败，请重试。";
-    } finally {
-      secretInput = "";
-      secretBusy = false;
-    }
   }
 
   async function selectSettingsProvider(provider: string) {
-    const models = providerModels(provider, providerOptions);
+    const models = providerModels(provider, $providerOptions);
     settingsDraft = {
       ...settingsDraft,
       default_provider: provider,
-      default_model: providerDefaultModel(provider, providerOptions) ?? models[0]?.id ?? null
+      default_model: providerDefaultModel(provider, $providerOptions) ?? models[0]?.id ?? null
     };
     secretInput = "";
-    secretNotice = null;
-    providerConnectionNotice = null;
-    await refreshProviderSecretStatus(provider);
+    secretNotice.set(null);
+    providerConnectionNotice.set(null);
+    await settingsFlow.refreshSecretStatus(provider);
   }
 
   function updateProviderBaseUrl(value: string) {
@@ -1120,72 +903,43 @@
       ...settingsDraft,
       provider_endpoints: { ...settingsDraft.provider_endpoints, [providerId]: value }
     };
-    providerConnectionNotice = null;
+    providerConnectionNotice.set(null);
   }
 
   async function discoverProviderModels() {
-    const bridge = providerConnectionBridge;
     const providerId = settingsDraft.default_provider ?? "minimax";
-    if (!bridge || providerConnectionBusy) return;
-    providerConnectionBusy = "models";
-    providerConnectionNotice = null;
-    try {
-      const models = await bridge.discoverModels({
-        providerId,
-        baseUrl: settingsDraft.provider_endpoints[providerId] ?? ""
-      });
-      settingsDraft = {
-        ...settingsDraft,
-        default_model: models.includes(settingsDraft.default_model ?? "")
-          ? settingsDraft.default_model
-          : models[0],
-        provider_models: { ...settingsDraft.provider_models, [providerId]: models }
-      };
-      providerOptions = withConfiguredModels(providerOptions, settingsDraft.provider_models);
-      providerConnectionNotice = `已获取 ${models.length} 个模型。`;
-    } catch (error) {
-      providerConnectionNotice = error instanceof Error ? error.message : "无法获取模型列表，请重试。";
-    } finally {
-      providerConnectionBusy = null;
-    }
+    const models = await settingsFlow.discoverModels(
+      providerId,
+      settingsDraft.provider_endpoints[providerId] ?? ""
+    );
+    if (!models) return;
+    settingsDraft = {
+      ...settingsDraft,
+      default_model: models.includes(settingsDraft.default_model ?? "")
+        ? settingsDraft.default_model
+        : models[0],
+      provider_models: { ...settingsDraft.provider_models, [providerId]: models }
+    };
   }
 
-  async function testProviderConnection() {
-    const bridge = providerConnectionBridge;
+  function testProviderConnection() {
     const providerId = settingsDraft.default_provider ?? "minimax";
-    if (!bridge || providerConnectionBusy) return;
-    providerConnectionBusy = "test";
-    providerConnectionNotice = null;
-    try {
-      const result = await bridge.testConnection({
-        providerId,
-        baseUrl: settingsDraft.provider_endpoints[providerId] ?? "",
-        model: settingsDraft.default_model
-      });
-      providerConnectionNotice = result.ok
-        ? `连接成功${result.latencyMs === null ? "" : `，耗时 ${result.latencyMs} ms`}。`
-        : "模型连接测试失败，请检查配置后重试。";
-    } catch (error) {
-      providerConnectionNotice = error instanceof Error ? error.message : "模型连接测试失败，请重试。";
-    } finally {
-      providerConnectionBusy = null;
-    }
+    return settingsFlow.testConnection(
+      providerId,
+      settingsDraft.provider_endpoints[providerId] ?? "",
+      settingsDraft.default_model
+    );
   }
 
   async function persistFeedbackPrompt(next: FeedbackPromptState): Promise<boolean> {
     feedbackPromptState = next;
     feedbackPromptEnabledDraft = next.enabled;
-    const api = settingsApi;
-    const config = persistedConfig;
-    if (!api || !config) return false;
-    const pending = { ...config, feedback_prompt: next };
-    persistedConfig = pending;
+    if (!settingsApi || !$persistedConfig) return false;
     try {
-      const saved = await saveConfigSerial(api, (latest) => ({
+      const saved = await settingsFlow.persistConfigPatch((latest) => ({
         ...latest,
         feedback_prompt: next
       }));
-      persistedConfig = saved;
       feedbackPromptState = normalizeFeedbackPromptState(saved.feedback_prompt);
       feedbackPromptEnabledDraft = feedbackPromptState.enabled;
       return true;
@@ -1229,7 +983,7 @@
       scenePromptOpen = true;
       return;
     }
-    await executeOptimization(createRequestDraft(state, persistedConfig?.language ?? "zh-CN"));
+    await executeOptimization(createRequestDraft(state, $persistedConfig?.language ?? "zh-CN"));
   }
 
   function cancelScenePrompt() {
@@ -1244,13 +998,13 @@
     const request = createRequestDraftWithSceneChoice(
       state,
       scenePromptSelection,
-      persistedConfig?.language ?? "zh-CN"
+      $persistedConfig?.language ?? "zh-CN"
     );
     scenePromptOpen = false;
     await executeOptimization(request);
   }
 
-  async function executeOptimization(request = createRequestDraft(state, persistedConfig?.language ?? "zh-CN")) {
+  async function executeOptimization(request = createRequestDraft(state, $persistedConfig?.language ?? "zh-CN")) {
     if (activeRun !== null || !canGenerate) return;
     const requestId = `ui-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const controller = new AbortController();
@@ -1431,11 +1185,10 @@
     }
     templateBusy = true;
     try {
-      const saved = await saveConfigSerial(settingsApi, (latest) => ({
+      const saved = await settingsFlow.persistConfigPatch((latest) => ({
         ...latest,
         custom_templates: next
       }));
-      persistedConfig = saved;
       customTemplates = readCustomTemplates(saved.custom_templates);
       const selected = customTemplates.find((template) => template.id === (selectedTemplateId ?? next.at(-1)?.id));
       if (selected) selectTemplate(selected);
@@ -1462,11 +1215,10 @@
     templateBusy = true;
     try {
       const next = removeCustomTemplate(customTemplates, selectedTemplateId);
-      const saved = await saveConfigSerial(settingsApi, (latest) => ({
+      const saved = await settingsFlow.persistConfigPatch((latest) => ({
         ...latest,
         custom_templates: next
       }));
-      persistedConfig = saved;
       customTemplates = readCustomTemplates(saved.custom_templates);
       selectedTemplateId = null;
       templateDraft = createTemplateDraft();
@@ -1557,7 +1309,7 @@
   function askReplaceClipboard() {
     if (!state.output) return;
     void executeClipboardAction(
-      clipboardActionForManualReplace(persistedConfig?.clipboard_replace_confirmed === true)
+      clipboardActionForManualReplace($persistedConfig?.clipboard_replace_confirmed === true)
     );
   }
 
@@ -1622,7 +1374,7 @@
     feedbackPromptNotice = null;
     try {
       const latestConsent = await bridge.getConsent();
-      cloudConsent = latestConsent;
+      cloudConsent.set(latestConsent);
       await bridge.submit(createPromptFeedbackPayload({
         sentiment,
         context: feedbackContextFor(result),
@@ -1692,7 +1444,7 @@
     const sourceText = result.sourceText ?? state.inputText;
     try {
       const latestConsent = await feedbackBridge.getConsent();
-      cloudConsent = latestConsent;
+      cloudConsent.set(latestConsent);
       await feedbackBridge.submit({
         source: feedbackSource,
         sentiment: feedbackSentiment,
@@ -1721,11 +1473,11 @@
   }
 
   async function handleCompletionClipboard() {
-    const policy = persistedConfig?.clipboard_policy ?? "manual";
+    const policy = $persistedConfig?.clipboard_policy ?? "manual";
     await executeClipboardAction(
       clipboardActionAfterCompletion(
         policy,
-        persistedConfig?.clipboard_replace_confirmed === true
+        $persistedConfig?.clipboard_replace_confirmed === true
       )
     );
   }
@@ -1753,19 +1505,13 @@
   }
 
   async function rememberClipboardConfirmation() {
-    if (!persistedConfig) return;
-    const confirmedConfig = {
-      ...persistedConfig,
-      clipboard_replace_confirmed: true
-    };
-    persistedConfig = confirmedConfig;
-    if (!settingsApi) return;
+    if (!$persistedConfig) return;
     try {
-      persistedConfig = await saveConfigSerial(settingsApi, (latest) => ({
+      await settingsFlow.persistConfigPatch((latest) => ({
         ...latest,
         clipboard_replace_confirmed: true
       }));
-      settingsDraft = settingsDraftFromConfig(persistedConfig);
+      settingsDraft = settingsDraftFromConfig($persistedConfig);
     } catch {
       clipboardNotice = "本次已替换，下次使用时仍会再次确认。";
     }
@@ -1783,19 +1529,16 @@
   async function persistActivationState(next: ActivationState): Promise<boolean> {
     const previous = activationState;
     activationState = next;
-    const api = settingsApi;
-    const config = persistedConfig;
-    if (!api || !config) {
+    if (!settingsApi || !$persistedConfig) {
       activationState = previous;
       activationNotice = "首次使用状态暂未保存，本次仍可继续使用。";
       return false;
     }
     try {
-      const saved = await saveConfigSerial(api, (latest) => ({
+      const saved = await settingsFlow.persistConfigPatch((latest) => ({
         ...latest,
         first_run_activation: next
       }));
-      persistedConfig = saved;
       activationState = normalizeActivationState(saved.first_run_activation);
       return true;
     } catch {
@@ -1806,13 +1549,13 @@
   }
 
   async function chooseActivationRoute(route: ActivationRoute) {
-    if (!availableActivationRoutes(cloudAvailability).includes(route)) return;
+    if (!availableActivationRoutes($cloudAvailability).includes(route)) return;
     const next = selectActivationRoute(activationState, route);
     const persisted = await persistActivationState(next);
     if (!persisted) return;
     activationNotice = "";
     if (route === "cloud") {
-      const model = providerDefaultModel("reflex-cloud", providerOptions);
+      const model = providerDefaultModel("reflex-cloud", $providerOptions);
       if (model) switchWorkbenchModel("reflex-cloud", model);
       return;
     }
@@ -1821,8 +1564,8 @@
 
   function openByokSettings() {
     const providerId = preferredByokProvider(
-      persistedConfig?.provider ?? activeProviderId,
-      providerOptions.map((provider) => provider.id)
+      $persistedConfig?.provider ?? activeProviderId,
+      $providerOptions.map((provider) => provider.id)
     );
     beginSettings(providerId);
   }
@@ -1883,7 +1626,7 @@
   }
 
   async function refreshSemanticModelStatus() {
-    if (!persistedConfig?.enabled_plugins.includes("semantic-detector")) return;
+    if (!$persistedConfig?.enabled_plugins.includes("semantic-detector")) return;
     await runSemanticModelOperation("status");
   }
 
@@ -2385,33 +2128,33 @@
       <SettingsDialog
         draft={settingsDraft}
         section={settingsSection}
-        busy={settingsBusy}
-        {secretBusy}
+        busy={$settingsBusy}
+        secretBusy={$secretBusy}
         {secretInput}
-        {secretStatus}
-        {secretNotice}
-        {providerConnectionBusy}
-        {providerConnectionNotice}
-        notice={settingsNotice}
-        {providerCatalogNotice}
-        providers={providerOptions}
+        secretStatus={$secretStatus}
+        secretNotice={$secretNotice}
+        providerConnectionBusy={$providerConnectionBusy}
+        providerConnectionNotice={$providerConnectionNotice}
+        notice={$settingsNotice}
+        providerCatalogNotice={$providerCatalogNotice}
+        providers={$providerOptions}
         models={settingsProviderModels}
         {modes}
         {styles}
-        {desktopStatus}
+        desktopStatus={$desktopStatus}
         semanticModel={$semanticModel}
         semanticEnabled={semanticDetectorEnabled}
         semanticActive={semanticDetectorActive}
         semanticStatusText={semanticModelStatusText()}
-        diagnosticBusy={diagnosticExportBusy}
-        diagnosticNotice={diagnosticExportNotice}
-        cloudUsageMetricsEnabled={cloudUsageMetricsDraft}
-        cloudImprovementEnabled={cloudImprovementDraft}
+        diagnosticBusy={$diagnosticExportBusy}
+        diagnosticNotice={$diagnosticExportNotice}
+        cloudUsageMetricsEnabled={$cloudUsageMetricsDraft}
+        cloudImprovementEnabled={$cloudImprovementDraft}
         feedbackPromptEnabled={feedbackPromptEnabledDraft}
-        {cloudQualityRelease}
-        {cloudQuota}
-        {cloudPrivacyBusy}
-        {cloudPrivacyNotice}
+        cloudQualityRelease={$cloudQualityRelease}
+        cloudQuota={$cloudQuota}
+        cloudPrivacyBusy={$cloudPrivacyBusy}
+        cloudPrivacyNotice={$cloudPrivacyNotice}
 
         onClose={cancelSettingsView}
         onSave={saveSettings}
@@ -2430,7 +2173,7 @@
             ...settingsDraft,
             provider_models: { ...settingsDraft.provider_models, [providerId]: models }
           };
-          providerOptions = withConfiguredModels(providerOptions, settingsDraft.provider_models);
+          settingsFlow.applyConfiguredModels(settingsDraft.provider_models);
         }}
         onPluginChange={setPluginEnabled}
         onSemanticRefresh={refreshSemanticModelStatus}
@@ -2439,8 +2182,8 @@
         onSemanticDownload={downloadSemanticModel}
         onDiagnosticExport={exportDiagnosticBundle}
         onDiagnosticCancel={cancelDiagnosticBundleExport}
-        onCloudUsageMetricsChange={(enabled) => (cloudUsageMetricsDraft = enabled)}
-        onCloudImprovementChange={(enabled) => (cloudImprovementDraft = enabled)}
+        onCloudUsageMetricsChange={(enabled) => cloudUsageMetricsDraft.set(enabled)}
+        onCloudImprovementChange={(enabled) => cloudImprovementDraft.set(enabled)}
         onFeedbackPromptEnabledChange={(enabled) => (feedbackPromptEnabledDraft = enabled)}
         onCloudRefresh={hydrateCloudPrivacy}
         onCloudDeleteData={confirmDeleteCloudData}

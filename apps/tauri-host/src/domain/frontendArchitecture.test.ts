@@ -313,7 +313,7 @@ describe("production frontend architecture", () => {
     );
 
     expect(appSource).toContain("first_run_activation");
-    expect(appSource).toContain("availableActivationRoutes(cloudAvailability)");
+    expect(appSource).toContain("availableActivationRoutes($cloudAvailability)");
     expect(appSource).toContain("completeFirstRunActivation()");
     expect(appSource).toContain('inert={state.overlay === "settings" || activationOpen}');
     expect(appSource).toContain("runtime_stream_failed");
