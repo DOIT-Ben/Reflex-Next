@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { translator } from "../../domain/i18nStore";
   import Search from "@lucide/svelte/icons/search";
   import type { SceneOption } from "../../domain/reflexSession";
   import SelectField from "../ui/SelectField.svelte";
@@ -9,8 +10,7 @@
     style: string;
     provider: string;
     scenes: SceneOption[];
-    styles: Array<{ id: string; label: string }>;
-    translate: (source: string, values?: Record<string, string | number>) => string;
+    styles: Array<{ id: string; label: string }>;
     onSearchChange: (value: string) => void;
     onSceneChange: (value: string) => void;
     onStyleChange: (value: string) => void;
@@ -18,7 +18,8 @@
     onSubmit: () => void;
   }
 
-  let { search, scene, style, provider, scenes, styles, translate, onSearchChange, onSceneChange, onStyleChange, onProviderChange, onSubmit }: Props = $props();
+  let { search, scene, style, provider, scenes, styles, onSearchChange, onSceneChange, onStyleChange, onProviderChange, onSubmit }: Props = $props();
+  let translate = $derived($translator);
   let sceneOptions = $derived([
     { value: "", label: translate("全部场景") },
     ...scenes.map((item) => ({ value: item.id, label: translate(item.label) }))

@@ -5,6 +5,7 @@
   import { applySceneSelection, type RequestSettings } from "../../domain/hostState";
   import type { WorkbenchModelOption } from "../../domain/providerCatalog";
   import SelectField from "../ui/SelectField.svelte";
+  import { translator } from "../../domain/i18nStore";
   import {
     listSceneCategories,
     type OptimizeMode,
@@ -20,7 +21,6 @@
     styles: Array<{ id: OptimizeStyle; label: string }>;
     scenes: SceneOption[];
     models: WorkbenchModelOption[];
-    translate: (source: string, values?: Record<string, string | number>) => string;
     onDraftChange: (draft: RequestSettings) => void;
     onCancel: () => void;
     onApply: () => void;
@@ -33,11 +33,11 @@
     styles,
     scenes,
     models,
-    translate,
     onDraftChange,
     onCancel,
     onApply
   }: Props = $props();
+  let translate = $derived($translator);
   const sceneCategories = listSceneCategories();
   let sceneQuery = $state("");
   let sceneCategory = $state<SceneCategoryId | null>(null);

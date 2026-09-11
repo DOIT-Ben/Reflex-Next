@@ -5,6 +5,7 @@
     WorkbenchPhase
   } from "./types";
   import type { QuickAction } from "../../domain/productExperience";
+  import { translator } from "../../domain/i18nStore";
 
   export let value = "";
   export let phase: WorkbenchPhase = "empty";
@@ -20,7 +21,8 @@
   export let onRun: WorkbenchActionHandler | undefined = undefined;
   export let onReadClipboard: WorkbenchActionHandler | undefined = undefined;
   export let onClear: WorkbenchActionHandler | undefined = undefined;
-  export let translate: (source: string, values?: Record<string, string | number>) => string = (source) => source;
+
+  $: translate = $translator;
 
   let textarea: HTMLTextAreaElement;
 

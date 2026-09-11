@@ -16,13 +16,13 @@
   } from "../../domain/batchState";
   import type { OptimizeStyle, SceneOption } from "../../domain/reflexSession";
   import SelectField from "../ui/SelectField.svelte";
+  import { translator } from "../../domain/i18nStore";
 
   interface Props {
     state: BatchState;
     fileNotice: string | null;
     styles: Array<{ id: OptimizeStyle; label: string }>;
     scenes: SceneOption[];
-    translate: (source: string, values?: Record<string, string | number>) => string;
     onStateChange: (state: BatchState) => void;
     onFileSelected: (file: File) => void;
     onDownloadTemplate: () => void;
@@ -38,7 +38,6 @@
     fileNotice,
     styles,
     scenes,
-    translate,
     onStateChange,
     onFileSelected,
     onDownloadTemplate,
@@ -48,6 +47,8 @@
     onRun,
     onClose
   }: Props = $props();
+
+  let translate = $derived($translator);
 
   let fileInput: HTMLInputElement;
   let locked = $derived(state.phase === "parsing" || state.phase === "running");

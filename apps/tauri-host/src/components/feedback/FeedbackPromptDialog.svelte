@@ -3,6 +3,7 @@
   import ThumbsDown from "@lucide/svelte/icons/thumbs-down";
   import ThumbsUp from "@lucide/svelte/icons/thumbs-up";
   import X from "@lucide/svelte/icons/x";
+  import { translator } from "../../domain/i18nStore";
 
   export let onPositive: () => void;
   export let onNegative: () => void;
@@ -10,7 +11,8 @@
   export let onDisable: () => void;
   export let busy = false;
   export let notice: string | null = null;
-  export let translate: (source: string, values?: Record<string, string | number>) => string;
+
+  $: translate = $translator;
 </script>
 
 <div class="feedback-prompt-layer" role="presentation">

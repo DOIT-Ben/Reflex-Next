@@ -11,6 +11,7 @@
   import { appendHistoryPage, applyHistoryDetailFailure, applyHistoryDetailTerminal, applyHistoryRatingToDetail, createHistoryBackupsState, createHistoryState, failHistoryBackupsLoad, failHistoryQuery, finishHistoryBackupsLoad, historyExportFilters, historyListInput, historyScanMessage, removeHistoryItem, selectHistoryItem, startHistoryBackupsLoad, startHistoryQuery, updateHistoryRating, type HistoryPage, type HistorySummary } from "./domain/historyState";
   import { listSceneOptions } from "./domain/reflexSession";
   import { translate, type UiLanguage } from "./domain/i18n";
+  import { setTranslator } from "./domain/i18nStore";
 
   const scenes = listSceneOptions();
   const styles = [
@@ -37,6 +38,8 @@
   function tr(source: string, values: Record<string, string | number> = {}): string {
     return translate(uiLanguage, source, values);
   }
+
+  setTranslator(tr);
 
   function sceneLabel(id: string): string {
     return tr(scenes.find((item) => item.id === id)?.label ?? id);
@@ -204,7 +207,7 @@
   <HistoryHeader
     {exportFormat}
     backups={backupsState}
-    translate={tr}
+
     onExportFormatChange={(value) => (exportFormat = value)}
     onBackupChange={(value) => (backupsState = { ...backupsState, selectedId: value })}
     onExport={exportHistory}
@@ -222,7 +225,7 @@
     {provider}
     {scenes}
     {styles}
-    translate={tr}
+
     onSearchChange={(value) => (search = value)}
     onSceneChange={(value) => (scene = value)}
     onStyleChange={(value) => (style = value)}
@@ -231,11 +234,11 @@
   />
   {#if busy}<p class="history-notice" role="status" aria-live="polite">{tr(busy)}</p>{/if}
   <section class="history-workspace">
-    <HistoryList {state} translate={tr} {sceneLabel} {styleLabel} onSelect={open} onMore={() => load(state.query, true)} />
+    <HistoryList {state} {sceneLabel} {styleLabel} onSelect={open} onMore={() => load(state.query, true)} />
     <HistoryDetail
       {state}
       {detail}
-      translate={tr}
+
       {sceneLabel}
       onRate={rate}
       onDelete={() => operate("delete")}

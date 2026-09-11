@@ -1,16 +1,17 @@
 <script lang="ts">
   import DialogShell from "../ui/DialogShell.svelte";
+  import { translator } from "../../domain/i18nStore";
 
   interface Props {
     sourceText: string;
     output: string;
-    translate: (source: string, values?: Record<string, string | number>) => string;
     onCopySource: () => void;
     onCopyOutput: () => void;
     onClose: () => void;
   }
 
-  let { sourceText, output, translate, onCopySource, onCopyOutput, onClose }: Props = $props();
+  let { sourceText, output, onCopySource, onCopyOutput, onClose }: Props = $props();
+  let translate = $derived($translator);
 </script>
 
 <DialogShell title={translate("结果对比")} z={8} closeLabel={translate("关闭结果对比")} onClose={onClose} size="lg">

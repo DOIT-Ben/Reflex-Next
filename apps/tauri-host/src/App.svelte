@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { setTranslator } from "./domain/i18nStore";
   import FeedbackDialog from "./components/feedback/FeedbackDialog.svelte";
   import FeedbackPromptDialog from "./components/feedback/FeedbackPromptDialog.svelte";
   import FirstRunDialog from "./components/onboarding/FirstRunDialog.svelte";
@@ -520,6 +521,7 @@
     ? "en-US"
     : "zh-CN";
   $: tr = (source, values = {}) => translate(uiLanguage, source, values);
+  $: setTranslator(tr);
   $: templateCategories = [...new Set(customTemplates.map((template) => template.category))].sort((left, right) => left.localeCompare(right, "zh-CN"));
   $: visibleTemplates = filterTemplates(customTemplates, templateQuery, templateCategory);
   $: settingsProviderModels = providerModels(settingsDraft.default_provider, providerOptions);
@@ -2541,7 +2543,7 @@
               onRun={runOptimization}
               onReadClipboard={readClipboard}
               onClear={clearInput}
-              translate={tr}
+
             />
             <ConfigSummary
               items={configSummaryItems}
@@ -2556,7 +2558,7 @@
               onCancel={cancelRun}
               onAdjust={beginAdjust}
               onModelChange={switchWorkbenchModel}
-              translate={tr}
+
             />
           </div>
           <ResultPane
@@ -2590,7 +2592,7 @@
             onCopyDiagnosticId={state.diagnosticId ? copyDiagnosticId : undefined}
             onPositiveFeedback={() => beginFeedback("positive")}
             onNegativeFeedback={() => beginFeedback("negative")}
-            translate={tr}
+
           />
         </div>
       </section>
@@ -2627,7 +2629,7 @@
         improvementConsent={cloudConsent.improvement_data}
         busy={feedbackSubmitBusy}
         notice={feedbackSubmitNotice}
-        translate={tr}
+
         onClose={closeFeedback}
         onRemoveScreenshot={removeFeedbackScreenshot}
         onSubmit={submitFeedback}
@@ -2638,7 +2640,7 @@
       <FeedbackPromptDialog
         busy={feedbackPromptBusy}
         notice={feedbackPromptNotice}
-        translate={tr}
+
         onPositive={() => answerFeedbackPrompt("positive")}
         onNegative={() => answerFeedbackPrompt("negative")}
         onLater={postponeFeedbackPrompt}
@@ -2650,7 +2652,7 @@
       <ScenePromptDialog
         {scenes}
         selectedScene={scenePromptSelection}
-        translate={tr}
+
         onSceneChange={(sceneId) => (scenePromptSelection = sceneId)}
         onCancel={cancelScenePrompt}
         onConfirm={confirmScenePrompt}
@@ -2665,7 +2667,7 @@
         {styles}
         {scenes}
         models={selectableModels}
-        translate={tr}
+
         onDraftChange={(value) => (draft = value)}
         onCancel={cancelAdjustView}
         onApply={applyAdjust}
@@ -2673,7 +2675,7 @@
     {/if}
 
     {#if commandPaletteOpen}
-      <CommandPalette items={commandItems} translate={tr} onClose={closeCommandPalette} />
+      <CommandPalette items={commandItems} onClose={closeCommandPalette} />
     {/if}
 
     {#if state.overlay === "template_manager"}
@@ -2687,7 +2689,7 @@
         values={templateValues}
         notice={templateNotice}
         busy={templateBusy}
-        translate={tr}
+
         onQueryChange={(value) => (templateQuery = value)}
         onCategoryChange={(value) => (templateCategory = value)}
         onNew={() => { selectedTemplateId = null; templateDraft = createTemplateDraft(); templateValues = {}; templateNotice = null; }}
@@ -2707,7 +2709,7 @@
         fileNotice={batchFileNotice}
         {styles}
         {scenes}
-        translate={tr}
+
         onStateChange={(value) => (batch = value)}
         onFileSelected={importBatchFile}
         onDownloadTemplate={downloadBatchTemplate}
@@ -2724,7 +2726,7 @@
         state={translation}
         sourceLanguageLabel={translationLanguageLabel(translation.sourceLanguage)}
         targetLanguageLabel={translationLanguageLabel(translation.targetLanguage)}
-        translate={tr}
+
         onTargetChange={chooseTranslationTarget}
         onCancel={cancelTranslationRun}
         onRetry={runTranslation}
@@ -2737,7 +2739,7 @@
     {#if markdownPreview.phase !== "closed"}
       <MarkdownPreviewDialog
         state={markdownPreview}
-        translate={tr}
+
         onModeChange={(mode) => (markdownPreview = selectMarkdownPreviewMode(markdownPreview, mode))}
         onCopySource={() => writeClipboardValue(markdownPreview.sourceText, "✓ 源码已复制")}
         onRetry={runMarkdownPreview}
@@ -2746,14 +2748,14 @@
     {/if}
 
     {#if state.overlay === "clipboard_confirm"}
-      <ClipboardConfirmDialog notice={clipboardNotice} translate={tr} onCancel={closeOverlay} onConfirm={confirmReplaceClipboard} />
+      <ClipboardConfirmDialog notice={clipboardNotice} onCancel={closeOverlay} onConfirm={confirmReplaceClipboard} />
     {/if}
 
     {#if state.overlay === "result_compare"}
       <ResultCompareDialog
         sourceText={state.currentResult?.sourceText ?? ""}
         output={state.output}
-        translate={tr}
+
         onCopySource={copyComparisonSource}
         onCopyOutput={copyComparisonResult}
         onClose={closeOverlay}
@@ -2761,7 +2763,7 @@
     {/if}
 
     {#if state.overlay === "plugin_manager"}
-      <PluginDialog translate={tr} onManage={managePluginSettings} onClose={closeOverlay} />
+      <PluginDialog onManage={managePluginSettings} onClose={closeOverlay} />
     {/if}
 
   </section>
@@ -2797,7 +2799,7 @@
         {cloudQuota}
         {cloudPrivacyBusy}
         {cloudPrivacyNotice}
-        translate={tr}
+
         onClose={cancelSettingsView}
         onSave={saveSettings}
         onSectionChange={selectSettingsSection}
@@ -2839,7 +2841,7 @@
       providerReady={activationProviderReady}
       providerLabel={activeProviderLabel}
       notice={activationNotice}
-      translate={tr}
+
       onChoose={chooseActivationRoute}
       onOpenSettings={openByokSettings}
       onContinue={continueFirstRun}

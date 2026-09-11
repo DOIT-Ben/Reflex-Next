@@ -337,11 +337,17 @@ describe("production frontend architecture", () => {
       /<\/section>[\s\S]{0,1200}\{#if state\.overlay === "settings"\}[\s\S]{0,480}<SettingsDialog/
     );
     expect(firstRunSource).toContain("focusableSelector");
-    expect(firstRunSource).toContain("on:keydown={handleKeydown}");
+    expect(firstRunSource).toContain("onClose={() => void onLater()}");
     expect(firstRunSource).toContain('data-dialog-focus-fallback');
     expect(settingsSource).toContain("focusableSelector");
-    expect(settingsSource).toContain("onkeydown={handleKeydown}");
+    expect(settingsSource).toContain("autofocusClose={false}");
     expect(settingsSource).toContain('data-dialog-focus-fallback');
+    const dialogShellSource = readFileSync(
+      join(sourceRoot, "components", "ui", "DialogShell.svelte"),
+      "utf8"
+    );
+    expect(dialogShellSource).toContain("Escape");
+    expect(dialogShellSource).toContain("trapFocus");
     expect(appSource).toContain("data-dialog-focus-fallback");
     const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
     expect(styles).toMatch(

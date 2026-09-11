@@ -1,17 +1,18 @@
 <script lang="ts">
   import DialogShell from "../ui/DialogShell.svelte";
+  import { translator } from "../../domain/i18nStore";
   import type { MarkdownPreviewMode, MarkdownPreviewState } from "../../domain/markdownPreviewState";
 
   interface Props {
     state: MarkdownPreviewState;
-    translate: (source: string, values?: Record<string, string | number>) => string;
     onModeChange: (mode: MarkdownPreviewMode) => void;
     onCopySource: () => void;
     onRetry: () => void;
     onClose: () => void;
   }
 
-  let { state, translate, onModeChange, onCopySource, onRetry, onClose }: Props = $props();
+  let { state, onModeChange, onCopySource, onRetry, onClose }: Props = $props();
+  let translate = $derived($translator);
   const modes: Array<{ id: MarkdownPreviewMode; label: string }> = [
     { id: "split", label: "分栏" },
     { id: "source", label: "源码" },

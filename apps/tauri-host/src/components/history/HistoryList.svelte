@@ -1,17 +1,18 @@
 <script lang="ts">
+  import { translator } from "../../domain/i18nStore";
   import type { HistoryState, HistorySummary } from "../../domain/historyState";
   import EmptyState from "../ui/EmptyState.svelte";
 
   interface Props {
-    state: HistoryState;
-    translate: (source: string, values?: Record<string, string | number>) => string;
+    state: HistoryState;
     sceneLabel: (id: string) => string;
     styleLabel: (id: string) => string;
     onSelect: (item: HistorySummary) => void;
     onMore: () => void;
   }
 
-  let { state, translate, sceneLabel, styleLabel, onSelect, onMore }: Props = $props();
+  let { state, sceneLabel, styleLabel, onSelect, onMore }: Props = $props();
+  let translate = $derived($translator);
 </script>
 
 <aside class="history-list" aria-label={translate("历史记录列表")}>

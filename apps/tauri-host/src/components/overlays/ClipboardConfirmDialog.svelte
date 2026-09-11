@@ -3,15 +3,16 @@
   import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
   import BaseButton from "../ui/BaseButton.svelte";
   import DialogShell from "../ui/DialogShell.svelte";
+  import { translator } from "../../domain/i18nStore";
 
   interface Props {
     notice: string | null;
-    translate: (source: string, values?: Record<string, string | number>) => string;
     onCancel: () => void;
     onConfirm: () => void;
   }
 
-  let { notice, translate, onCancel, onConfirm }: Props = $props();
+  let { notice, onCancel, onConfirm }: Props = $props();
+  let translate = $derived($translator);
   let cancelButton: { focus: () => void };
   onMount(() => cancelButton?.focus());
 </script>

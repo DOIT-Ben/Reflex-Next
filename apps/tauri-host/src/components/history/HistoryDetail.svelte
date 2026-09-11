@@ -1,12 +1,12 @@
 <script lang="ts">
+  import { translator } from "../../domain/i18nStore";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import { historyElapsedLabel, type HistoryState } from "../../domain/historyState";
   import EmptyState from "../ui/EmptyState.svelte";
 
   interface Props {
     state: HistoryState;
-    detail: Record<string, unknown> | null;
-    translate: (source: string, values?: Record<string, string | number>) => string;
+    detail: Record<string, unknown> | null;
     sceneLabel: (id: string) => string;
     onRate: (score: number) => void;
     onDelete: () => void;
@@ -14,7 +14,8 @@
     onReuseResult: () => void;
   }
 
-  let { state, detail, translate, sceneLabel, onRate, onDelete, onReuseInput, onReuseResult }: Props = $props();
+  let { state, detail, sceneLabel, onRate, onDelete, onReuseInput, onReuseResult }: Props = $props();
+  let translate = $derived($translator);
 </script>
 
 <article class="history-detail">

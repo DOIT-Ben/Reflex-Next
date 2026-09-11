@@ -1,7 +1,5 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import Settings2 from "@lucide/svelte/icons/settings-2";
-  import X from "@lucide/svelte/icons/x";
   import type { DesktopStatus } from "../../domain/desktopBridge";
   import type { CloudQualityRelease, CloudQuota } from "../../domain/feedbackBridge";
   import {
@@ -9,10 +7,12 @@
     type HostSettingsDraft,
     type SettingsPluginId
   } from "../../domain/hostState";
+  import { translator } from "../../domain/i18nStore";
   import type { ProviderOption } from "../../domain/providerCatalog";
   import type { OptimizeMode, OptimizeStyle } from "../../domain/reflexSession";
   import type { SecretStatus } from "../../domain/settingsApi";
   import type { SemanticModelState } from "../../domain/semanticModelState";
+  import DialogShell from "../ui/DialogShell.svelte";
   import SelectField from "../ui/SelectField.svelte";
   import { settingsSections, type SettingsSection } from "./types";
 
@@ -46,7 +46,6 @@
     cloudQuota: CloudQuota | null;
     cloudPrivacyBusy: boolean;
     cloudPrivacyNotice: string | null;
-    translate: (source: string, values?: Record<string, string | number>) => string;
     onClose: () => void;
     onSave: () => void;
     onSectionChange: (section: SettingsSection) => void;
@@ -103,7 +102,6 @@
     cloudQuota,
     cloudPrivacyBusy,
     cloudPrivacyNotice,
-    translate,
     onClose,
     onSave,
     onSectionChange,
@@ -129,13 +127,14 @@
     onCloudRefresh,
     onCloudDeleteData
   }: Props = $props();
-  let dialog: HTMLDivElement | undefined;
+  let translate = $derived($translator);
+  let body: HTMLDivElement | undefined;
   let restoreFocus: HTMLElement | null = null;
   const focusableSelector =
     'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
 
   function focusableElements(): HTMLElement[] {
-    return Array.from(dialog?.querySelectorAll<HTMLElement>(focusableSelector) ?? []).filter(
+    return Array.from(body?.querySelectorAll<HTMLElement>(focusableSelector) ?? []).filter(
       (element) => element.offsetWidth > 0 || element.offsetHeight > 0
     );
   }
@@ -147,26 +146,6 @@
         element !== document.documentElement &&
         !element.closest("[inert]")
     );
-  }
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      onClose();
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const elements = focusableElements();
-    if (elements.length === 0) return;
-    const first = elements[0];
-    const last = elements[elements.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
   }
 
   onMount(() => {
@@ -267,29 +246,16 @@
   }
 </script>
 
-<div class="settings-layer" role="presentation">
-  <div
-    bind:this={dialog}
-    class="settings-dialog"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="settings-title"
-    tabindex="-1"
-    onkeydown={handleKeydown}
-  >
-    <header class="settings-head">
-      <div class="settings-title">
-        <span class="settings-title-icon" aria-hidden="true"><Settings2 size={18} strokeWidth={2} /></span>
-        <div>
-          <h2 id="settings-title">{translate("设置")}</h2>
-          <p>{translate("管理模型、默认行为和本地隐私。")}</p>
-        </div>
-      </div>
-      <button class="icon-button" type="button" aria-label={translate("关闭设置")} onclick={onClose}>
-        <X size={17} strokeWidth={2} />
-      </button>
-    </header>
-
+<DialogShell
+  title={translate("设置")}
+  description={translate("管理模型、默认行为和本地隐私。")}
+  size="sheet"
+  z={30}
+  closeLabel={translate("关闭设置")}
+  onClose={onClose}
+  autofocusClose={false}
+>
+  <div class="settings-body" bind:this={body}>
     <div class="settings-layout">
       <nav class="settings-nav" aria-label={translate("设置分类")}>
         {#each settingsSections as item}
@@ -606,13 +572,32 @@
         {/if}
       </div>
     </div>
-
-    <footer class="settings-footer">
-      <p class="settings-save-notice" aria-live="polite">{notice ? translate(notice) : ""}</p>
-      <button class="outline" type="button" disabled={busy} onclick={onClose}>{translate("取消")}</button>
-      <button class="primary small" type="button" disabled={busy} onclick={onSave}>
-        {translate(busy ? "正在保存" : "保存设置")}
-      </button>
-    </footer>
   </div>
-</div>
+
+  <div class="settings-footer" slot="footer">
+    <p class="settings-save-notice" aria-live="polite">{notice ? translate(notice) : ""}</p>
+    <button class="outline" type="button" disabled={busy} onclick={onClose}>{translate("取消")}</button>
+    <button class="primary small" type="button" disabled={busy} onclick={onSave}>
+      {translate(busy ? "正在保存" : "保存设置")}
+    </button>
+  </div>
+</DialogShell>
+
+<style>
+  .settings-body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .settings-body :global(.settings-layout) {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .settings-footer {
+    flex: 0 0 auto;
+    margin-top: 14px;
+  }
+</style>

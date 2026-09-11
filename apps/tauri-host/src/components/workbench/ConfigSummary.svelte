@@ -8,6 +8,7 @@
   import type { WorkbenchModelOption } from "../../domain/providerCatalog";
   import SelectField from "../ui/SelectField.svelte";
   import Spinner from "../ui/Spinner.svelte";
+  import { translator } from "../../domain/i18nStore";
 
   export let items: ReadonlyArray<ConfigSummaryItem> = [];
   export let phase: WorkbenchPhase = "empty";
@@ -24,7 +25,8 @@
   export let selectedProvider: string | null = null;
   export let selectedModel: string | null = null;
   export let onModelChange: WorkbenchModelHandler | undefined = undefined;
-  export let translate: (source: string, values?: Record<string, string | number>) => string = (source) => source;
+
+  $: translate = $translator;
 
   $: running = phase === "running";
   $: modelOptions = models.map((model) => ({

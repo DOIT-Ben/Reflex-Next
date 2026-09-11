@@ -3,6 +3,7 @@
   import DialogShell from "../ui/DialogShell.svelte";
   import { templateVariables, type PromptTemplate, type TemplateDraft } from "../../domain/templateLibrary";
   import SelectField from "../ui/SelectField.svelte";
+  import { translator } from "../../domain/i18nStore";
 
   interface Props {
     query: string;
@@ -14,7 +15,6 @@
     values: Record<string, string>;
     notice: string | null;
     busy: boolean;
-    translate: (source: string, values?: Record<string, string | number>) => string;
     onQueryChange: (value: string) => void;
     onCategoryChange: (value: string | null) => void;
     onNew: () => void;
@@ -37,7 +37,6 @@
     values,
     notice,
     busy,
-    translate,
     onQueryChange,
     onCategoryChange,
     onNew,
@@ -49,6 +48,7 @@
     onApply,
     onClose
   }: Props = $props();
+  let translate = $derived($translator);
   let categoryOptions = $derived([
     { value: "", label: translate("全部分类") },
     ...categories.map((item) => ({ value: item, label: item }))

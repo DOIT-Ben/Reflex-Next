@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { translator } from "../../domain/i18nStore";
   import MoreHorizontal from "@lucide/svelte/icons/ellipsis";
   import type { HistoryExportFormat } from "../../domain/historyAdminBridge";
   import type { HistoryBackupsState } from "../../domain/historyState";
@@ -6,8 +7,7 @@
 
   interface Props {
     exportFormat: HistoryExportFormat;
-    backups: HistoryBackupsState;
-    translate: (source: string, values?: Record<string, string | number>) => string;
+    backups: HistoryBackupsState;
     onExportFormatChange: (format: HistoryExportFormat) => void;
     onBackupChange: (id: string) => void;
     onExport: () => void;
@@ -22,7 +22,6 @@
   let {
     exportFormat,
     backups,
-    translate,
     onExportFormatChange,
     onBackupChange,
     onExport,
@@ -33,6 +32,7 @@
     onRotate,
     onClear
   }: Props = $props();
+  let translate = $derived($translator);
   const exportOptions = [
     { value: "json", label: "JSON" },
     { value: "csv", label: "CSV" },

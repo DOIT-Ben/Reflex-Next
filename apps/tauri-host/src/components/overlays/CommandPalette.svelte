@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import Command from "@lucide/svelte/icons/command";
   import X from "@lucide/svelte/icons/x";
+  import { translator } from "../../domain/i18nStore";
 
   export type CommandItem = {
     id: string;
@@ -12,11 +13,11 @@
 
   interface Props {
     items: CommandItem[];
-    translate: (source: string, values?: Record<string, string | number>) => string;
     onClose: () => void;
   }
 
-  let { items, translate, onClose }: Props = $props();
+  let { items, onClose }: Props = $props();
+  let translate = $derived($translator);
   let firstAction = $state<HTMLButtonElement>();
   onMount(() => firstAction?.focus());
 </script>

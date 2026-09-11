@@ -1,12 +1,12 @@
 <script lang="ts">
   import DialogShell from "../ui/DialogShell.svelte";
+  import { translator } from "../../domain/i18nStore";
   import type { TranslationState, TranslationTarget } from "../../domain/translationState";
 
   interface Props {
     state: TranslationState;
     sourceLanguageLabel: string;
     targetLanguageLabel: string;
-    translate: (source: string, values?: Record<string, string | number>) => string;
     onTargetChange: (target: TranslationTarget) => void;
     onCancel: () => void;
     onRetry: () => void;
@@ -19,7 +19,6 @@
     state,
     sourceLanguageLabel,
     targetLanguageLabel,
-    translate,
     onTargetChange,
     onCancel,
     onRetry,
@@ -28,15 +27,19 @@
     onClose
   }: Props = $props();
 
+  let translate = $derived($translator);
+
   const targets: Array<{ id: TranslationTarget; label: string }> = [
     { id: "auto", label: "自动" },
     { id: "zh", label: "中文" },
     { id: "en", label: "English" }
   ];
 
-  $: description = state.sourceLanguage && state.targetLanguage
-    ? `${sourceLanguageLabel} → ${targetLanguageLabel}`
-    : "";
+  let description = $derived(
+    state.sourceLanguage && state.targetLanguage
+      ? `${sourceLanguageLabel} → ${targetLanguageLabel}`
+      : ""
+  );
 </script>
 
 <DialogShell

@@ -1,28 +1,30 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import type { ActivationRoute } from "../../domain/activationState";
+  import { translator } from "../../domain/i18nStore";
   import BaseButton from "../ui/BaseButton.svelte";
+  import DialogShell from "../ui/DialogShell.svelte";
 
   export let routes: ReadonlyArray<ActivationRoute> = ["byok"];
   export let selectedRoute: ActivationRoute | null = null;
   export let providerReady = false;
   export let providerLabel = "";
   export let notice = "";
-  export let translate: (source: string, values?: Record<string, string | number>) => string = (source) => source;
   export let onChoose: (route: ActivationRoute) => void | Promise<void> = () => undefined;
   export let onOpenSettings: () => void | Promise<void> = () => undefined;
   export let onContinue: () => void | Promise<void> = () => undefined;
   export let onLater: () => void | Promise<void> = () => undefined;
 
+  $: translate = $translator;
   $: cloudAvailable = routes.includes("cloud");
 
-  let dialog: HTMLDialogElement;
+  let body: HTMLElement;
   let restoreFocus: HTMLElement | null = null;
   const focusableSelector =
     'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
 
   function focusableElements(): HTMLElement[] {
-    return Array.from(dialog?.querySelectorAll<HTMLElement>(focusableSelector) ?? []).filter(
+    return Array.from(body?.querySelectorAll<HTMLElement>(focusableSelector) ?? []).filter(
       (element) => element.offsetWidth > 0 || element.offsetHeight > 0
     );
   }
@@ -34,26 +36,6 @@
         element !== document.documentElement &&
         !element.closest("[inert]")
     );
-  }
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      void onLater();
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const elements = focusableElements();
-    if (elements.length === 0) return;
-    const first = elements[0];
-    const last = elements[elements.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
   }
 
   onMount(() => {
@@ -70,19 +52,16 @@
   });
 </script>
 
-<div class="activation-layer" role="presentation">
-  <dialog
-    bind:this={dialog}
-    class="activation-dialog"
-    open
-    tabindex="-1"
-    aria-modal="true"
-    aria-labelledby="activation-title"
-    aria-describedby="activation-intro"
-    on:keydown={handleKeydown}
-  >
+<DialogShell
+  title={translate("开始使用 Reflex")}
+  z={75}
+  onClose={() => void onLater()}
+  showClose={false}
+  autofocusClose={false}
+  size="sm"
+>
+  <div class="activation-body" bind:this={body}>
     <p class="eyebrow">Reflex</p>
-    <h2 id="activation-title">{translate("开始使用 Reflex")}</h2>
     <p id="activation-intro" class="intro">{translate("先选择本次文本的处理方式。")}</p>
 
     {#if selectedRoute === null}
@@ -128,34 +107,16 @@
     {/if}
 
     <BaseButton variant="quiet" onclick={() => void onLater()}>{translate("稍后设置")}</BaseButton>
-  </dialog>
-</div>
+  </div>
+</DialogShell>
 
 <style>
-  .activation-layer {
-    position: fixed;
-    z-index: 75;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    padding: 18px;
-    background: rgb(26 31 47 / 42%);
-  }
-
-  .activation-dialog {
-    width: min(100%, 430px);
-    margin: 0;
-    padding: 28px;
+  .activation-body {
     color: var(--text, #202535);
-    background: var(--surface, #fff);
-    border: 1px solid var(--line, #e1e6ee);
-    border-radius: 15px;
-    box-shadow: 0 24px 66px rgb(23 30 53 / 24%);
   }
 
-  .eyebrow, h2, .intro, .ready-state p, .notice { margin: 0; }
+  .eyebrow, .intro, .ready-state p, .notice { margin: 0; }
   .eyebrow { color: var(--accent, #5065c7); font-size: var(--font-meta); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-  h2 { margin-top: 7px; font-size: var(--font-title); line-height: 1.3; }
   .intro { margin-top: 7px; color: var(--muted, #697386); font-size: var(--font-body); line-height: 1.6; }
   .route-list { display: grid; gap: 9px; margin-top: 22px; }
   .route-card { display: flex; min-height: 82px; flex-direction: column; align-items: flex-start; gap: 5px; padding: 15px; color: var(--text, #202535); background: var(--surface, #fff); border: 1px solid var(--line, #e1e6ee); border-radius: 10px; font: inherit; text-align: left; cursor: pointer; }
@@ -168,5 +129,4 @@
   .ready-state p { color: var(--muted, #697386); font-size: var(--font-meta); line-height: 1.55; }
   .notice { margin-top: 12px; color: var(--muted, #697386); font-size: var(--font-meta); line-height: 1.5; }
   button:focus-visible { outline: 2px solid var(--accent, #5065c7); outline-offset: 2px; }
-  @media (max-width: 420px) { .activation-dialog { padding: 22px; } }
 </style>

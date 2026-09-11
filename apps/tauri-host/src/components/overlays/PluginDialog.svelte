@@ -1,13 +1,14 @@
 <script lang="ts">
   import DialogShell from "../ui/DialogShell.svelte";
+  import { translator } from "../../domain/i18nStore";
 
   interface Props {
-    translate: (source: string, values?: Record<string, string | number>) => string;
     onManage: () => void;
     onClose: () => void;
   }
 
-  let { translate, onManage, onClose }: Props = $props();
+  let { onManage, onClose }: Props = $props();
+  let translate = $derived($translator);
 
   const plugins = [
     { name: "MiniMax 模型服务", description: "生成与优化文本", permission: "网络访问" },

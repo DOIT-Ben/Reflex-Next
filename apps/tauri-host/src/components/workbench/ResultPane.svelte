@@ -2,6 +2,7 @@
   import ThumbsDown from "@lucide/svelte/icons/thumbs-down";
   import ThumbsUp from "@lucide/svelte/icons/thumbs-up";
   import Spinner from "../ui/Spinner.svelte";
+  import { translator } from "../../domain/i18nStore";
 
   import type {
     ResultMetaItem,
@@ -42,7 +43,8 @@
   export let onCopyDiagnosticId: WorkbenchActionHandler | undefined = undefined;
   export let onPositiveFeedback: WorkbenchActionHandler | undefined = undefined;
   export let onNegativeFeedback: WorkbenchActionHandler | undefined = undefined;
-  export let translate: (source: string, values?: Record<string, string | number>) => string = (source) => source;
+
+  $: translate = $translator;
 
   $: hasOutput = output.length > 0;
   $: errorGuidance = !inputPreserved
