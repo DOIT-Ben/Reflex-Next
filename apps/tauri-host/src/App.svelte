@@ -80,7 +80,6 @@
     applyHostAction,
     applyPersistedConfig,
     applySettingsDraft,
-    applyTranslationAsCurrentResult,
     cancelGeneration,
     cancelAdjust,
     cancelSettings,
@@ -126,6 +125,9 @@
     type HostAction
   } from "./domain/desktopBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
+  import { createTranslationFlow } from "./domain/translationFlow";
+  import { createMarkdownPreviewFlow } from "./domain/markdownPreviewFlow";
+  import type { TranslationLanguage, TranslationTarget } from "./domain/translationState";
   import {
     createProviderCatalogBridge,
     PROVIDER_CATALOG_UNAVAILABLE_MESSAGE,
@@ -145,30 +147,6 @@
     type SettingsApi
   } from "./domain/settingsApi";
   import type { CoreBridge, TauriHostApi } from "./domain/coreBridge";
-  import {
-    appendTranslationChunk,
-    buildCloudTranslationPlan,
-    buildTranslationInput,
-    cancelTranslation,
-    closeTranslation,
-    completeTranslation,
-    createTranslationState,
-    failTranslation,
-    openTranslation,
-    selectTranslationTarget,
-    startTranslation,
-    translationErrorMessage,
-    type TranslationLanguage,
-    type TranslationTarget
-  } from "./domain/translationState";
-  import {
-    closeMarkdownPreview,
-    completeMarkdownPreview,
-    createMarkdownPreviewState,
-    failMarkdownPreview,
-    openMarkdownPreview,
-    selectMarkdownPreviewMode
-  } from "./domain/markdownPreviewState";
   import {
     batchCanExport,
     beginBatchParse,
@@ -270,11 +248,6 @@
   let draft: RequestSettings = { ...state.requestDraft };
   let settingsDraft: HostSettingsDraft = createDefaultSettingsDraft(state.requestDraft);
   let activeRun: AbortController | null = null;
-  let translationRun: AbortController | null = null;
-  let translation = createTranslationState();
-  let translationSourceResult: CurrentResult | null = null;
-  let markdownPreview = createMarkdownPreviewState();
-  let markdownPreviewRun: AbortController | null = null;
   let batch = createBatchState();
   let batchRun: AbortController | null = null;
   let semanticModel = createSemanticModelState();
@@ -386,6 +359,24 @@
   }
 
   const viewScale = createViewScaleStore(safeLocalStorage());
+
+  const translationFlow = createTranslationFlow({
+    coreBridge: () => coreBridge,
+    capabilityBridge: () => capabilityBridge,
+    currentResult: () => state.currentResult ?? null,
+    fallbackRoute: () => ({ provider: state.requestDraft.provider, model: state.requestDraft.model }),
+    updateHostState: (updater) => {
+      state = updater(state);
+    },
+    writeClipboardValue: (text, successMessage) => writeClipboardValue(text, successMessage),
+    showToast
+  });
+  const translation = translationFlow.state;
+
+  const markdownPreviewFlow = createMarkdownPreviewFlow({
+    capabilityBridge: () => capabilityBridge
+  });
+  const markdownPreview = markdownPreviewFlow.state;
 
   function workbenchScrollSurface(): HTMLElement | null {
     const surface = workbenchSurfaceEl;
@@ -504,8 +495,8 @@
       stopListening?.();
       stopHistoryReuseListening?.();
       activeRun?.abort();
-      translationRun?.abort();
-      markdownPreviewRun?.abort();
+      translationFlow.close();
+      markdownPreviewFlow.close();
       batchRun?.abort();
       semanticModelRun?.abort();
     };
@@ -604,9 +595,9 @@
         ? "settings"
         : batch.phase !== "closed"
           ? "batch"
-          : translation.phase !== "closed"
+          : $translation.phase !== "closed"
             ? "translation"
-            : markdownPreview.phase !== "closed"
+            : $markdownPreview.phase !== "closed"
               ? "markdown"
               : commandPaletteOpen
                 ? "tools"
@@ -668,8 +659,8 @@
     if (state.overlay === "template_manager") closeTemplateManager();
     else if (state.overlay !== null) closeOverlay();
     if (batch.phase !== "closed") closeBatchView();
-    if (translation.phase !== "closed") closeTranslationView();
-    if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
+    if ($translation.phase !== "closed") closeTranslationView();
+    if ($markdownPreview.phase !== "closed") closeMarkdownPreviewView();
   }
 
   function handleNavigation(id: string) {
@@ -708,8 +699,8 @@
   }
 
   function handleHostAction(action: HostAction) {
-    if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
-    if (translation.phase !== "closed") closeTranslationView();
+    if ($markdownPreview.phase !== "closed") closeMarkdownPreviewView();
+    if ($translation.phase !== "closed") closeTranslationView();
     if (action === "settings") {
       beginSettings();
       return;
@@ -718,8 +709,8 @@
   }
 
   function beginAdjust() {
-    if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
-    if (translation.phase !== "closed") closeTranslationView();
+    if ($markdownPreview.phase !== "closed") closeMarkdownPreviewView();
+    if ($translation.phase !== "closed") closeTranslationView();
     state = openAdjust(state);
     draft = { ...(state.adjustDraft ?? state.requestDraft) };
   }
@@ -741,8 +732,8 @@
   }
 
   function beginSettings(preferredProviderId: string | null = null) {
-    if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
-    if (translation.phase !== "closed") closeTranslationView();
+    if ($markdownPreview.phase !== "closed") closeMarkdownPreviewView();
+    if ($translation.phase !== "closed") closeTranslationView();
     state = openSettings(state);
     settingsDraft = { ...(state.settingsDraft ?? settingsDraft) };
     feedbackPromptEnabledDraft = feedbackPromptState.enabled;
@@ -1226,8 +1217,8 @@
       !scenePromptOpen &&
       state.overlay === null &&
       batch.phase === "closed" &&
-      translation.phase === "closed" &&
-      markdownPreview.phase === "closed" &&
+      $translation.phase === "closed" &&
+      $markdownPreview.phase === "closed" &&
       state.phase === "completed";
     const decision = recordSuccessfulGeneration(
       feedbackPromptState,
@@ -1368,200 +1359,49 @@
   }
 
   function openTranslationView() {
-    const source = state.currentResult;
-    if (!source?.output.trim() || !translatorEnabled) return;
-    translationSourceResult = { ...source };
-    translation = openTranslation(translation, source.output);
-    if (translation.phase !== "closed") {
-      void runTranslation();
-    }
+    translationFlow.open(state.currentResult ?? null, translatorEnabled);
   }
 
-  async function runTranslation() {
-    if (translation.phase === "closed") return;
-    translationRun?.abort();
-    const started = startTranslation(translation);
-    translation = started.state;
-    const request = started.request;
-    const controller = new AbortController();
-    translationRun = controller;
-    const currentRoute = translationSourceResult ?? {};
-    const fallbackRoute = {
-      provider: state.requestDraft.provider,
-      model: state.requestDraft.model
-    };
-    const input = buildTranslationInput(
-      translation,
-      currentRoute,
-      fallbackRoute
-    );
-    const cloudPlan = buildCloudTranslationPlan(translation, currentRoute, fallbackRoute);
-    const bridge = capabilityBridge;
-    if (!cloudPlan && (!bridge || !input)) {
-      if (translationRun === controller) {
-        translation = failTranslation(
-          translation,
-          request,
-          "翻译暂时不可用，请重试。"
-        );
-        translationRun = null;
-      }
-      return;
-    }
-
-    try {
-      if (cloudPlan) {
-        for await (const event of coreBridge.optimize(cloudPlan.request, {
-          signal: controller.signal
-        })) {
-          if (controller.signal.aborted || translationRun !== controller) return;
-          if (event.type === "chunk") {
-            translation = appendTranslationChunk(translation, request, event.data.text);
-          } else if (event.type === "done") {
-            translation = completeTranslation(translation, request, {
-              text: event.data.text ?? event.data.final_text,
-              source_language: cloudPlan.sourceLanguage,
-              target_language: cloudPlan.targetLanguage
-            });
-          } else if (event.type === "error") {
-            translation = failTranslation(
-              translation,
-              request,
-              translationErrorMessage(event.data.code)
-            );
-          }
-        }
-      } else if (bridge && input) {
-        for await (const event of bridge.invoke("translator", "translate", input, {
-          signal: controller.signal,
-          timeoutMs: 60_000
-        })) {
-          if (controller.signal.aborted || translationRun !== controller) return;
-          if (event.status === "chunk") {
-            translation = appendTranslationChunk(translation, request, event.data.text);
-          } else if (event.status === "result") {
-            translation = completeTranslation(translation, request, event.data);
-          } else if (event.status === "cancelled") {
-            translation = cancelTranslation(translation, request);
-          } else if (event.status === "error") {
-            translation = failTranslation(
-              translation,
-              request,
-              translationErrorMessage(event.code)
-            );
-          }
-        }
-      }
-      if (translationRun === controller && translation.phase === "streaming") {
-        translation = controller.signal.aborted
-          ? cancelTranslation(translation, request)
-          : failTranslation(translation, request, "翻译暂时不可用，请重试。");
-      }
-    } catch {
-      if (translationRun === controller) {
-        translation = controller.signal.aborted
-          ? cancelTranslation(translation, request)
-          : failTranslation(translation, request, "翻译暂时不可用，请重试。");
-      }
-    } finally {
-      if (translationRun === controller) translationRun = null;
-    }
+  function runTranslation() {
+    void translationFlow.run();
   }
 
   function chooseTranslationTarget(target: TranslationTarget) {
-    const next = selectTranslationTarget(translation, target);
-    if (next === translation) return;
-    translation = next;
-    void runTranslation();
+    translationFlow.chooseTarget(target);
   }
 
   function cancelTranslationRun() {
-    const request = translation.request;
-    translationRun?.abort();
-    translationRun = null;
-    translation = cancelTranslation(translation, request);
+    translationFlow.cancel();
   }
 
   function closeTranslationView() {
-    translationRun?.abort();
-    translationRun = null;
-    translation = closeTranslation(translation);
-    translationSourceResult = null;
+    translationFlow.close();
   }
 
-  async function copyTranslation() {
-    if (!translation.translatedText) return;
-    await writeClipboardValue(translation.translatedText, "✓ 译文已复制");
+  function copyTranslation() {
+    void translationFlow.copy();
   }
 
   function useTranslationAsCurrentResult() {
-    if (!translation.translatedText || !translationSourceResult) return;
-    const next = applyTranslationAsCurrentResult(
-      state,
-      translation.translatedText,
-      translation.request,
-      translationSourceResult
-    );
-    if (next === state) return;
-    state = next;
-    closeTranslationView();
-    showToast("已设为当前结果");
+    translationFlow.useAsCurrentResult();
   }
 
   function openMarkdownPreviewView() {
-    const source = state.currentResult?.output;
-    if (!source?.trim() || !markdownPreviewEnabled) return;
-    markdownPreview = openMarkdownPreview(markdownPreview, source);
-    if (markdownPreview.phase !== "closed") {
-      void runMarkdownPreview();
-    }
+    markdownPreviewFlow.open(state.currentResult?.output ?? "", markdownPreviewEnabled);
   }
 
-  async function runMarkdownPreview() {
-    if (markdownPreview.phase === "closed") return;
-    markdownPreviewRun?.abort();
-    const request = markdownPreview.request;
-    const controller = new AbortController();
-    markdownPreviewRun = controller;
-    const bridge = capabilityBridge;
-    if (!bridge) {
-      markdownPreview = failMarkdownPreview(markdownPreview, request);
-      markdownPreviewRun = null;
-      return;
-    }
-    try {
-      for await (const event of bridge.invoke(
-        "markdown-preview",
-        "preview",
-        { text: markdownPreview.sourceText },
-        { signal: controller.signal, timeoutMs: 20_000 }
-      )) {
-        if (controller.signal.aborted || markdownPreviewRun !== controller) return;
-        if (event.status === "result") {
-          markdownPreview = completeMarkdownPreview(markdownPreview, request, event.data);
-        } else if (event.status === "error" || event.status === "cancelled") {
-          markdownPreview = failMarkdownPreview(markdownPreview, request);
-        }
-      }
-    } catch {
-      if (markdownPreviewRun === controller && !controller.signal.aborted) {
-        markdownPreview = failMarkdownPreview(markdownPreview, request);
-      }
-    } finally {
-      if (markdownPreviewRun === controller) markdownPreviewRun = null;
-    }
+  function runMarkdownPreview() {
+    void markdownPreviewFlow.run();
   }
 
   function closeMarkdownPreviewView() {
-    markdownPreviewRun?.abort();
-    markdownPreviewRun = null;
-    markdownPreview = closeMarkdownPreview(markdownPreview);
+    markdownPreviewFlow.close();
   }
 
   function openBatchView() {
     if (!batchRunnerEnabled) return;
-    if (markdownPreview.phase !== "closed") closeMarkdownPreviewView();
-    if (translation.phase !== "closed") closeTranslationView();
+    if ($markdownPreview.phase !== "closed") closeMarkdownPreviewView();
+    if ($translation.phase !== "closed") closeTranslationView();
     batch = openBatch(batch);
     batchFileNotice = null;
   }
@@ -2356,14 +2196,14 @@
       }
       return;
     }
-    if (markdownPreview.phase !== "closed") {
+    if ($markdownPreview.phase !== "closed") {
       if (event.key === "Escape") {
         event.preventDefault();
         closeMarkdownPreviewView(true);
       }
       return;
     }
-    if (translation.phase !== "closed") {
+    if ($translation.phase !== "closed") {
       if (event.key === "Escape") {
         event.preventDefault();
         closeTranslationView(true);
@@ -2685,29 +2525,29 @@
       />
     {/if}
 
-    {#if translation.phase !== "closed"}
+    {#if $translation.phase !== "closed"}
       <TranslationDialog
-        state={translation}
-        sourceLanguageLabel={translationLanguageLabel(translation.sourceLanguage)}
-        targetLanguageLabel={translationLanguageLabel(translation.targetLanguage)}
+        state={$translation}
+        sourceLanguageLabel={translationLanguageLabel($translation.sourceLanguage)}
+        targetLanguageLabel={translationLanguageLabel($translation.targetLanguage)}
 
         onTargetChange={chooseTranslationTarget}
         onCancel={cancelTranslationRun}
         onRetry={runTranslation}
         onCopy={copyTranslation}
         onUseResult={useTranslationAsCurrentResult}
-        onClose={() => closeTranslationView(true)}
+        onClose={closeTranslationView}
       />
     {/if}
 
-    {#if markdownPreview.phase !== "closed"}
+    {#if $markdownPreview.phase !== "closed"}
       <MarkdownPreviewDialog
-        state={markdownPreview}
+        state={$markdownPreview}
 
-        onModeChange={(mode) => (markdownPreview = selectMarkdownPreviewMode(markdownPreview, mode))}
-        onCopySource={() => writeClipboardValue(markdownPreview.sourceText, "✓ 源码已复制")}
+        onModeChange={(mode) => markdownPreviewFlow.setMode(mode)}
+        onCopySource={() => writeClipboardValue($markdownPreview.sourceText, "✓ 源码已复制")}
         onRetry={runMarkdownPreview}
-        onClose={() => closeMarkdownPreviewView(true)}
+        onClose={closeMarkdownPreviewView}
       />
     {/if}
 
