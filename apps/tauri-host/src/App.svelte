@@ -35,12 +35,7 @@
   import {
     activationRouteForProvider,
     availableActivationRoutes,
-    completeActivation,
-    createActivationState,
-    normalizeActivationState,
-    selectActivationRoute,
-    type ActivationRoute,
-    type ActivationState
+    type ActivationRoute
   } from "./domain/activationState";
   import { createCloudPrivacyFlow } from "./domain/cloudPrivacyFlow";
   import { createDiagnosticFlow } from "./domain/diagnosticFlow";
@@ -54,37 +49,33 @@
   } from "./domain/feedbackBridge";
   import { normalizeFeedbackPromptState } from "./domain/feedbackPrompt";
   import { createFeedbackFlow } from "./domain/feedbackFlow";
+  import { createFirstRunFlow } from "./domain/firstRunFlow";
+  import { createOptimizationFlow } from "./domain/optimizationFlow";
   import {
     createDefaultCoreBridge,
     createDemoCoreBridge,
-    isSuccessfulCompletionEvent,
     UnavailableCoreBridge
   } from "./domain/coreBridge";
   import {
     applyAdjustDraft,
     applyClipboardError,
     applyClipboardText,
-    applyCoreEnvelope,
     applyCurrentResultRating,
     applyHistoryReuseIntent,
     applyHostAction,
     applyPersistedConfig,
     applySettingsDraft,
-    cancelGeneration,
     cancelAdjust,
     cancelSettings,
     configFromSettingsDraft,
     createDefaultSettingsDraft,
     createHostState,
-    createRequestDraft,
-    createRequestDraftWithSceneChoice,
     openAdjust,
     openSettings,
     resolveHostShortcut,
     retryAfterError,
     selectRequestModel,
     settingsDraftFromConfig,
-    startGeneration,
     updateInput,
     updatePluginSettingsDraft,
     type HostState,
@@ -186,10 +177,6 @@
   let state: HostState = createHostState();
   let draft: RequestSettings = { ...state.requestDraft };
   let settingsDraft: HostSettingsDraft = createDefaultSettingsDraft(state.requestDraft);
-  let activeRun: AbortController | null = null;
-  let activationState: ActivationState = createActivationState();
-  let activationOpen = false;
-  let activationNotice = "";
   let secretInput = "";
   let settingsSection: SettingsSection = "provider";
   let providerStatus: ProviderAvailability = "checking";
@@ -203,8 +190,6 @@
   let appVersion = __REFLEX_APP_VERSION__;
   let windowSizePreset: WindowSizePreset = "default";
   let commandPaletteOpen = false;
-  let scenePromptOpen = false;
-  let scenePromptSelection = "";
   let commandItems: CommandItem[] = [];
   let confirmation: {
     title: string;
@@ -377,6 +362,33 @@
   const feedbackSubmitBusy = feedbackFlow.submitBusy;
   const feedbackSubmitNotice = feedbackFlow.submitNotice;
 
+  const firstRunFlow = createFirstRunFlow({
+    persistConfigPatch: (build) => settingsFlow.persistConfigPatch(build),
+    hasPersistedConfig: () => Boolean(settingsApi && $persistedConfig),
+    routeForProvider: (providerId) => activationRouteForProvider(providerId),
+    currentProviderId: () => activeProviderId
+  });
+  const activationState = firstRunFlow.state;
+  const activationOpen = firstRunFlow.open;
+  const activationNotice = firstRunFlow.notice;
+
+  const optimizationFlow = createOptimizationFlow({
+    coreBridge: () => coreBridge,
+    updateHostState: (updater) => {
+      state = updater(state);
+    },
+    hostState: () => state,
+    canGenerate: () => canGenerate,
+    language: () => ($persistedConfig?.language === "en-US" ? "en-US" : "zh-CN"),
+    onSuccessfulCompletion: async () => {
+      await handleCompletionClipboard();
+      await completeFirstRunActivation();
+      await recordFeedbackPromptCompletion();
+    }
+  });
+  const scenePromptOpen = optimizationFlow.scenePromptOpen;
+  const scenePromptSelection = optimizationFlow.scenePromptSelection;
+
   function workbenchScrollSurface(): HTMLElement | null {
     const surface = workbenchSurfaceEl;
     if (!surface || surface.scrollHeight <= surface.clientHeight) return null;
@@ -493,7 +505,7 @@
       disposed = true;
       stopListening?.();
       stopHistoryReuseListening?.();
-      activeRun?.abort();
+      optimizationFlow.dispose();
       translationFlow.close();
       markdownPreviewFlow.close();
       batchFlow.close();
@@ -507,7 +519,7 @@
     activeProviderId === "reflex-cloud"
   );
   $: bridgeUnavailable = coreBridgeState === "unavailable" && !bridgeReady;
-  $: canGenerate = state.canGenerate && activeRun === null && !isGenerating(state.phase) && bridgeReady;
+  $: canGenerate = state.canGenerate && !optimizationFlow.isRunning() && !isGenerating(state.phase) && bridgeReady;
   $: translatorEnabled = $persistedConfig?.enabled_plugins.includes("translator") ?? true;
   $: markdownPreviewEnabled = $persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
   $: batchRunnerEnabled = $persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
@@ -825,8 +837,7 @@
   async function hydrateSettings(preferredProviderId: string | null = null) {
     const config = await settingsFlow.loadConfig();
     if (!config) return;
-    activationState = normalizeActivationState(config.first_run_activation);
-    activationOpen = !activationState.completed;
+    firstRunFlow.hydrate(config);
     feedbackFlow.hydratePromptState(normalizeFeedbackPromptState(config.feedback_prompt));
     templateFlow.hydrate(readCustomTemplates(config.custom_templates));
     state = applyPersistedConfig(state, config);
@@ -966,91 +977,20 @@
     await feedbackFlow.recordCompletion(promptAvailable);
   }
 
-  async function runOptimization() {
-    if (!canGenerate) return;
-    if (state.requestDraft.scene_policy === "ask") {
-      scenePromptSelection = state.requestDraft.scene ?? "";
-      scenePromptOpen = true;
-      return;
-    }
-    await executeOptimization(createRequestDraft(state, $persistedConfig?.language ?? "zh-CN"));
+  function runOptimization() {
+    return optimizationFlow.request();
   }
 
   function cancelScenePrompt() {
-    scenePromptOpen = false;
+    optimizationFlow.cancelScene();
   }
 
-  async function confirmScenePrompt() {
-    if (!canGenerate) {
-      scenePromptOpen = false;
-      return;
-    }
-    const request = createRequestDraftWithSceneChoice(
-      state,
-      scenePromptSelection,
-      $persistedConfig?.language ?? "zh-CN"
-    );
-    scenePromptOpen = false;
-    await executeOptimization(request);
-  }
-
-  async function executeOptimization(request = createRequestDraft(state, $persistedConfig?.language ?? "zh-CN")) {
-    if (activeRun !== null || !canGenerate) return;
-    const requestId = `ui-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const controller = new AbortController();
-    activeRun = controller;
-    state = startGeneration(state, requestId);
-    let completionHandled = false;
-
-    try {
-      for await (const event of coreBridge.optimize(request, {
-        signal: controller.signal
-      })) {
-        if (controller.signal.aborted) break;
-        state = applyCoreEnvelope(state, {
-          version: 1,
-          request_id: requestId,
-          event
-        });
-        if (
-          !completionHandled &&
-          isSuccessfulCompletionEvent(event) &&
-          state.phase === "completed" &&
-          Boolean(state.currentResult?.output.trim())
-        ) {
-          completionHandled = true;
-          await handleCompletionClipboard();
-          await completeFirstRunActivation();
-          await recordFeedbackPromptCompletion();
-        }
-      }
-    } catch {
-      if (!controller.signal.aborted && state.phase !== "completed") {
-        state = applyCoreEnvelope(state, {
-          version: 1,
-          request_id: requestId,
-          event: {
-            type: "error",
-            data: {
-              code: "runtime_stream_failed",
-              message: "生成服务连接中断，请重试。",
-              recoverable: true,
-              action: "retry"
-            }
-          }
-        });
-      }
-    } finally {
-      if (activeRun === controller) {
-        activeRun = null;
-      }
-    }
+  function confirmScenePrompt() {
+    return optimizationFlow.confirmScene();
   }
 
   function cancelRun() {
-    activeRun?.abort();
-    activeRun = null;
-    state = cancelGeneration(state);
+    optimizationFlow.cancel();
   }
 
   async function copyResult() {
@@ -1323,34 +1263,13 @@
     beginSettings();
   }
 
-  async function persistActivationState(next: ActivationState): Promise<boolean> {
-    const previous = activationState;
-    activationState = next;
-    if (!settingsApi || !$persistedConfig) {
-      activationState = previous;
-      activationNotice = "首次使用状态暂未保存，本次仍可继续使用。";
-      return false;
-    }
-    try {
-      const saved = await settingsFlow.persistConfigPatch((latest) => ({
-        ...latest,
-        first_run_activation: next
-      }));
-      activationState = normalizeActivationState(saved.first_run_activation);
-      return true;
-    } catch {
-      activationState = previous;
-      activationNotice = "首次使用状态暂未保存，本次仍可继续使用。";
-      return false;
-    }
-  }
-
   async function chooseActivationRoute(route: ActivationRoute) {
-    if (!availableActivationRoutes($cloudAvailability).includes(route)) return;
-    const next = selectActivationRoute(activationState, route);
-    const persisted = await persistActivationState(next);
+    const persisted = await firstRunFlow.chooseRoute(
+      route,
+      availableActivationRoutes($cloudAvailability)
+    );
     if (!persisted) return;
-    activationNotice = "";
+    activationNotice.set("");
     if (route === "cloud") {
       const model = providerDefaultModel("reflex-cloud", $providerOptions);
       if (model) switchWorkbenchModel("reflex-cloud", model);
@@ -1368,40 +1287,31 @@
   }
 
   function continueFirstRun() {
-    activationOpen = false;
-    activationNotice = "";
+    firstRunFlow.postpone();
   }
 
   function postponeFirstRun() {
-    activationOpen = false;
-    activationNotice = "";
+    firstRunFlow.postpone();
   }
 
   async function completeFirstRunActivation() {
-    if (activationState.completed) return;
-    const route = activationState.route ?? activationRouteForProvider(activeProviderId);
-    const completed = completeActivation(selectActivationRoute(activationState, route));
-    const persisted = await persistActivationState(completed);
-    if (persisted) {
-      activationOpen = false;
-      activationNotice = "";
-    }
+    await firstRunFlow.complete();
   }
 
   function providerReadyForActivation(providerId: string | null): boolean {
-    if (providerId === "reflex-cloud") return cloudAvailability === "ready";
+    if (providerId === "reflex-cloud") return $cloudAvailability === "ready";
     return (
       providerId !== null &&
-      secretStatus.providerId === providerId &&
-      secretStatus.configured &&
-      !providerStatusError
+      $secretStatus.providerId === providerId &&
+      $secretStatus.configured &&
+      !$providerStatusError
     );
   }
 
   async function finishFirstRunFromSettings(providerId: string | null) {
-    if (!activationOpen || !providerReadyForActivation(providerId)) return;
+    if (!$activationOpen || !providerReadyForActivation(providerId)) return;
     await completeFirstRunActivation();
-    if (activationState.completed) cancelSettingsView();
+    if ($activationState.completed) cancelSettingsView();
   }
 
   function managePluginSettings() {
@@ -1656,7 +1566,7 @@
   <section
     class="window"
     aria-label="Reflex quick window"
-    inert={state.overlay === "settings" || activationOpen}
+    inert={state.overlay === "settings" || $activationOpen}
   >
     <ReflexTitleBar
       providerName={tr(providerName(state.requestDraft.provider, providerOptions))}
@@ -1804,9 +1714,9 @@
     {#if scenePromptOpen}
       <ScenePromptDialog
         {scenes}
-        selectedScene={scenePromptSelection}
+        selectedScene={$scenePromptSelection}
 
-        onSceneChange={(sceneId) => (scenePromptSelection = sceneId)}
+        onSceneChange={(sceneId) => scenePromptSelection.set(sceneId)}
         onCancel={cancelScenePrompt}
         onConfirm={confirmScenePrompt}
       />
@@ -1987,13 +1897,13 @@
       />
     {/if}
 
-  {#if activationOpen && state.overlay !== "settings"}
+  {#if $activationOpen && state.overlay !== "settings"}
     <FirstRunDialog
       routes={activationRoutes}
-      selectedRoute={activationState.route}
+      selectedRoute={$activationState.route}
       providerReady={activationProviderReady}
       providerLabel={activeProviderLabel}
-      notice={activationNotice}
+      notice={$activationNotice}
 
       onChoose={chooseActivationRoute}
       onOpenSettings={openByokSettings}

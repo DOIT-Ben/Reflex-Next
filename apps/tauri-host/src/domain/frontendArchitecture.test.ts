@@ -317,26 +317,34 @@ describe("production frontend architecture", () => {
       "utf8"
     );
 
-    expect(appSource).toContain("first_run_activation");
+    const firstRunFlowSource = readFileSync(
+      join(sourceRoot, "domain", "firstRunFlow.ts"),
+      "utf8"
+    );
+    const optimizationFlowSource = readFileSync(
+      join(sourceRoot, "domain", "optimizationFlow.ts"),
+      "utf8"
+    );
+
+    expect(firstRunFlowSource).toContain("first_run_activation");
     expect(appSource).toContain("availableActivationRoutes($cloudAvailability)");
     expect(appSource).toContain("completeFirstRunActivation()");
-    expect(appSource).toContain('inert={state.overlay === "settings" || activationOpen}');
-    expect(appSource).toContain("runtime_stream_failed");
-    expect(appSource).toMatch(
-      /try\s*\{[\s\S]{0,200}for await \(const event of coreBridge\.optimize[\s\S]{0,1600}\}\s*catch[\s\S]{0,600}\}\s*finally/
+    expect(appSource).toContain('inert={state.overlay === "settings" || $activationOpen}');
+    expect(optimizationFlowSource).toContain("runtime_stream_failed");
+    expect(optimizationFlowSource).toMatch(
+      /try\s*\{[\s\S]{0,200}for await \(const event of deps\.coreBridge\(\)\.optimize[\s\S]{0,1600}\}\s*catch[\s\S]{0,600}\}\s*finally/
     );
     const postponeFirstRunBody = appSource.match(
       /function postponeFirstRun\(\)\s*\{([\s\S]*?)\n {2}\}/
     )?.[1] ?? "";
-    expect(postponeFirstRunBody).toContain("activationOpen = false");
-    expect(postponeFirstRunBody).toContain('activationNotice = ""');
+    expect(postponeFirstRunBody).toContain("firstRunFlow.postpone()");
     expect(postponeFirstRunBody).not.toContain("completeActivation");
     expect(postponeFirstRunBody).not.toContain("persistActivationState");
     expect(appSource).toMatch(
       /async function finishFirstRunFromSettings\(providerId: string \| null\)[\s\S]{0,280}completeFirstRunActivation\(\)[\s\S]{0,180}cancelSettingsView\(\)/
     );
     expect(appSource).toMatch(
-      /<\/section>[\s\S]{0,8000}\{#if activationOpen && state\.overlay !== "settings"\}[\s\S]{0,480}<FirstRunDialog/
+      /<\/section>[\s\S]{0,8000}\{#if \$activationOpen && state\.overlay !== "settings"\}[\s\S]{0,480}<FirstRunDialog/
     );
     expect(appSource).toMatch(
       /<\/section>[\s\S]{0,1200}\{#if state\.overlay === "settings"\}[\s\S]{0,480}<SettingsDialog/
