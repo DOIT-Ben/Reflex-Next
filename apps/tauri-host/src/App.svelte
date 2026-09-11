@@ -136,8 +136,6 @@
     type ProviderConnectionBridge
   } from "./domain/providerConnectionBridge";
   import {
-    normalizeViewScale,
-    stepViewScale,
     type WindowSizePreset
   } from "./domain/viewControls";
   import {
@@ -233,6 +231,9 @@
   } from "./domain/semanticModelState";
   import { t, translate } from "./domain/i18n";
   import { resultMarkdownContent, resultMarkdownFilename } from "./domain/resultExport";
+  import { triggerDownload, plainTextMime, TEXT_MARKDOWN_MIME } from "./domain/downloads";
+  import { createToastController } from "./domain/toastState";
+  import { createViewScaleStore, type ViewScaleStorage } from "./domain/viewScaleStore";
   import {
     listSceneOptions,
     type OptimizeMode,
@@ -322,10 +323,8 @@
     hotkeyActive: false,
     message: null
   };
-  let toastVisible = false;
-  let toastText = "✓ 已复制到剪贴板";
-  let toastTone: "success" | "error" = "success";
-  let toastTimeout: number | null = null;
+  const toast = createToastController({ translate: (message) => tr(message) });
+  const showToast = toast.show;
   let resultRatingBusy = false;
   let feedbackOpen = false;
   let feedbackPromptOpen = false;
@@ -355,7 +354,6 @@
   let cloudFeedbackAvailable = false;
   let cloudAvailability: ProviderAvailability = "checking";
   let appVersion = __REFLEX_APP_VERSION__;
-  let viewScale = 1;
   let windowSizePreset: WindowSizePreset = "default";
   let commandPaletteOpen = false;
   let scenePromptOpen = false;
@@ -378,6 +376,16 @@
   let configSummaryItems: ConfigSummaryItem[] = [];
   let resultMetaItems: ResultMetaItem[] = [];
   let tr: (source: string, values?: Record<string, string | number>) => string = (source) => source;
+
+  function safeLocalStorage(): ViewScaleStorage | null {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  }
+
+  const viewScale = createViewScaleStore(safeLocalStorage());
 
   function workbenchScrollSurface(): HTMLElement | null {
     const surface = workbenchSurfaceEl;
@@ -418,8 +426,6 @@
     let disposed = false;
     let stopListening: (() => void) | null = null;
     let stopHistoryReuseListening: (() => void) | null = null;
-
-    viewScale = readViewScale();
 
     void createTauriHostApi().then(async (host) => {
       if (disposed) return;
@@ -1186,17 +1192,6 @@
     }
   }
 
-  function showToast(message: string, tone?: "success" | "error") {
-    if (toastTimeout !== null) window.clearTimeout(toastTimeout);
-    toastText = tr(message);
-    toastTone = tone ?? (/失败|不可用|未保存|错误/.test(message) ? "error" : "success");
-    toastVisible = true;
-    toastTimeout = window.setTimeout(() => {
-      toastVisible = false;
-      toastTimeout = null;
-    }, 1400);
-  }
-
   async function persistFeedbackPrompt(next: FeedbackPromptState): Promise<boolean> {
     feedbackPromptState = next;
     feedbackPromptEnabledDraft = next.enabled;
@@ -1346,16 +1341,13 @@
 
   function exportResultMarkdown() {
     if (!state.output) return;
-    const content = resultMarkdownContent(state.output);
-    const url = URL.createObjectURL(new Blob([content], { type: "text/markdown;charset=utf-8" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = resultMarkdownFilename();
-    anchor.style.display = "none";
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    triggerDownload(
+      document,
+      resultMarkdownContent(state.output),
+      resultMarkdownFilename(),
+      TEXT_MARKDOWN_MIME,
+      window
+    );
     showToast("结果已导出为 Markdown");
   }
 
@@ -1720,17 +1712,13 @@
   }
 
   function downloadBatchTemplate() {
-    const content = batchTemplateContent(batch.format);
-    const type = batch.format === "csv" ? "text/csv;charset=utf-8" : "text/plain;charset=utf-8";
-    const url = URL.createObjectURL(new Blob([content], { type }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `reflex-batch-template.${batch.format}`;
-    anchor.style.display = "none";
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    triggerDownload(
+      document,
+      batchTemplateContent(batch.format),
+      `reflex-batch-template.${batch.format}`,
+      plainTextMime(batch.format),
+      window
+    );
   }
 
   function batchImportFailureMessage(reason: BatchImportFailure): string {
@@ -1841,16 +1829,13 @@
   }
 
   function downloadBatchContent(content: string, format: BatchFormat) {
-    const type = format === "csv" ? "text/csv;charset=utf-8" : "text/plain;charset=utf-8";
-    const url = URL.createObjectURL(new Blob([content], { type }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `reflex-batch-results.${format}`;
-    anchor.style.display = "none";
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    triggerDownload(
+      document,
+      content,
+      `reflex-batch-results.${format}`,
+      plainTextMime(format),
+      window
+    );
   }
 
   async function rateCurrentResult(rating: number) {
@@ -2343,17 +2328,17 @@
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
       if (event.key === "+" || event.key === "=") {
         event.preventDefault();
-        changeViewScale("in");
+        viewScale.step("in");
         return;
       }
       if (event.key === "-") {
         event.preventDefault();
-        changeViewScale("out");
+        viewScale.step("out");
         return;
       }
       if (event.key === "0") {
         event.preventDefault();
-        setViewScale(1);
+        viewScale.reset();
         return;
       }
     }
@@ -2410,27 +2395,6 @@
       return;
     }
     void hostApi?.invoke("hide_main_window").catch(() => undefined);
-  }
-
-  function readViewScale(): number {
-    try {
-      return normalizeViewScale(Number(window.localStorage.getItem("reflex-view-scale") ?? 1));
-    } catch {
-      return 1;
-    }
-  }
-
-  function setViewScale(next: number) {
-    viewScale = normalizeViewScale(next);
-    try {
-      window.localStorage.setItem("reflex-view-scale", String(viewScale));
-    } catch {
-      // The view remains usable when browser storage is unavailable.
-    }
-  }
-
-  function changeViewScale(direction: "in" | "out") {
-    setViewScale(stepViewScale(viewScale, direction));
   }
 
   async function minimizeWindow() {
@@ -2497,9 +2461,9 @@
   data-phase={state.phase}
   data-theme={settingsDraft.theme}
   data-dialog-focus-fallback
-  tabindex="-1"
-  style={`--view-scale: ${viewScale}`}
->
+    tabindex="-1"
+    style={`--view-scale: ${$viewScale}`}
+  >
   <section
     class="window"
     aria-label="Reflex quick window"
@@ -2510,13 +2474,13 @@
       modelName={state.requestDraft.model ?? ""}
       availability={providerStatus}
       availabilityLabel={providerStatusText}
-      scale={viewScale}
+      scale={$viewScale}
       windowSize={windowSizePreset}
       onOpenProvider={beginSettings}
       onOpenCommand={openCommandPalette}
-      onZoomOut={() => changeViewScale("out")}
-      onResetZoom={() => setViewScale(1)}
-      onZoomIn={() => changeViewScale("in")}
+      onZoomOut={() => viewScale.step("out")}
+      onResetZoom={() => viewScale.reset()}
+      onZoomIn={() => viewScale.step("in")}
       onWindowSizeChange={desktopBridge ? setWindowSize : undefined}
       onMinimize={desktopBridge ? minimizeWindow : undefined}
       onMaximize={desktopBridge ? toggleMaximizeWindow : undefined}
@@ -2574,7 +2538,7 @@
             sourceAvailable={Boolean(state.currentResult?.sourceText?.trim())}
             historyStatus={state.currentResult ? saveStatusLabel() : ""}
             meta={resultMetaItems}
-            copied={state.copied || toastText.includes("已复制") && toastVisible}
+            copied={state.copied || ($toast.message.includes("已复制") && $toast.visible)}
             rating={state.currentResult?.rating ?? null}
             ratingEnabled={state.currentResult?.saveStatus === "saved" && !resultRatingBusy}
             onCopy={copyResult}
@@ -2607,7 +2571,7 @@
       versionLabel={`v${appVersion}`}
     />
 
-    <Toast visible={toastVisible} message={toastText} tone={toastTone} />
+    <Toast visible={$toast.visible} message={$toast.message} tone={$toast.tone} />
 
     {#if confirmation}
       <ConfirmDialog
