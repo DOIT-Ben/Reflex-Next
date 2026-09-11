@@ -105,17 +105,14 @@
     type SettingsPluginId
   } from "./domain/hostState";
   import {
-    clipboardActionAfterCompletion,
-    clipboardActionForManualReplace,
     createClipboardReader,
     createClipboardWriter,
     readClipboardText,
     shouldReadClipboardOnStartup,
-    writeClipboardText,
-    type ClipboardAction,
     type ClipboardReader,
     type ClipboardWriter
   } from "./domain/clipboardBridge";
+  import { createClipboardFlow } from "./domain/clipboardFlow";
   import {
     createDesktopBridge,
     safeDesktopSettingsError,
@@ -209,7 +206,6 @@
   let providerStatusText = "";
   let clipboardReading = false;
   let startupClipboardRead = false;
-  let clipboardNotice: string | null = null;
   const toast = createToastController({ translate: (message) => tr(message) });
   const showToast = toast.show;
   let resultRatingBusy = false;
@@ -354,6 +350,29 @@
   const templateBusy = templateFlow.busy;
   const templateCategories = templateFlow.categories;
   const visibleTemplates = templateFlow.visible;
+
+  const clipboardFlow = createClipboardFlow({
+    clipboardWriter: () => clipboardWriter,
+    clipboardPolicy: () => $persistedConfig?.clipboard_policy ?? null,
+    clipboardReplaceConfirmed: () => $persistedConfig?.clipboard_replace_confirmed === true,
+    hasPersistedConfig: () => Boolean($persistedConfig),
+    persistReplaceConfirmation: async () => {
+      try {
+        await settingsFlow.persistConfigPatch((latest) => ({
+          ...latest,
+          clipboard_replace_confirmed: true
+        }));
+        settingsDraft = settingsDraftFromConfig($persistedConfig);
+      } catch {
+        clipboardFlow.notice.set("本次已替换，下次使用时仍会再次确认。");
+      }
+    },
+    updateHostState: (updater) => {
+      state = updater(state);
+    },
+    showToast
+  });
+  const clipboardNotice = clipboardFlow.notice;
 
   function workbenchScrollSurface(): HTMLElement | null {
     const surface = workbenchSurfaceEl;
@@ -1062,13 +1081,7 @@
   }
 
   async function copyResult() {
-    if (!state.output) return;
-    const copied = await writeClipboardValue(state.output, "✓ 已复制到剪贴板");
-    if (!copied) return;
-    state = { ...state, copied: true };
-    window.setTimeout(() => {
-      state = { ...state, copied: false };
-    }, 1400);
+    await clipboardFlow.copyResult(state.output);
   }
 
   function exportResultMarkdown() {
@@ -1248,18 +1261,11 @@
   }
 
   function askReplaceClipboard() {
-    if (!state.output) return;
-    void executeClipboardAction(
-      clipboardActionForManualReplace($persistedConfig?.clipboard_replace_confirmed === true)
-    );
+    return clipboardFlow.requestManualReplace(state.output);
   }
 
   async function confirmReplaceClipboard() {
-    const replaced = await writeClipboardValue(state.output, "✓ 已替换剪贴板");
-    if (!replaced) return;
-    await rememberClipboardConfirmation();
-    state = { ...state, overlay: null };
-    clipboardNotice = null;
+    await clipboardFlow.confirmReplace(state.output);
   }
 
   async function copyDiagnosticId() {
@@ -1414,48 +1420,11 @@
   }
 
   async function handleCompletionClipboard() {
-    const policy = $persistedConfig?.clipboard_policy ?? "manual";
-    await executeClipboardAction(
-      clipboardActionAfterCompletion(
-        policy,
-        $persistedConfig?.clipboard_replace_confirmed === true
-      )
-    );
-  }
-
-  async function executeClipboardAction(action: ClipboardAction) {
-    if (action === "none") return;
-    if (action === "confirm") {
-      clipboardNotice = null;
-      state = { ...state, overlay: "clipboard_confirm" };
-      return;
-    }
-    await writeClipboardValue(state.output, "✓ 已替换剪贴板");
+    await clipboardFlow.afterCompletion(state.output);
   }
 
   async function writeClipboardValue(text: string, successMessage: string): Promise<boolean> {
-    const result = await writeClipboardText(clipboardWriter, text);
-    if (!result.ok) {
-      clipboardNotice = result.message;
-      showToast(result.message);
-      return false;
-    }
-    clipboardNotice = null;
-    showToast(successMessage);
-    return true;
-  }
-
-  async function rememberClipboardConfirmation() {
-    if (!$persistedConfig) return;
-    try {
-      await settingsFlow.persistConfigPatch((latest) => ({
-        ...latest,
-        clipboard_replace_confirmed: true
-      }));
-      settingsDraft = settingsDraftFromConfig($persistedConfig);
-    } catch {
-      clipboardNotice = "本次已替换，下次使用时仍会再次确认。";
-    }
+    return clipboardFlow.writeValue(text, successMessage);
   }
 
   function retryRun() {
@@ -1624,7 +1593,7 @@
       cancelSettingsView();
       return;
     }
-    clipboardNotice = null;
+    clipboardNotice.set(null);
     state = { ...state, overlay: null };
   }
 
@@ -2045,7 +2014,7 @@
     {/if}
 
     {#if state.overlay === "clipboard_confirm"}
-      <ClipboardConfirmDialog notice={clipboardNotice} onCancel={closeOverlay} onConfirm={confirmReplaceClipboard} />
+      <ClipboardConfirmDialog notice={$clipboardNotice} onCancel={closeOverlay} onConfirm={confirmReplaceClipboard} />
     {/if}
 
     {#if state.overlay === "result_compare"}
