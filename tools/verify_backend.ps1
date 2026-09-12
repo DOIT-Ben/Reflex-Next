@@ -468,9 +468,9 @@ foreach ($step in $steps) {
   $locationPushed = $false
   $createdRustTestResource = $false
   try {
-    if ($step.Id -eq "rust:tests") {
+    if ($step.Category -eq "rust") {
       $createdRustTestResource = New-RustTestResource -Path $rustTestResourcePath
-      Write-Output ("[SETUP] rust:tests | temporary-resource-created={0}" -f $createdRustTestResource.ToString().ToLowerInvariant())
+      Write-Output ("[SETUP] {0} | temporary-resource-created={1}" -f $step.Id, $createdRustTestResource.ToString().ToLowerInvariant())
     }
 
     Push-Location -LiteralPath $workDir
@@ -482,10 +482,10 @@ foreach ($step in $steps) {
     if ($locationPushed) {
       Pop-Location
     }
-    if ($step.Id -eq "rust:tests") {
+    if ($step.Category -eq "rust") {
       Remove-RustTestResource -Path $rustTestResourcePath -Created $createdRustTestResource
       if ($createdRustTestResource) {
-        Write-Output "[CLEANUP] rust:tests | temporary-resource-removed=true"
+        Write-Output ("[CLEANUP] {0} | temporary-resource-removed=true" -f $step.Id)
       }
     }
     if ($step.Id -eq "tools:soak-smoke" -and (Test-Path -LiteralPath $soakReportPath -PathType Leaf)) {
