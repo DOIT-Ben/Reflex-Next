@@ -51,6 +51,7 @@
   import { createFeedbackFlow } from "./domain/feedbackFlow";
   import { createFirstRunFlow } from "./domain/firstRunFlow";
   import { createOptimizationFlow } from "./domain/optimizationFlow";
+  import { resolveAppShortcut } from "./domain/appShortcuts";
   import {
     buildConfigSummaryItems,
     buildNavItems,
@@ -88,7 +89,6 @@
     createHostState,
     openAdjust,
     openSettings,
-    resolveHostShortcut,
     retryAfterError,
     selectRequestModel,
     settingsDraftFromConfig,
@@ -1346,105 +1346,65 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (feedbackPromptOpen && event.key === "Escape") {
-      event.preventDefault();
-      postponeFeedbackPrompt();
-      return;
-    }
-    if (scenePromptOpen) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        cancelScenePrompt();
-      }
-      return;
-    }
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
-      event.preventDefault();
-      commandPaletteOpen = !commandPaletteOpen;
-      return;
-    }
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key === ",") {
-      event.preventDefault();
-      beginSettings();
-      return;
-    }
-    if (commandPaletteOpen) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeCommandPalette();
-      }
-      return;
-    }
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
-      if (event.key === "+" || event.key === "=") {
-        event.preventDefault();
-        viewScale.step("in");
-        return;
-      }
-      if (event.key === "-") {
-        event.preventDefault();
-        viewScale.step("out");
-        return;
-      }
-      if (event.key === "0") {
-        event.preventDefault();
-        viewScale.reset();
-        return;
-      }
-    }
-    if (state.overlay === "template_manager") {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeTemplateManager(true);
-      }
-      return;
-    }
-    if ($batch.phase !== "closed") {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeBatchView();
-      }
-      return;
-    }
-    if ($markdownPreview.phase !== "closed") {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeMarkdownPreviewView(true);
-      }
-      return;
-    }
-    if ($translation.phase !== "closed") {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeTranslationView(true);
-      }
-      return;
-    }
-    const action = resolveHostShortcut(state, {
-      key: event.key,
-      ctrlKey: event.ctrlKey,
-      metaKey: event.metaKey
+    const action = resolveAppShortcut(event, {
+      feedbackPromptOpen: $feedbackPromptOpen,
+      scenePromptOpen: $scenePromptOpen,
+      commandPaletteOpen,
+      overlay: state.overlay,
+      batchPhase: $batch.phase,
+      translationPhase: $translation.phase,
+      markdownPreviewPhase: $markdownPreview.phase,
+      hostState: state
     });
-    if (action === "none") return;
-
+    if (action.kind === "none") return;
     event.preventDefault();
-    if (action === "generate") {
-      void runOptimization();
-      return;
+    switch (action.kind) {
+      case "postpone_feedback":
+        postponeFeedbackPrompt();
+        return;
+      case "cancel_scene":
+        cancelScenePrompt();
+        return;
+      case "toggle_palette":
+        commandPaletteOpen = !commandPaletteOpen;
+        return;
+      case "open_settings":
+        beginSettings();
+        return;
+      case "close_palette":
+        closeCommandPalette();
+        return;
+      case "zoom":
+        if (action.direction === "in") viewScale.step("in");
+        else if (action.direction === "out") viewScale.step("out");
+        else viewScale.reset();
+        return;
+      case "close_template_manager":
+        closeTemplateManager();
+        return;
+      case "close_batch":
+        closeBatchView();
+        return;
+      case "close_markdown":
+        closeMarkdownPreviewView();
+        return;
+      case "close_translation":
+        closeTranslationView();
+        return;
+      case "host":
+        if (action.action === "generate") {
+          void runOptimization();
+        } else if (action.action === "cancel_generation") {
+          cancelRun();
+        } else if (action.action === "close_overlay") {
+          closeOverlay();
+        } else if (action.action === "leave_adjust") {
+          cancelAdjustView();
+        } else {
+          void hostApi?.invoke("hide_main_window").catch(() => undefined);
+        }
+        return;
     }
-    if (action === "cancel_generation") {
-      cancelRun();
-      return;
-    }
-    if (action === "close_overlay") {
-      closeOverlay();
-      return;
-    }
-    if (action === "leave_adjust") {
-      cancelAdjustView();
-      return;
-    }
-    void hostApi?.invoke("hide_main_window").catch(() => undefined);
   }
 
   async function minimizeWindow() {
