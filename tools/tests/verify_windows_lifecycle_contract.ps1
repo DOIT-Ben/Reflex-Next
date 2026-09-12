@@ -52,3 +52,5 @@ foreach ($required in @(
 Assert-True ($content -notmatch "Stop-Process") "Lifecycle verifier must not stop arbitrary processes."
 Assert-True ($content -notmatch "Get-Process.*Kill") "Lifecycle verifier must not kill discovered processes."
 Write-Output "verify_windows_lifecycle contract checks passed."
+
+exit 0

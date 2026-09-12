@@ -205,3 +205,5 @@ finally {
 }
 
 Write-Output "verify_backend contract checks passed."
+
+exit 0

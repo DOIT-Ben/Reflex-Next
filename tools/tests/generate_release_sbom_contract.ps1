@@ -143,3 +143,5 @@ finally {
 }
 
 Write-Output "generate_release_sbom contract checks passed."
+
+exit 0

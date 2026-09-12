@@ -440,3 +440,5 @@ finally {
 }
 
 Write-Output "check_version_consistency contract checks passed."
+
+exit 0

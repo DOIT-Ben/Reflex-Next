@@ -276,3 +276,5 @@ finally {
 }
 
 Write-Output "project registry contract checks passed."
+
+exit 0

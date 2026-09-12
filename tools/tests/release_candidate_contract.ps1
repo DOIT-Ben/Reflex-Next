@@ -466,3 +466,5 @@ finally {
 }
 
 Write-Output "release candidate contract checks passed."
+
+exit 0

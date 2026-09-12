@@ -139,3 +139,5 @@ finally {
 }
 
 Write-Output "Reflex Cloud operations contract checks passed."
+
+exit 0

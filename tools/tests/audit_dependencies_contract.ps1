@@ -205,3 +205,5 @@ finally {
 }
 
 Write-Output "audit_dependencies contract checks passed."
+
+exit 0

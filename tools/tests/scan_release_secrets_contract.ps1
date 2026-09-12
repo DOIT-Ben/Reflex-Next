@@ -178,3 +178,5 @@ finally {
 }
 
 Write-Output "scan_release_secrets contract checks passed."
+
+exit 0
