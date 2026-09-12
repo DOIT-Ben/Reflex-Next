@@ -131,9 +131,10 @@ describe("production frontend architecture", () => {
   it("keeps the host composition slim with flow controllers outside components", () => {
     const appSource = readFileSync(join(sourceRoot, "App.svelte"), "utf8");
     const lineCount = appSource.split("\n").length;
-    expect(lineCount).toBeLessThanOrEqual(2000);
+    expect(lineCount).toBeLessThanOrEqual(1750);
 
     const flowModules = [
+      "appShortcuts",
       "batchFlow",
       "clipboardFlow",
       "cloudPrivacyFlow",
@@ -148,7 +149,10 @@ describe("production frontend architecture", () => {
       "templateFlow",
       "toastState",
       "translationFlow",
-      "viewScaleStore"
+      "viewScaleStore",
+      "windowControls",
+      "workbenchScroll",
+      "workbenchView"
     ];
     for (const flowModule of flowModules) {
       const source = readFileSync(join(sourceRoot, "domain", `${flowModule}.ts`), "utf8");
