@@ -1,7 +1,8 @@
 import { get } from "svelte/store";
 import { describe, expect, it, vi } from "vitest";
 import { createOptimizationFlow } from "./optimizationFlow";
-import type { CoreBridge, CoreEvent } from "./coreBridge";
+import type { CoreBridge } from "./coreBridge";
+import type { CoreEvent } from "./reflexSession";
 import type { HostState } from "./hostState";
 import { createHostState } from "./hostState";
 

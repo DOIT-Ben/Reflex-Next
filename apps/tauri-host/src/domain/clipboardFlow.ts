@@ -4,10 +4,9 @@ import {
   clipboardActionForManualReplace,
   writeClipboardText,
   type ClipboardAction,
-  type ClipboardPolicy,
   type ClipboardWriter
 } from "./clipboardBridge";
-import type { HostState } from "./hostState";
+import type { ClipboardPolicy, HostState } from "./hostState";
 
 export type ClipboardFlowDeps = {
   clipboardWriter: () => ClipboardWriter;

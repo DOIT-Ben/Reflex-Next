@@ -1,4 +1,4 @@
-import { writable, type Writable } from "svelte/store";
+import { get, writable, type Writable } from "svelte/store";
 import type { DiagnosticBundleBridge } from "./diagnosticBundleBridge";
 
 export type DiagnosticFlowDeps = {

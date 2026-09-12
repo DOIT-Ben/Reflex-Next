@@ -1,6 +1,7 @@
 import { get, writable, type Writable } from "svelte/store";
-import type { CoreBridge, CoreEvent } from "./coreBridge";
+import type { CoreBridge } from "./coreBridge";
 import { isSuccessfulCompletionEvent } from "./coreBridge";
+import type { CoreEvent } from "./reflexSession";
 import type { HostState } from "./hostState";
 import {
   applyCoreEnvelope,
