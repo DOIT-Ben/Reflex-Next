@@ -93,9 +93,13 @@ jobs:
       - name: Run locked backend verification
         shell: pwsh
         run: |
-          $verifyArgs = @()
+          $verifyArgs = @{}
           if ("${{ inputs.run_heavy }}" -ne "true") {
-            $verifyArgs += @("-SkipHeavy", "-SkipDependencyAudit", "-SkipReleaseMaterials")
+            $verifyArgs += @{
+              SkipHeavy = $true
+              SkipDependencyAudit = $true
+              SkipReleaseMaterials = $true
+            }
           }
           & .\tools\verify_backend.ps1 @verifyArgs
 
