@@ -44,7 +44,7 @@ $cloudProjectPath = ([string]$cloudProject.path -replace "/", "\")
 $cloudLockPath = ([string]$cloudProject.lock -replace "/", "\")
 $historyProjectPath = ([string]$historyProject.path -replace "/", "\")
 $historyLockPath = ([string]$historyProject.lock -replace "/", "\")
-$rustTestResourcePath = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-rust-test-" + [guid]::NewGuid().ToString("N") + "\resources\runtime\reflex-runtime.exe")
+$rustTestResourcePath = Join-Path $root "apps\tauri-host\src-tauri\resources\runtime\reflex-runtime.exe"
 $soakReportPath = Join-Path ([System.IO.Path]::GetTempPath()) ("reflex-soak-smoke-" + [guid]::NewGuid().ToString("N") + ".json")
 
 if ($env:REFLEX_VERIFY_RUST_TEST_RESOURCE_PATH) {
