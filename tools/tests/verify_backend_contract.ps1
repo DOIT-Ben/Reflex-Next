@@ -62,7 +62,7 @@ Assert-True ($workflow -match 'cargo-tools-windows-audit-0\.22\.2-license-0\.6\.
 Assert-True ($workflow -match 'if: \$\{\{ inputs\.run_heavy == true \}\}') "Release-only Cargo tool steps must be conditional on the explicit heavy switch."
 Assert-True ($workflow -match 'if: \$\{\{ inputs\.run_heavy == true && steps\.cargo-tools-cache\.outputs\.cache-hit != ''true'' \}\}') "Pinned Cargo tools must install only on a heavy-run cache miss."
 Assert-True ($workflow -match 'run_heavy:') "The workflow must expose an explicit release-grade heavy verification switch."
-Assert-True ($workflow -match '-SkipHeavy') "Pull request and push verification must skip release-grade heavy steps by default."
+Assert-True ($workflow -match 'SkipHeavy = \$true') "Pull request and push verification must skip release-grade heavy steps by default."
 Assert-True ($workflow -match 'if: \$\{\{ inputs\.run_heavy == true \}\}') "Release-only SBOM evidence must be conditional on the explicit heavy switch."
 Assert-True ($workflow -match 'name: Build frontend release artifact for retained SBOM') "Heavy CI must build the frontend artifact before retained SBOM scanning."
 Assert-True ($workflow -match 'npm --prefix \.\\apps\\tauri-host run build') "Heavy CI must make the frontend release artifact precondition explicit."
