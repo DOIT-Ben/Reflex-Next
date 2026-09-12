@@ -52,6 +52,22 @@
   import { createFirstRunFlow } from "./domain/firstRunFlow";
   import { createOptimizationFlow } from "./domain/optimizationFlow";
   import {
+    buildConfigSummaryItems,
+    buildNavItems,
+    buildResultMetaItems,
+    deriveStatusTone,
+    deriveWorkbenchPhase,
+    deriveWorkbenchStatusMessage,
+    isGeneratingPhase,
+    listWorkbenchScenes,
+    providerAvailabilityLabel,
+    saveStatusLabel,
+    sceneLabel,
+    translationLanguageLabel,
+    WORKBENCH_MODES,
+    WORKBENCH_STYLES
+  } from "./domain/workbenchView";
+  import {
     createDefaultCoreBridge,
     createDemoCoreBridge,
     UnavailableCoreBridge
@@ -83,7 +99,6 @@
     type HostSettingsDraft,
     type CurrentResult,
     type RequestSettings,
-    type ResultStyle,
     type SettingsPluginId
   } from "./domain/hostState";
   import {
@@ -103,9 +118,9 @@
   } from "./domain/desktopBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
   import { createTranslationFlow } from "./domain/translationFlow";
-  import { createMarkdownPreviewFlow } from "./domain/markdownPreviewFlow";
   import { createBatchFlow } from "./domain/batchFlow";
-  import type { TranslationLanguage, TranslationTarget } from "./domain/translationState";
+  import type { TranslationTarget } from "./domain/translationState";
+  import { createMarkdownPreviewFlow } from "./domain/markdownPreviewFlow";
   import type { ProviderCatalogBridge } from "./domain/providerCatalogBridge";
   import { createProviderCatalogBridge } from "./domain/providerCatalogBridge";
   import type { ProviderConnectionBridge } from "./domain/providerConnectionBridge";
@@ -143,23 +158,10 @@
   import { triggerDownload, TEXT_MARKDOWN_MIME } from "./domain/downloads";
   import { createToastController } from "./domain/toastState";
   import { createViewScaleStore, type ViewScaleStorage } from "./domain/viewScaleStore";
-  import {
-    listSceneOptions,
-    type OptimizeMode,
-    type OptimizeStyle
-  } from "./domain/reflexSession";
 
-  const modes: Array<{ id: OptimizeMode; label: string }> = [
-    { id: "content", label: "内容优化" },
-    { id: "prompt", label: "提示词生成" }
-  ];
-  const styles: Array<{ id: OptimizeStyle; label: string }> = [
-    { id: "concise", label: "简洁" },
-    { id: "balanced", label: "平衡" },
-    { id: "detailed", label: "详细" },
-    { id: "creative", label: "创意" }
-  ];
-  const scenes = listSceneOptions();
+  const modes = WORKBENCH_MODES;
+  const styles = WORKBENCH_STYLES;
+  const scenes = listWorkbenchScenes();
   let coreBridge: CoreBridge = new UnavailableCoreBridge();
   let coreBridgeState: "initializing" | "ready" | "unavailable" = "initializing";
   let bridgeReady = false;
@@ -419,7 +421,7 @@
     lastScrollPhase = phase;
     if (phase === "completed" || phase === "error") {
       void tick().then(revealResultPane);
-    } else if (isGenerating(phase)) {
+    } else if (isGeneratingPhase(phase)) {
       revealRunControls();
     }
   }
@@ -519,7 +521,7 @@
     activeProviderId === "reflex-cloud"
   );
   $: bridgeUnavailable = coreBridgeState === "unavailable" && !bridgeReady;
-  $: canGenerate = state.canGenerate && !optimizationFlow.isRunning() && !isGenerating(state.phase) && bridgeReady;
+  $: canGenerate = state.canGenerate && !optimizationFlow.isRunning() && !isGeneratingPhase(state.phase) && bridgeReady;
   $: translatorEnabled = $persistedConfig?.enabled_plugins.includes("translator") ?? true;
   $: markdownPreviewEnabled = $persistedConfig?.enabled_plugins.includes("markdown-preview") ?? true;
   $: batchRunnerEnabled = $persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
@@ -540,7 +542,7 @@
     $providerStatusError,
     $cloudAvailability
   );
-  $: providerStatusText = providerAvailabilityLabel(providerStatus);
+  $: providerStatusText = providerAvailabilityLabel(tr, providerStatus);
   $: activationRoutes = availableActivationRoutes($cloudAvailability);
   $: activationProviderReady = providerStatus === "ready";
   $: activeProviderLabel = tr(providerName(activeProviderId, $providerOptions));
@@ -550,52 +552,20 @@
       providerLabel: activeProviderLabel,
       historyEnabled: $persistedConfig?.history_enabled ?? false,
       privacyMode: $persistedConfig?.privacy_mode ?? false,
-      quota: activeProviderId === "reflex-cloud" && cloudQuota
-        ? { requestsUsed: cloudQuota.requests_used, requestsLimit: cloudQuota.requests_limit }
-        : null
+      quota:
+        activeProviderId === "reflex-cloud" && $cloudQuota
+          ? { requestsUsed: $cloudQuota.requests_used, requestsLimit: $cloudQuota.requests_limit }
+          : null
     },
     uiLanguage
   );
-  $: workbenchPhase = isGenerating(state.phase)
-    ? "running"
-    : state.phase === "completed"
-      ? "completed"
-      : state.phase === "error"
-        ? "error"
-        : state.phase === "cancelled"
-          ? "cancelled"
-          : state.output
-            ? "completed"
-            : "empty";
+  $: workbenchPhase = deriveWorkbenchPhase(state.phase, state.output);
   $: syncWorkbenchScroll(state.phase);
-  $: workbenchStatusMessage = coreBridgeState === "initializing" && !isGenerating(state.phase)
-    ? tr("正在连接运行服务")
-    : bridgeUnavailable && !isGenerating(state.phase)
-      ? tr("运行服务暂不可用")
-      : state.phase === "analyzing_scene"
-    ? tr("正在分析场景")
-    : state.phase === "connecting_provider"
-      ? tr("正在连接模型服务")
-      : state.phase === "streaming"
-        ? tr("正在生成结果")
-        : state.phase === "completed"
-          ? tr("生成完成")
-          : state.phase === "error"
-            ? tr("生成失败")
-            : state.phase === "cancelled"
-              ? tr("已取消生成")
-              : tr("准备就绪");
-  $: statusTone = bridgeUnavailable && !isGenerating(state.phase)
-    ? "warning"
-    : isGenerating(state.phase)
-    ? "working"
-    : state.phase === "completed"
-      ? "success"
-      : state.phase === "error"
-        ? "error"
-        : state.phase === "cancelled"
-          ? "warning"
-          : "idle";
+  $: workbenchStatusMessage = deriveWorkbenchStatusMessage(
+    { coreBridgeState, bridgeUnavailable, phase: state.phase },
+    tr
+  );
+  $: statusTone = deriveStatusTone({ bridgeUnavailable, phase: state.phase });
   $: activeNavId = state.overlay === "template_manager"
     ? "templates"
     : state.overlay === "plugin_manager"
@@ -611,12 +581,7 @@
               : commandPaletteOpen
                 ? "tools"
                 : "workbench";
-  $: navItems = [
-    { id: "workbench", label: tr("工作台"), symbol: "" },
-    { id: "tools", label: tr("更多工具"), symbol: "" },
-    { id: "history", label: tr("历史记录"), symbol: "", group: "utility" },
-    { id: "settings", label: tr("设置"), symbol: "", shortcut: "Ctrl+,", group: "utility" }
-  ];
+  $: navItems = buildNavItems(tr);
   $: commandItems = [
     { id: "adjust", label: "调整生成方案", run: () => { closeCommandPalette(); beginAdjust(); } },
     { id: "templates", label: "模板管理", run: () => { closeCommandPalette(); openTemplateManager(); } },
@@ -626,20 +591,14 @@
     { id: "history", label: "打开历史记录", run: () => { closeCommandPalette(); openHistoryWindow(); } },
     { id: "settings", label: "打开设置", run: () => { closeCommandPalette(); beginSettings(); } }
   ];
-  $: configSummaryItems = [
-    { id: "mode", label: tr("模式"), value: modeLabel(state.requestDraft.mode) },
-    { id: "style", label: tr("风格"), value: styleLabel(state.requestDraft.style) },
-    { id: "scene", label: tr("场景"), value: sceneLabel(state.requestDraft.scene) },
-  ];
-  $: resultMetaItems = [
-    { id: "mode", label: tr("模式"), value: modeLabel(state.currentResult?.mode ?? state.requestDraft.mode) },
-    { id: "style", label: tr("风格"), value: styleLabel(state.currentResult?.style ?? state.requestDraft.style) },
-    {
-      id: "provider",
-      label: "Provider",
-      value: tr(providerName(state.currentResult?.provider ?? state.requestDraft.provider, $providerOptions))
-    }
-  ];
+  $: configSummaryItems = buildConfigSummaryItems(tr, state.requestDraft);
+  $: resultMetaItems = buildResultMetaItems(tr, {
+    result: state.currentResult,
+    draft: state.requestDraft,
+    providerLabel: tr(
+      providerName(state.currentResult?.provider ?? state.requestDraft.provider, $providerOptions)
+    )
+  });
 
   function setInput(value: string) {
     state = updateInput(state, value);
@@ -1165,14 +1124,6 @@
     void hostApi?.invoke("show_history_window").catch(() => showToast("历史记录暂时不可用。"));
   }
 
-  function saveStatusLabel(): string {
-    const status = state.currentResult?.saveStatus ?? "unsaved";
-    if (status === "saved") return "已保存到本机";
-    if (status === "private") return "隐私模式";
-    if (status === "saving") return "正在保存";
-    return "未保存";
-  }
-
   function askReplaceClipboard() {
     return clipboardFlow.requestManualReplace(state.output);
   }
@@ -1521,36 +1472,6 @@
     }
   }
 
-  function isGenerating(phase: HostState["phase"]): boolean {
-    return phase === "analyzing_scene" || phase === "connecting_provider" || phase === "streaming";
-  }
-
-  function providerAvailabilityLabel(value: ProviderAvailability): string {
-    if (value === "ready") return tr("已配置");
-    if (value === "missing") return tr("未配置");
-    if (value === "unavailable") return tr("暂不可用");
-    return tr("检查中");
-  }
-
-  function modeLabel(value: OptimizeMode): string {
-    return tr(modes.find((item) => item.id === value)?.label ?? "内容优化");
-  }
-
-  function styleLabel(value: ResultStyle): string {
-    if (value === "precise") return tr("精准");
-    return tr(styles.find((item) => item.id === value)?.label ?? "平衡");
-  }
-
-  function sceneLabel(value: string | null): string {
-    return tr(scenes.find((item) => item.id === value)?.label ?? "自动识别");
-  }
-
-  function translationLanguageLabel(value: TranslationLanguage | null): string {
-    if (value === "zh") return tr("中文");
-    if (value === "en") return "English";
-    return tr("自动识别");
-  }
-
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -1632,10 +1553,10 @@
             errorRecoverable={state.errorRecoverable}
             errorAction={state.errorAction}
             diagnosticId={state.diagnosticId}
-            sceneLabel={state.detectedScene ? sceneLabel(state.detectedScene) : state.currentResult?.scene ? sceneLabel(state.currentResult.scene) : null}
+            sceneLabel={state.detectedScene ? sceneLabel(tr, state.detectedScene) : state.currentResult?.scene ? sceneLabel(tr, state.currentResult.scene) : null}
             elapsedMs={state.currentResult?.elapsedMs ?? null}
             sourceAvailable={Boolean(state.currentResult?.sourceText?.trim())}
-            historyStatus={state.currentResult ? saveStatusLabel() : ""}
+            historyStatus={state.currentResult ? saveStatusLabel(tr, state.currentResult.saveStatus ?? "unsaved") : ""}
             meta={resultMetaItems}
             copied={state.copied || ($toast.message.includes("已复制") && $toast.visible)}
             rating={state.currentResult?.rating ?? null}
@@ -1787,8 +1708,8 @@
     {#if $translation.phase !== "closed"}
       <TranslationDialog
         state={$translation}
-        sourceLanguageLabel={translationLanguageLabel($translation.sourceLanguage)}
-        targetLanguageLabel={translationLanguageLabel($translation.targetLanguage)}
+        sourceLanguageLabel={translationLanguageLabel(tr, $translation.sourceLanguage)}
+        targetLanguageLabel={translationLanguageLabel(tr, $translation.targetLanguage)}
 
         onTargetChange={chooseTranslationTarget}
         onCancel={cancelTranslationRun}
