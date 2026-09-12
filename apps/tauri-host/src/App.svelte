@@ -52,6 +52,8 @@
   import { createFirstRunFlow } from "./domain/firstRunFlow";
   import { createOptimizationFlow } from "./domain/optimizationFlow";
   import { resolveAppShortcut } from "./domain/appShortcuts";
+  import { createWindowControls } from "./domain/windowControls";
+  import { createWorkbenchScroll } from "./domain/workbenchScroll";
   import {
     buildConfigSummaryItems,
     buildNavItems,
@@ -127,9 +129,6 @@
   import { createProviderConnectionBridge } from "./domain/providerConnectionBridge";
   import type { DiagnosticBundleBridge } from "./domain/diagnosticBundleBridge";
   import { createDiagnosticBundleBridge } from "./domain/diagnosticBundleBridge";
-  import {
-    type WindowSizePreset
-  } from "./domain/viewControls";
   import type { SettingsApi } from "./domain/settingsApi";
   import { createSettingsApi } from "./domain/settingsApi";
   import type { CoreBridge, TauriHostApi } from "./domain/coreBridge";
@@ -190,7 +189,6 @@
   const showToast = toast.show;
   let resultRatingBusy = false;
   let appVersion = __REFLEX_APP_VERSION__;
-  let windowSizePreset: WindowSizePreset = "default";
   let commandPaletteOpen = false;
   let commandItems: CommandItem[] = [];
   let confirmation: {
@@ -203,7 +201,6 @@
   let activeNavId = "workbench";
   let workbenchPhase: WorkbenchPhase = "empty";
   let workbenchSurfaceEl: HTMLElement | null = null;
-  let lastScrollPhase = state.phase;
   let workbenchStatusMessage = "准备就绪";
   let statusTone: StatusTone = "idle";
   let navItems: NavRailItem[] = [];
@@ -391,40 +388,17 @@
   const scenePromptOpen = optimizationFlow.scenePromptOpen;
   const scenePromptSelection = optimizationFlow.scenePromptSelection;
 
-  function workbenchScrollSurface(): HTMLElement | null {
-    const surface = workbenchSurfaceEl;
-    if (!surface || surface.scrollHeight <= surface.clientHeight) return null;
-    return surface;
-  }
+  const windowControls = createWindowControls({
+    desktopBridge: () => desktopBridge,
+    showToast
+  });
+  const windowSizePreset = windowControls.sizePreset;
 
-  function revealResultPane() {
-    const surface = workbenchScrollSurface();
-    const resultPane = workbenchSurfaceEl?.querySelector<HTMLElement>(".result-pane") ?? null;
-    if (!surface || !resultPane) return;
-    const delta = resultPane.getBoundingClientRect().top - surface.getBoundingClientRect().top;
-    if (Math.abs(delta) < 4) return;
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    surface.scrollTo({
-      top: surface.scrollTop + delta,
-      behavior: reduceMotion ? "auto" : "smooth"
-    });
-  }
-
-  function revealRunControls() {
-    const surface = workbenchScrollSurface();
-    if (!surface || surface.scrollTop <= 0) return;
-    surface.scrollTo({ top: 0 });
-  }
-
-  function syncWorkbenchScroll(phase: HostState["phase"]) {
-    if (phase === lastScrollPhase) return;
-    lastScrollPhase = phase;
-    if (phase === "completed" || phase === "error") {
-      void tick().then(revealResultPane);
-    } else if (isGeneratingPhase(phase)) {
-      revealRunControls();
-    }
-  }
+  const workbenchScroll = createWorkbenchScroll({
+    getSurface: () => workbenchSurfaceEl,
+    prefersReducedMotion: () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    schedule: (callback) => void tick().then(callback)
+  });
 
   onMount(() => {
     let disposed = false;
@@ -560,7 +534,7 @@
     uiLanguage
   );
   $: workbenchPhase = deriveWorkbenchPhase(state.phase, state.output);
-  $: syncWorkbenchScroll(state.phase);
+  $: workbenchScroll.sync(state.phase, isGeneratingPhase(state.phase));
   $: workbenchStatusMessage = deriveWorkbenchStatusMessage(
     { coreBridgeState, bridgeUnavailable, phase: state.phase },
     tr
@@ -1407,31 +1381,6 @@
     }
   }
 
-  async function minimizeWindow() {
-    try {
-      await desktopBridge?.minimizeWindow();
-    } catch {
-      showToast("窗口操作暂不可用。");
-    }
-  }
-
-  async function toggleMaximizeWindow() {
-    try {
-      await desktopBridge?.toggleMaximizeWindow();
-    } catch {
-      showToast("窗口操作暂不可用。");
-    }
-  }
-
-  async function setWindowSize(preset: WindowSizePreset) {
-    try {
-      await desktopBridge?.setWindowSize(preset);
-      windowSizePreset = preset;
-    } catch {
-      showToast("窗口尺寸暂不可用。");
-    }
-  }
-
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -1455,15 +1404,15 @@
       availability={providerStatus}
       availabilityLabel={providerStatusText}
       scale={$viewScale}
-      windowSize={windowSizePreset}
+      windowSize={$windowSizePreset}
       onOpenProvider={beginSettings}
       onOpenCommand={openCommandPalette}
       onZoomOut={() => viewScale.step("out")}
       onResetZoom={() => viewScale.reset()}
       onZoomIn={() => viewScale.step("in")}
-      onWindowSizeChange={desktopBridge ? setWindowSize : undefined}
-      onMinimize={desktopBridge ? minimizeWindow : undefined}
-      onMaximize={desktopBridge ? toggleMaximizeWindow : undefined}
+      onWindowSizeChange={desktopBridge ? windowControls.setSize : undefined}
+      onMinimize={desktopBridge ? windowControls.minimize : undefined}
+      onMaximize={desktopBridge ? windowControls.toggleMaximize : undefined}
       onClose={hostApi ? hideMainWindow : undefined}
     />
 
