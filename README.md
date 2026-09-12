@@ -99,7 +99,7 @@ flowchart LR
 
 前往 [**Releases**](https://github.com/DOIT-Ben/Reflex-Next/releases) 下载 Windows 安装包。
 Alpha 阶段安装包未做代码签名，首次运行可能触发 SmartScreen 提示；
-发布物随附 `SHA256SUMS`，建议安装前校验。
+发布物随附 `SHA256SUMS.txt`，建议安装前校验。
 
 ### 从源码构建
 
@@ -114,11 +114,12 @@ npm run package:windows   # 构建 Python sidecar 并打包安装程序
 ### 本地开发
 
 ```powershell
-cd apps\tauri-host
-npm run tauri:dev         # 启动桌面开发环境
-
-# 后端统一验证门禁（类型检查、单测、契约测试）
+# 仓库根目录：后端统一验证门禁（类型检查、单测、契约测试）
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify_backend.ps1 -SkipHeavy
+
+# 桌面开发环境（前端热更新 + Rust Host）
+cd apps\tauri-host
+npm run tauri:dev
 ```
 
 首次启动会引导选择 Provider：使用 Reflex Cloud 免费额度，或在设置中
@@ -144,21 +145,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify_backend.ps1 -Sk
   不写入仓库、配置文件、日志与诊断包，更不上传到 Reflex Cloud；
 - **分项授权**：反馈、截图、改进计划各自独立开关，默认关闭，可随时撤回并一键删除云端数据；
 - **出口脱敏**：Provider 错误、日志、诊断与反馈数据统一脱敏，发布物经密钥扫描门禁；
-- **生产拒绝 Mock**：Release 构建移除开发 Mock Provider；
+- **构建干净**：Release 构建移除开发用 Mock Provider；
 - 安全问题请通过 [SECURITY.md](SECURITY.md) 的私密渠道报告。
 
 ## 🗺 路线图
 
 - [x] 桌面主链：流式生成、取消、重试、历史、模板、多插件
 - [x] Reflex Cloud 闭环：匿名身份、免费额度、反馈、质量发布与回滚
-- [x] 全链路验证门禁：单测、契约测试、浸泡工具、SBOM 与发布物扫描
-- [ ] 正式 72 小时浸泡门禁（10,000 次请求/取消）
+- [x] 全链路验证门禁：单测、契约测试、长稳测试（soak）工具、SBOM 与发布物扫描
+- [ ] 正式 72 小时稳定性测试（soak）门禁（10,000 次请求/取消）
 - [ ] 真实旧版本升级全链路验证
 - [ ] 代码签名与自动更新
 - [ ] 英文文档与更多 Provider 插件
 
 > 当前处于 **公开 Alpha** 阶段，适合尝鲜与共同打磨，尚不建议作为生产依赖。
-> 详细进度见 [更新日志](CHANGELOG.md) 与[生产任务账本](workbench/backend-production-tasks.md)。
+> 版本变更见 [更新日志](CHANGELOG.md)，后续计划见上方路线图。
 
 ## 📖 文档
 
@@ -186,7 +187,3 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify_backend.ps1 -Sk
 <div align="center">
 <a href="#为什么做-reflex-next">回到顶部</a>
 </div>
-
-<!-- 链接引用 -->
-
-[reflex-cloud]: docs/CLOUD-BETA-RELEASE.md

@@ -40,10 +40,8 @@ CycloneDX schema；错误数为 0。SBOM 生成器同时对 SBOM 目录和前端
 
 ## 远端历史记录
 
-手动触发 Windows CI Run `29422634887`，Run 精确绑定上述 `cf45530`：
+该提交历史上一度触发过手动 Windows CI，但该次运行在账户付款与 Actions 消耗限额问题下于分配阶段即失败：
 
-- Job：`87376766567`；
-- Runner ID：`0`，未分配 Runner；
 - 执行步骤：`0`；
 - Artifact：`0`；
 - GitHub 注解：账户近期付款失败或 Actions spending limit 需要提高。

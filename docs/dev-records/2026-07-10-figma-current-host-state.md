@@ -119,24 +119,7 @@ Windows Tauri 实机验证：
 - 关闭应用后无残留 `reflex_runtime.cli`、`uv` 或 Python 子进程。
 - 680×480 浏览器视口下页面 `scrollWidth/scrollHeight` 与视口一致，默认页无溢出；Adjust 仅内部纵向滚动。
 
-截图：
-
-- `D:\Desktop\reflex-next-current-default.png`
-- `D:\Desktop\reflex-next-current-adjust.png`
-- `D:\Desktop\reflex-next-current-complete.png`
-- `D:\Desktop\reflex-next-current-clipboard-confirm.png`
-- `D:\Desktop\reflex-next-current-mobile.png`
-- `D:\Desktop\reflex-next-current-empty-keyboard.png`
-- `D:\Desktop\reflex-next-current-copied-keyboard.png`
-- `D:\Desktop\reflex-next-current-clipboard-confirm-keyboard.png`
-- `D:\Desktop\reflex-next-current-mobile-keyboard.png`
-- `D:\Desktop\reflex-next-current-error.png`
-- `D:\Desktop\reflex-next-current-error-diagnostic-copied.png`
-- `D:\Desktop\reflex-next-current-error-mobile.png`
-- `D:\Desktop\reflex-next-settings-overlay.png`
-- `D:\Desktop\reflex-next-settings-overlay-mobile.png`
-- `D:\Desktop\reflex-next-clipboard-read.png`
-- `D:\Desktop\reflex-next-clipboard-read-mobile.png`
+截图：16 张本机运行产物（默认/调整/完成/剪贴板确认/移动端/键盘导航/错误态/设置浮层/剪贴板读取），不入库。
 
 ## 下一步
 

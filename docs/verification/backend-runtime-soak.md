@@ -73,8 +73,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\verify_backend.ps1
 
 ```powershell
 uv run --frozen --project packages\reflex-runtime --extra dev python tools\soak_backend.py `
-  --status workbench\runtime-soak-72h-alpha8-20260828.json
+  --status <soak-report>.json
 ```
+
+ soak 报告为本机运行产物，不入库。
 
 状态工具同时检查报告版本、固定字段和值、Runtime 进程存活、进程创建时间、最近心跳和时钟偏移；
 进程仍存在但心跳过期、PID 身份不匹配或报告时间异常时报告为 stale。

@@ -45,10 +45,7 @@ npm audit --audit-level=moderate
 - 桌面端完成一次优化并渲染事件时间线。
 - 移动端无横向溢出。
 
-截图：
-
-- `D:\Desktop\reflex-next-stage2-runtime-bridge-desktop.png`
-- `D:\Desktop\reflex-next-stage2-runtime-bridge-mobile.png`
+截图：本机运行产物，不入库。
 
 ## 下一步
 

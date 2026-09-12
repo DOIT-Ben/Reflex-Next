@@ -35,7 +35,7 @@
 
 ## 资源复盘
 
-本次在可用虚拟内存不足 1.5 GB 时直接运行隔离依赖环境，测试后 Windows 可用虚拟内存一度降至约 167 MB，Docker Desktop 随后退出。已重新启动 Docker Desktop，并确认验证前存在的 `deploy-web-1`、`deploy-api-1` 和 `new-api` 容器恢复运行，其中前两项恢复为 healthy；72 小时 Runtime 浸泡进程未中断。
+本次在可用虚拟内存不足 1.5 GB 时直接运行隔离依赖环境，测试后 Windows 可用虚拟内存一度降至约 167 MB，Docker Desktop 随后退出。已重新启动 Docker Desktop，并确认验证前存在的宿主机容器全部恢复运行（其中 Web 与 API 服务恢复为 healthy）；72 小时 Runtime 稳定性测试进程未中断。
 
 为防止再次发生，新增 `tools\verify_cloud_postgres_quality_release.ps1` 作为推荐入口：运行前要求至少 2 GiB 可用物理内存和 4 GiB 可用虚拟内存，固定容器资源上限，并在结束后检查临时容器清理及既有容器是否仍在运行。
 

@@ -63,10 +63,10 @@ uv run --frozen reflex-http-host
 ```powershell
 uv run --frozen --project packages\reflex-http-host --extra dev python tools/http_soak_backend.py `
   --levels "1,4,16,32" --iterations 20 --cancel-every 4 --timeout-seconds 15 `
-  --json-output workbench\http-soak-graded-20260814-0400.json
+  --json-output <soak-report>.json
 ```
 
-报告 `workbench/http-soak-graded-20260814-0400.json`，`passed=true`：
+报告为本机 soak 运行产物（不入库），`passed=true`：
 
 | 并发 | 完成 | 取消 | busy | 重试 | 串线 | 缺终态 | P50 (ms) | P95 (ms) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|

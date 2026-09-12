@@ -129,9 +129,9 @@ PostgreSQL 并发烟测只从环境变量读取连接地址，拒绝 SQLite、�
 备份与隔离恢复脚本：
 
 ```powershell
-.\tools\reflex-cloud-backup.ps1 -OutputDirectory "D:\Desktop\reflex-cloud-backups"
+.\tools\reflex-cloud-backup.ps1 -OutputDirectory "$env:USERPROFILE\reflex-cloud-backups"
 .\tools\reflex-cloud-restore.ps1 `
-  -BackupFile "D:\Desktop\reflex-cloud-backups\reflex-cloud-postgres-<timestamp>.dump" `
+  -BackupFile "$env:USERPROFILE\reflex-cloud-backups\reflex-cloud-postgres-<timestamp>.dump" `
   -TargetDatabase "reflex_cloud_restore" `
   -ConfirmRestore
 ```

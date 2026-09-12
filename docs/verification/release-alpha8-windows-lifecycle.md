@@ -10,7 +10,7 @@
 验证副本来自最新提交的干净克隆：
 
 ```text
-C:\Users\DOIT\AppData\Local\Temp\reflex-next-clean-alpha8-final-20260715041345
+C:\Users\<user>\AppData\Local\Temp\reflex-next-clean-alpha8-final-20260715041345
 ```
 
 副本内部临时创建 `v0.7.0-alpha.8` 标签后执行：
@@ -48,7 +48,7 @@ npm run tauri:build
 验证安装目录：
 
 ```text
-C:\Users\DOIT\AppData\Local\Temp\reflex-lifecycle-alpha8-20260715043146\install
+C:\Users\<user>\AppData\Local\Temp\reflex-lifecycle-alpha8-20260715043146\install
 ```
 
 可重复验证命令：

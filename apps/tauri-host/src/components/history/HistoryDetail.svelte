@@ -6,7 +6,8 @@
 
   interface Props {
     state: HistoryState;
-    detail: Record<string, unknown> | null;
+    detail: Record<string, unknown> | null;
+
     sceneLabel: (id: string) => string;
     onRate: (score: number) => void;
     onDelete: () => void;

@@ -20,15 +20,15 @@ Provider 只负责供应商协议适配。场景、风格、模式和模板由 C
 
 任何 Provider 错误、请求阶段日志、历史导出和事件文本都不能包含明文密钥或完整用户输入。
 
-## 当前状态只看生产任务账本
+## 当前状态只看验证证据与更新日志
 
 迁移计划、开发记录和早期阶段计划用于追溯，可能保留当时的阶段描述。判断当前完成度时，以
-`workbench/backend-production-tasks.md`、对应源码测试和 `docs/verification/` 证据为准。
+[更新日志](../CHANGELOG.md)、对应源码测试和 `docs/verification/` 证据为准。
 
 ## 不要混淆本机服务端口
 
-Reflex Cloud 默认监听 `127.0.0.1:8787`。其他项目的 `deploy-api`、`8020` 或 `3020`
-健康不代表 Reflex Cloud 已启动，也不能证明 `/v1/feedback` 已部署。
+Reflex Cloud 默认监听 `127.0.0.1:8787`。端口探测不通不代表 Reflex Cloud 未启动，
+也不能证明 `/v1/feedback` 已部署；本机其他服务占用其他端口与本产品无关。
 
 ## 本地资产和运行产物不进入版本库
 

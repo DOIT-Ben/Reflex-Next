@@ -4,7 +4,7 @@
 
 当前实现审计请先阅读 [架构审计](ARCHITECTURE-AUDIT.md) 和
 [架构债务登记](ARCHITECTURE-DEBT-REGISTER.md)。本文保留设计基线；实际发布状态以
-`workbench/backend-production-tasks.md` 和最新验证证据为准。
+最新验证证据（`docs/verification/`）为准。
 
 ## 1. 设计结论
 

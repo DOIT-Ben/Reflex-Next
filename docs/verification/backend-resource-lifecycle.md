@@ -78,7 +78,7 @@ Set-Location ..\..\..
 - 100 次 Runtime 短浸泡完成/取消各 50 次，无迟到事件并安全退出；
 - 依赖审计、源码敏感扫描和 11 组件 SBOM 通过。
 
-远端独立复现：GitHub Actions Backend CI Run `29300400632`，结论 `success`，完成统一门禁、前端构建、构建物扫描、SBOM 生成与上传。
+远端独立复现：GitHub Actions Backend CI（结论 `success`），完成统一门禁、前端构建、构建物扫描、SBOM 生成与上传。
 
 ## 6. 后续任务
 

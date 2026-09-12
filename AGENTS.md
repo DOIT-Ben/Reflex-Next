@@ -1,18 +1,21 @@
 # Reflex Next 项目规则
 
+本文件同时是维护者与贡献者的工作约定：无论由人还是由 AI 编码代理执行，
+以下边界与规则同等生效。
+
 ## 项目概况
 
 - 项目名称：Reflex Next
 - 项目类型：轻量桌面产品 / 本地 AI 运行时 / 插件化提示词工具
 - 推荐技术栈：Python Core + Tauri 2 + Python 插件系统
-- 主要入口：`packages\reflex-core`
+- 主要入口：`packages/reflex-core`
 - 主要输出物：可嵌入 Python Core、Tauri 小宿主、Provider/模板/场景识别插件
 
 ## 当前目标
 
 本项目用于重做 Reflex，不在旧 PyQt 工作台上继续堆功能。
 
-旧版 Reflex（Classic，作者本地私有参考实现，不随本项目分发）是行为基线和资产来源；新项目不得直接复制旧 UI 架构。
+旧版 Reflex（Classic，作者早期内部原型，不以任何形式分发）是行为基线和资产来源；新项目不得直接复制旧 UI 架构。
 
 ## 架构边界
 
@@ -53,11 +56,11 @@ Core 只允许表达：
 
 开发前先读：
 
-1. `docs\ARCHITECTURE.md`
-2. `docs\MIGRATION.md`
-3. `docs\CLASSIC-REFERENCE.md`
-4. `workbench\readme.md`
-5. `workbench\known-pitfalls.md`
+1. `docs/ARCHITECTURE.md`
+2. `docs/MIGRATION.md`
+3. `docs/CLASSIC-REFERENCE.md`
+4. `workbench/readme.md`
+5. `workbench/known-pitfalls.md`
 
 ## 变更规则
 
@@ -72,4 +75,3 @@ Core 只允许表达：
 - Provider 错误和日志必须脱敏。
 - 场景自动识别失败必须回退通用场景，不得阻塞优化。
 - Tauri 宿主只消费事件流，不承载业务内核。
-

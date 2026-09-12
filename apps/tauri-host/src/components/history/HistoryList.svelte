@@ -4,7 +4,8 @@
   import EmptyState from "../ui/EmptyState.svelte";
 
   interface Props {
-    state: HistoryState;
+    state: HistoryState;
+
     sceneLabel: (id: string) => string;
     styleLabel: (id: string) => string;
     onSelect: (item: HistorySummary) => void;

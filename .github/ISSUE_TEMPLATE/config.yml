@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题
+    url: https://github.com/DOIT-Ben/Reflex-Next/security/advisories/new
+    about: 请勿以公开 Issue 报告安全问题，使用私密漏洞报告
+  - name: 使用问题与支持
+    url: https://github.com/DOIT-Ben/Reflex-Next/blob/main/docs/SUPPORT.md
+    about: 先阅读支持范围与故障处理文档

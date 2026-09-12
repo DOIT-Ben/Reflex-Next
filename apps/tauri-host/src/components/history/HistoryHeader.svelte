@@ -7,7 +7,8 @@
 
   interface Props {
     exportFormat: HistoryExportFormat;
-    backups: HistoryBackupsState;
+    backups: HistoryBackupsState;
+
     onExportFormatChange: (format: HistoryExportFormat) => void;
     onBackupChange: (id: string) => void;
     onExport: () => void;

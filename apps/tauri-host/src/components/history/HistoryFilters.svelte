@@ -10,7 +10,8 @@
     style: string;
     provider: string;
     scenes: SceneOption[];
-    styles: Array<{ id: string; label: string }>;
+    styles: Array<{ id: string; label: string }>;
+
     onSearchChange: (value: string) => void;
     onSceneChange: (value: string) => void;
     onStyleChange: (value: string) => void;

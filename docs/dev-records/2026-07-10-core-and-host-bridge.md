@@ -38,10 +38,7 @@ npm audit --audit-level=moderate
 - 取消后无旧事件回写。
 - 移动端无横向溢出。
 
-截图：
-
-- `D:\Desktop\reflex-next-core-bridge-desktop.png`
-- `D:\Desktop\reflex-next-core-bridge-mobile.png`
+截图：本机运行产物，不入库。
 
 ## 下一步
 

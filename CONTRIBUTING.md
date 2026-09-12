@@ -1,8 +1,7 @@
 # 贡献指南
 
 感谢关注 Reflex Next。本项目处于 alpha 阶段，欢迎 Issue 与 PR，但请先阅读
-[AGENTS.md](AGENTS.md) 与 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，
-理解项目的架构边界后再动手。
+[架构设计](docs/ARCHITECTURE.md)，理解项目的架构边界后再动手。
 
 ## 架构红线（PR 不符合将直接被拒）
 
@@ -23,8 +22,20 @@
 ```powershell
 # 前端依赖
 npm --prefix apps/tauri-host ci
-# Python 依赖（各 package/plugin 内均有 uv.lock）
-uv sync --frozen
+
+# Python 依赖：仓库为多包结构，锁文件分布在各包/插件目录内，
+# 需要逐包安装（在仓库根目录执行）
+foreach ($dir in @(
+  "packages/reflex-core",
+  "packages/reflex-runtime",
+  "packages/reflex-http-host",
+  (Get-ChildItem plugins -Directory | ForEach-Object { "plugins/" + $_.Name }),
+  "services/reflex-cloud"
+)) {
+  Push-Location $dir
+  uv sync --frozen --extra dev
+  Pop-Location
+}
 ```
 
 ## 本地验证门禁
@@ -32,7 +43,7 @@ uv sync --frozen
 提交前请确保以下门禁全部通过（与 CI 一致）：
 
 ```powershell
-# 前端：类型检查 + lint + 单测（当前 222 例）
+# 前端：类型检查 + lint + 单测（以 CI 为准）
 npm --prefix apps/tauri-host run typecheck
 npm --prefix apps/tauri-host run lint
 npm --prefix apps/tauri-host test
@@ -47,7 +58,9 @@ npm --prefix apps/tauri-host test
 
 ## 提交规范
 
-- 提交信息格式：`类型: 摘要`，类型取 `feat / fix / opt / refactor / docs / conf / chore / ci`；
+- 提交信息格式：`类型: 摘要`。类型取：
+  - `feat` 新功能 / `fix` 缺陷修复 / `refactor` 重构 / `docs` 文档；
+  - `opt` 交互或体验优化 / `conf` 配置与流程 / `chore` 杂项 / `ci` 构建与集成；
 - 遵循小步迁移：一次 PR 只做一件事，每个阶段必须有可验证产物；
 - 行为承接旧版 Reflex（Classic）时，先写迁移说明或测试样例；
 - 涉及脱敏、密钥、隐私授权的改动，必须在 PR 描述中说明验证方式。

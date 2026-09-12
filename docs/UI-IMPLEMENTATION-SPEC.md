@@ -1,13 +1,11 @@
 # Reflex Next UI 实现规格
 
 更新时间：2026-07-09  
-状态：待评审基线  
-关联 Issue：#1  
-Figma：<https://www.figma.com/design/I1qwEz6qH00egbOygkPLnI>
+状态：实现基线
 
 ## 1. 目的与约束
 
-本规格把 Figma `Current` 区域转换为可实现、可测试的 Tauri Host 契约。
+本规格把设计稿的 `Current` 区域转换为可实现、可测试的 Tauri Host 契约。设计源文件由维护者私有保留，公开仓库不附带设计稿；界面形态以本文规格与发布物截图为准。
 
 本规格不改变既有架构结论：
 
@@ -33,9 +31,9 @@ Tauri Host 禁止承载：
 
 ## 2. 唯一设计真值
 
-开发只使用 Figma `Current` 区域。当前页面集合：
+开发只使用设计稿的 `Current` 页面组。当前页面集合：
 
-| Figma Frame | 产品状态 | 说明 |
+| 设计稿页面 | 产品状态 | 说明 |
 |---|---|---|
 | `Current / Empty` | `empty` | 输入为空，主操作不可用 |
 | `Current / Default` | `ready` | 有有效输入，可以生成 |
@@ -499,7 +497,7 @@ interface RecentResult {
 
 UI 实现只有同时满足以下条件才能宣布完成：
 
-1. Figma Current 页面状态全部可复现；
+1. 设计稿 Current 页面状态全部可复现；
 2. 默认页没有退化成参数表单；
 3. Host 不承载 Core 业务；
 4. 使用 Mock Event Source 可跑通完整交互；

@@ -5,14 +5,15 @@
 | 版本 | 支持情况 |
 |---|---|
 | 0.7.0-alpha.x | ✅ 安全修复 |
-| 0.6.0-beta.x | ❌ 仅重大问题回溯 |
+| 0.6.0-beta.x | ⚠️ 仅重大安全回溯 |
 
 ## 如何报告漏洞
 
 **不要通过公开 Issue 报告安全问题。**
 
-请使用 GitHub 的"私密漏洞报告"（Security Advisories → Report a vulnerability），
-或在无法使用时通过仓库主页联系方式私下联系维护者。
+请优先使用 GitHub 的 **私密漏洞报告**（仓库 Security 标签页 →
+Report a vulnerability；该入口需要仓库开启 Private vulnerability reporting）。
+维护者会在 7 天内确认收到，并在修复发布前对报告内容保密。
 
 请在报告中包含：
 

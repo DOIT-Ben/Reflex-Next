@@ -45,10 +45,7 @@ uv run --python 3.12 --with pytest pytest
 - 桌面端事件时间线正常渲染。
 - 移动端无横向溢出。
 
-截图：
-
-- `D:\Desktop\reflex-next-tauri-api-bridge-desktop.png`
-- `D:\Desktop\reflex-next-tauri-api-bridge-mobile.png`
+截图：本机运行产物，不入库。
 
 ## 当前限制
 

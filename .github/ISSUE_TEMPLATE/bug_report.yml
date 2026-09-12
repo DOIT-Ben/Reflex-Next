@@ -1,0 +1,33 @@
+name: 缺陷报告
+description: 报告 Reflex Next 的一个问题
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请先搜索已有 Issue 避免重复。
+        **不要在报告中粘贴 API Key 或完整提示词内容**，日志请先脱敏。
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: 设置页可见的版本号，如 0.7.0-alpha.8
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从什么状态开始、做了什么、期望发生什么、实际发生了什么
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏日志或诊断 ID
+      description: 结果页可复制诊断 ID；日志中请勿包含密钥与完整输入
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境信息
+      description: Windows 版本、语言、是否使用 Reflex Cloud 等
