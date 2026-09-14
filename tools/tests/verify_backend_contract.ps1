@@ -57,7 +57,9 @@ $registryPythonIds = @($registry.projects | Where-Object {
   } | ForEach-Object { "python:" + [string]$_.id })
 $workflow = [System.IO.File]::ReadAllText($workflowPath, [System.Text.Encoding]::UTF8)
 $tauriBuild = [System.IO.File]::ReadAllText($tauriBuildScript, [System.Text.Encoding]::UTF8)
-Assert-True ($workflow -match 'uses: actions/cache@v4') "Windows CI must cache pinned Cargo tool binaries."
+# Match the action, not a frozen major version: pinning @v4 here broke CI the moment
+# the workflow's actions were bumped, even though the caching contract was intact.
+Assert-True ($workflow -match 'uses: actions/cache@v\d+') "Windows CI must cache pinned Cargo tool binaries."
 Assert-True ($workflow -match 'cargo-tools-windows-audit-0\.22\.2-license-0\.6\.1-cyclonedx-0\.5\.9') "Cargo tool cache key must include every pinned version."
 Assert-True ($workflow -match 'if: \$\{\{ inputs\.run_heavy == true \}\}') "Release-only Cargo tool steps must be conditional on the explicit heavy switch."
 Assert-True ($workflow -match 'if: \$\{\{ inputs\.run_heavy == true && steps\.cargo-tools-cache\.outputs\.cache-hit != ''true'' \}\}') "Pinned Cargo tools must install only on a heavy-run cache miss."
