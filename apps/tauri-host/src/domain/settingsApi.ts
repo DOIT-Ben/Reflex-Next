@@ -18,6 +18,8 @@ export type AppConfig = {
   language: "zh-CN" | "en-US";
   theme: "light" | "dark" | "system";
   hotkey: string;
+  panel_hotkey: string;
+  autostart_enabled: boolean;
   tls_verify: true;
   ca_bundle_path: string | null;
   provider_endpoints: Record<string, string>;
@@ -88,6 +90,8 @@ const defaults: AppConfig = {
   language: "zh-CN",
   theme: "system",
   hotkey: "Ctrl+Alt+R",
+  panel_hotkey: "Alt+Q",
+  autostart_enabled: false,
   tls_verify: true,
   ca_bundle_path: null,
   provider_endpoints: {},
@@ -138,6 +142,8 @@ function normalizeConfig(value: unknown): AppConfig {
     language: choiceValue(raw.language, ["zh-CN", "en-US"], defaults.language),
     theme: choiceValue(raw.theme, ["light", "dark", "system"], defaults.theme),
     hotkey: stringValue(raw.hotkey, defaults.hotkey),
+    panel_hotkey: stringValue(raw.panel_hotkey, defaults.panel_hotkey),
+    autostart_enabled: booleanValue(raw.autostart_enabled, defaults.autostart_enabled),
     tls_verify: true,
     ca_bundle_path:
       typeof raw.ca_bundle_path === "string" && raw.ca_bundle_path.trim()

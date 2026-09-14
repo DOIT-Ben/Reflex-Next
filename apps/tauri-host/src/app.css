@@ -1,0 +1,138 @@
+/* 设计基线：与 CC Switch 对齐（shadcn/ui 标准 token 契约）
+   ——配色、圆角、滚动条、焦点环、表面材质全部按 CC Switch 的实现移植。 */
+@tailwind base;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    --primary: 210 100% 56%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 210 100% 56%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 240 5% 12%;
+    --foreground: 0 0% 98%;
+    --card: 240 5% 16%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 5% 16%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 210 100% 54%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 5% 18%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 5% 18%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 5% 18%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 5% 24%;
+    --input: 240 5% 24%;
+    --ring: 210 100% 54%;
+  }
+
+  /* Tailwind 边框基线（关闭 preflight 后 .border 只设宽度、样式为 none） */
+  *,
+  ::before,
+  ::after {
+    border-width: 0;
+    border-style: solid;
+    border-color: hsl(var(--border));
+  }
+
+  button {
+    background-color: transparent;
+  }
+
+  /* 焦点：全应用只有这一条规则，对齐 CC Switch 的
+     `*:focus-visible { @apply outline-2 outline-blue-500 outline-offset-2 }`。
+     控件内部若需要更轻的焦点反馈（shadcn 的 Button/Input），由组件自己用
+     `focus-visible:outline-none` 关掉本规则，再换成 ring —— 不允许再叠加
+     border-color 与 box-shadow 光晕（叠三层会出现内外双蓝圈）。 */
+  *:focus-visible {
+    outline: 2px solid #0a84ff;
+    outline-offset: 2px;
+  }
+
+  html {
+    /* 全局比例默认值 = 字号刻度的 1.5 倍：12→18 / 14→21 / 18→27，
+       与 styles.css 的 --leading-meta/body/title 完全一致；
+       需要长文行高或单行居中的地方再由 --leading-prose / --leading-none 覆盖。 */
+    line-height: 1.5;
+    color-scheme: light;
+    overscroll-behavior: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-size: 14px;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+
+  /* CC Switch 全局隐藏滚动条 */
+  * {
+    box-sizing: border-box;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  ::-webkit-scrollbar {
+    display: none;
+  }
+
+  *:focus-visible {
+    outline: 2px solid #0a84ff;
+    outline-offset: 2px;
+  }
+}
+
+@tailwind components;
+@tailwind utilities;
+
+  /* CC Switch 的边框工具类（select 触发器等聚焦时靠它提亮边框） */
+  .border-border-default {
+    border-color: hsl(var(--border));
+  }
+
+  .border-border-active {
+    border-color: hsl(var(--primary));
+  }
+
+  .border-border-hover {
+    border-color: hsl(var(--primary) / 0.4);
+  }

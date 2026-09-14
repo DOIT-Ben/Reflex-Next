@@ -90,6 +90,8 @@ export type HostSettingsDraft = {
   scene_policy: ScenePolicy;
   clipboard_policy: ClipboardPolicy;
   hotkey: string;
+  panel_hotkey: string;
+  autostart_enabled: boolean;
   history_enabled: boolean;
   privacy_mode: boolean;
   history_redaction: AppConfig["history_redaction"];
@@ -141,6 +143,8 @@ export function createDefaultSettingsDraft(settings: RequestSettings): HostSetti
     scene_policy: globalScenePolicy(settings.scene_policy),
     clipboard_policy: "manual",
     hotkey: "Ctrl+Alt+R",
+    panel_hotkey: "Alt+Q",
+    autostart_enabled: false,
     history_enabled: false,
     privacy_mode: false,
     history_redaction: "secrets",
@@ -161,6 +165,8 @@ export function settingsDraftFromConfig(config: AppConfig): HostSettingsDraft {
     scene_policy: globalScenePolicy(config.scene_policy),
     clipboard_policy: config.clipboard_policy,
     hotkey: config.hotkey,
+    panel_hotkey: config.panel_hotkey,
+    autostart_enabled: config.autostart_enabled,
     history_enabled: config.history_enabled,
     privacy_mode: config.privacy_mode,
     history_redaction: config.history_redaction,
@@ -187,6 +193,8 @@ export function configFromSettingsDraft(
     scene_policy: globalScenePolicy(draft.scene_policy),
     clipboard_policy: draft.clipboard_policy,
     hotkey: draft.hotkey,
+    panel_hotkey: draft.panel_hotkey,
+    autostart_enabled: draft.autostart_enabled,
     history_enabled: draft.history_enabled,
     privacy_mode: draft.privacy_mode,
     history_redaction: draft.history_redaction,

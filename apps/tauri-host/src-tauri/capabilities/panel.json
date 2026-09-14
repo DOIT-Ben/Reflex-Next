@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "panel-capability",
+  "description": "Capability for the Reflex quick panel window",
+  "windows": ["panel"],
+  "platforms": ["windows"],
+  "permissions": [
+    "allow-runtime-available",
+    "allow-runtime-warmup",
+    "allow-runtime-optimize",
+    "allow-runtime-cancel",
+    "allow-read-clipboard-text",
+    "allow-write-clipboard-text",
+    "allow-load-app-config",
+    "allow-hide-panel-window",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

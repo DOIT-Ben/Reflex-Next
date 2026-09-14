@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "@/components/ui/button";
   import DialogShell from "../ui/DialogShell.svelte";
   import { translator } from "../../domain/i18nStore";
   import type { MarkdownPreviewMode, MarkdownPreviewState } from "../../domain/markdownPreviewState";
@@ -27,7 +28,7 @@
         <button type="button" class:active={state.mode === item.id} aria-pressed={state.mode === item.id} onclick={() => onModeChange(item.id)}>{translate(item.label)}</button>
       {/each}
     </div>
-    <button class="outline" type="button" onclick={onCopySource}>{translate("复制源码")}</button>
+    <Button variant="outline" onclick={onCopySource}>{translate("复制源码")}</Button>
   </div>
   <div class:source-only={state.mode === "source"} class:preview-only={state.mode === "preview"} class="markdown-content">
     <section class="markdown-source" aria-label={translate("Markdown 源码")}>
@@ -46,7 +47,7 @@
     </section>
   </div>
   <footer slot="footer">
-    {#if state.phase === "error"}<button class="outline" type="button" onclick={onRetry}>{translate("重试")}</button>{/if}
-    <button class="primary small" type="button" onclick={onClose}>{translate("关闭")}</button>
+    {#if state.phase === "error"}<Button variant="outline" onclick={onRetry}>{translate("重试")}</Button>{/if}
+    <Button variant="default" size="sm" onclick={onClose}>{translate("关闭")}</Button>
   </footer>
 </DialogShell>

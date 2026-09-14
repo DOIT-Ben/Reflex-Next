@@ -18,6 +18,8 @@ const config: AppConfig = {
   language: "zh-CN",
   theme: "system",
   hotkey: "Ctrl+Alt+R",
+  panel_hotkey: "Alt+Q",
+  autostart_enabled: false,
   tls_verify: true,
   ca_bundle_path: null,
   provider_endpoints: {},

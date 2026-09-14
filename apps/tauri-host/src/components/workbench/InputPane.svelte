@@ -6,6 +6,7 @@
   } from "./types";
   import type { QuickAction } from "../../domain/productExperience";
   import { translator } from "../../domain/i18nStore";
+  import { Button } from "@/components/ui/button";
 
   export let value = "";
   export let phase: WorkbenchPhase = "empty";
@@ -67,41 +68,42 @@
     <h2 id="workbench-input-title">{label}</h2>
     <div class="header-actions">
       {#if onReadClipboard}
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="sm"
           disabled={locked || clipboardBusy}
           aria-label={translate("读取剪贴板")}
           title={translate("读取系统剪贴板内容到输入框")}
-          on:click={() => void onReadClipboard?.()}
+          onclick={() => void onReadClipboard?.()}
         >
           {clipboardBusy ? translate("读取中…") : translate("读取剪贴板")}
-        </button>
+        </Button>
       {/if}
-      <button
-        class="clear-button"
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
         disabled={locked || characterCount === 0}
         aria-label={translate("清空输入")}
         title={translate("清空当前输入")}
-        on:click={clearInput}
+        onclick={clearInput}
       >
         {translate("清空")}
-      </button>
+      </Button>
     </div>
   </header>
 
   {#if quickActions.length > 0}
     <div class="quick-actions" aria-label={translate("常用任务")}>
       {#each quickActions as action (action.id)}
-        <button
+        <Button
+          variant="outline"
           class="quick-action"
-          type="button"
           disabled={locked || !onQuickAction}
           title={translate(action.hint)}
-          on:click={() => onQuickAction?.(action.id)}
+          onclick={() => onQuickAction?.(action.id)}
         >
           <strong>{translate(action.label)}</strong>
-        </button>
+        </Button>
       {/each}
     </div>
   {/if}
@@ -148,7 +150,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 7px 12px;
+    padding: 8px 12px;
   }
 
   h2 {
@@ -156,8 +158,8 @@
     margin: 0;
     overflow: hidden;
     font-size: var(--font-body);
-    font-weight: 650;
-    line-height: 1.4;
+    font-weight: 600;
+    line-height: var(--leading-body);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -175,59 +177,18 @@
     min-width: 0;
     align-items: stretch;
     gap: 6px;
-    padding: 0 12px 9px;
+    padding: 0 12px 8px;
     overflow-x: auto;
   }
 
-  .quick-action {
-    display: flex;
-    min-width: 98px;
-    height: auto;
+  :global(.quick-action) {
     flex: 1 1 0;
-    align-items: center;
-    justify-content: center;
-    padding: 7px 9px;
-    text-align: center;
   }
 
-  .quick-action strong { color: var(--text, #202535); font-size: var(--font-meta); font-weight: 650; }
 
-  button {
-    min-width: 30px;
-    height: 30px;
-    padding: 0 9px;
-    color: var(--muted, #697386);
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 7px;
-    font-size: var(--font-meta);
-    font-weight: 560;
-    line-height: 1;
-    white-space: nowrap;
-    transition: color 140ms ease, background 140ms ease, border-color 140ms ease, transform 140ms ease;
-  }
 
-  button:hover:not(:disabled) {
-    color: var(--text, #202535);
-    background: color-mix(in srgb, var(--accent-soft, #eef1ff) 72%, var(--surface, #fff));
-    border-color: var(--line, #e1e6ee);
-    transform: translateY(-1px);
-  }
 
-  button:active:not(:disabled) {
-    transform: translateY(0);
-  }
 
-  button:focus-visible,
-  textarea:focus-visible {
-    outline: 2px solid var(--accent, #5065c7);
-    outline-offset: 2px;
-  }
-
-  button:disabled {
-    cursor: not-allowed;
-    opacity: 0.44;
-  }
 
   .editor-frame {
     display: flex;
@@ -239,14 +200,15 @@
     overflow: hidden;
     background: color-mix(in srgb, var(--surface, #fff) 78%, var(--page, #edf1f6));
     border: 1px solid var(--line, #e1e6ee);
-    border-radius: 8px;
+    border-radius: 12px;
     transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
   }
 
+  /* 焦点对齐 CC Switch 的输入配方：2px / 20% 柔蓝光晕 + 边框提亮 */
   .editor-frame:focus-within {
     background: var(--surface, #fff);
-    border-color: color-mix(in srgb, var(--accent, #5065c7) 56%, var(--line, #e1e6ee));
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #5065c7) 12%, transparent);
+    border-color: var(--accent-strong, #0a84ff);
+    box-shadow: 0 0 0 2px rgb(10 132 255 / 20%);
   }
 
   .editor-frame.invalid {
@@ -259,23 +221,23 @@
     min-height: 56px;
     flex: 1 1 auto;
     resize: none;
-    padding: 11px 12px;
+    padding: 12px;
     overflow: auto;
     color: var(--text, #202535);
     background: transparent;
     border: 0;
     font: inherit;
     font-size: var(--font-body);
-    line-height: 1.68;
+    line-height: var(--leading-prose);
     overflow-wrap: anywhere;
   }
 
   textarea::placeholder {
-    color: var(--weak, #98a2b3);
+    color: var(--muted, #71717a);
   }
 
   textarea:focus-visible {
-    outline: 0;
+    outline: none;
   }
 
   textarea:disabled {
@@ -291,11 +253,11 @@
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 5px 9px;
+    padding: 4px 8px;
     color: var(--muted, #697386);
     border-top: 1px solid color-mix(in srgb, var(--line, #e1e6ee) 74%, transparent);
     font-size: var(--font-meta);
-    line-height: 1.4;
+    line-height: var(--leading-meta);
   }
 
   .editor-footer span:first-child {
@@ -313,7 +275,7 @@
 
   .error {
     color: var(--danger, #dc2626);
-    font-weight: 620;
+    font-weight: 600;
   }
 
   @container (max-width: 360px) {
@@ -328,7 +290,7 @@
       justify-content: flex-start;
     }
 
-    .quick-action { min-width: 116px; flex: 0 0 auto; }
+    :global(.quick-action) { min-width: 116px; flex: 0 0 auto; }
 
     .editor-footer span:first-child {
       max-width: 70%;
@@ -337,7 +299,7 @@
 
   @media (max-height: 520px) {
     .editor-frame {
-      min-height: 70px;
+      min-height: 72px;
     }
 
     textarea {

@@ -1,10 +1,12 @@
 <script lang="ts">
-  import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
+  import { Button } from "@/components/ui/button";
+  import DialogShell from "@/components/ui/DialogShell.svelte";
+  import SegmentedControl from "@/components/ui/SegmentedControl.svelte";
+  import { Input } from "@/components/ui/input";
   import Search from "@lucide/svelte/icons/search";
-  import X from "@lucide/svelte/icons/x";
   import { applySceneSelection, type RequestSettings } from "../../domain/hostState";
   import type { WorkbenchModelOption } from "../../domain/providerCatalog";
-  import SelectField from "../ui/SelectField.svelte";
+  import AppSelect from "@/components/ui/AppSelect.svelte";
   import { translator } from "../../domain/i18nStore";
   import {
     listSceneCategories,
@@ -107,162 +109,157 @@
   }
 </script>
 
-<div class="adjust-layer" role="presentation">
-  <button class="adjust-backdrop" type="button" aria-label={translate("关闭")} onclick={onCancel}></button>
-  <div
-    class="adjust-dialog"
-    role="dialog"
-    aria-modal="true"
-    aria-label={translate("生成设置")}
-  >
-    <header class="adjust-head">
-      <div class="adjust-title">
-        <span class="adjust-icon" aria-hidden="true"><SlidersHorizontal size={17} strokeWidth={2} /></span>
-        <div>
-          <h2>{translate("调整生成方案")}</h2>
-          <p>{translate("仅影响下一次生成")}</p>
-        </div>
-      </div>
-      <button class="icon-button" type="button" aria-label={translate("关闭")} onclick={onCancel}>
-        <X size={17} strokeWidth={2} />
-      </button>
-    </header>
+<DialogShell
+  title={translate("调整生成方案")}
+  description={translate("仅影响下一次生成")}
+  size="md"
+  z={20}
+  closeLabel={translate("关闭")}
+  onClose={onCancel}
+>
+  <div class="adjust-body">
+    <div class="adjust-group">
+      <span class="adjust-label">{translate("模式")}</span>
+      <SegmentedControl
+        options={modes.map((item) => ({ id: item.id, label: translate(item.label) }))}
+        value={draft.mode}
+        ariaLabel={translate("模式")}
+        onValueChange={(value) => patchDraft({ mode: value })}
+      />
+    </div>
 
-    <div class="adjust-content">
-      <fieldset class="adjust-group">
-        <legend>{translate("模式")}</legend>
-        <div class="segments adjust-segments">
-          {#each modes as item}
-            <button
-              type="button"
-              class:active={draft.mode === item.id}
-              aria-pressed={draft.mode === item.id}
-              onclick={() => patchDraft({ mode: item.id })}
-            >{translate(item.label)}</button>
-          {/each}
-        </div>
-      </fieldset>
+    <div class="adjust-group">
+      <span class="adjust-label">{translate("风格")}</span>
+      <SegmentedControl
+        options={styles.map((item) => ({ id: item.id, label: translate(item.label) }))}
+        value={draft.style}
+        ariaLabel={translate("风格")}
+        onValueChange={(value) => patchDraft({ style: value })}
+      />
+    </div>
 
-      <fieldset class="adjust-group">
-        <legend>{translate("风格")}</legend>
-        <div class="segments compact adjust-segments">
-          {#each styles as item}
-            <button
-              type="button"
-              class:active={draft.style === item.id}
-              aria-pressed={draft.style === item.id}
-              onclick={() => patchDraft({ style: item.id })}
-            >{translate(item.label)}</button>
-          {/each}
-        </div>
-      </fieldset>
-
+    <div class="adjust-group">
+      <span class="adjust-label">{translate("场景")} · {visibleScenes.length}</span>
       <div class="scene-tools">
-        <label class="scene-search">
-          <span class="sr-only">{translate("搜索场景")}</span>
-          <span class="scene-search-icon" aria-hidden="true"><Search size={15} strokeWidth={2} /></span>
-          <input
+        <div class="scene-search">
+          <Search size={15} strokeWidth={2} />
+          <Input
+            class="h-9 pl-8"
             type="search"
             value={sceneQuery}
+            aria-label={translate("搜索场景")}
             placeholder={translate("搜索场景")}
             oninput={(event) => (sceneQuery = event.currentTarget.value)}
           />
-        </label>
-        <label class="scene-category">
-          <span class="sr-only">{translate("场景分类")}</span>
-          <SelectField
-            value={sceneCategory ?? ""}
-            options={sceneCategoryOptions}
-            ariaLabel={translate("场景分类")}
-            onValueChange={(value) => (sceneCategory = (value || null) as SceneCategoryId | null)}
-          />
-        </label>
+        </div>
+        <AppSelect
+          value={sceneCategory ?? ""}
+          options={sceneCategoryOptions}
+          ariaLabel={translate("场景分类")}
+          onValueChange={(value) => (sceneCategory = (value || null) as SceneCategoryId | null)}
+        />
       </div>
-
-      <label class="adjust-field scene-field">
-        <span>{translate("场景")} · {visibleScenes.length}</span>
-        <SelectField
-          value={draft.scene ?? ""}
-          options={sceneSelectOptions}
-          ariaLabel={translate("场景")}
-          onValueChange={selectScene}
-        />
-      </label>
-
-      <label class="adjust-field">
-        <span>{translate("模型")}</span>
-        <SelectField
-          value={modelValue(draft.provider ?? "", draft.model ?? "")}
-          options={modelOptions}
-          ariaLabel={translate("模型")}
-          disabled={!models.length}
-          placeholder={translate("暂无可用模型")}
-          onValueChange={selectModel}
-        />
-      </label>
-
-      <section class="adjust-preview" aria-label={translate("当前输入")}>
-        <span>{translate("当前输入")}</span>
-        <p>{inputText || translate("尚未输入内容")}</p>
-      </section>
+      <AppSelect
+        value={draft.scene ?? ""}
+        options={sceneSelectOptions}
+        ariaLabel={translate("场景")}
+        onValueChange={selectScene}
+      />
     </div>
 
-    <footer class="adjust-footer">
-      <button class="outline" type="button" onclick={onCancel}>{translate("取消")}</button>
-      <button class="primary small" type="button" onclick={onApply}>{translate("应用")}</button>
-    </footer>
+    <div class="adjust-group">
+      <span class="adjust-label">{translate("模型")}</span>
+      <AppSelect
+        value={modelValue(draft.provider ?? "", draft.model ?? "")}
+        options={modelOptions}
+        ariaLabel={translate("模型")}
+        disabled={!models.length}
+        placeholder={translate("暂无可用模型")}
+        onValueChange={selectModel}
+      />
+    </div>
+
+    <div class="adjust-preview">
+      <span class="adjust-label">{translate("当前输入")}</span>
+      <p>{inputText || translate("尚未输入内容")}</p>
+    </div>
   </div>
-</div>
+
+  <div slot="footer" class="adjust-footer">
+    <Button variant="outline" onclick={onCancel}>{translate("取消")}</Button>
+    <Button variant="default" onclick={onApply}>{translate("应用")}</Button>
+  </div>
+</DialogShell>
 
 <style>
+  .adjust-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-bottom: 4px;
+  }
+
+  .adjust-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .adjust-label {
+    color: hsl(var(--muted-foreground));
+    font-size: var(--font-meta);
+    line-height: var(--leading-meta);
+    font-weight: 500;
+  }
+
   .scene-tools {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(132px, 0.42fr);
     gap: 8px;
+    align-items: center;
   }
 
   .scene-search {
     position: relative;
-    display: block;
+    display: flex;
+    align-items: center;
   }
 
-  .scene-search-icon {
+  .scene-search svg {
     position: absolute;
     top: 50%;
     left: 10px;
     z-index: 1;
-    display: grid;
-    color: var(--muted);
+    color: hsl(var(--muted-foreground));
     pointer-events: none;
     transform: translateY(-50%);
   }
 
-  .scene-search input {
-    width: 100%;
-    min-height: 36px;
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
+  .adjust-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    background: color-mix(in srgb, var(--surface, #f4f4f5) 72%, var(--page, #fff));
+    border: 1px solid hsl(var(--border));
+    border-radius: 12px;
   }
 
-  .scene-search input {
-    padding: 0 10px 0 32px;
-  }
-
-  .scene-field > span {
-    font-variant-numeric: tabular-nums;
-  }
-
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
+  .adjust-preview p {
+    margin: 0;
     overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
+    color: hsl(var(--foreground));
+    font-size: var(--font-body);
+    line-height: var(--leading-prose);
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .adjust-footer {
+    display: flex;
+    gap: 8px;
   }
 
   @media (max-width: 620px) {

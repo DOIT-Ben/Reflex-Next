@@ -25,10 +25,24 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let _ = window::show_main_window(app);
         }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
+                .with_handler(|app, shortcut, event| {
+                    if event.state != ShortcutState::Pressed {
+                        return;
+                    }
+                    // Dispatch on which slot currently owns this shortcut so
+                    // the main hotkey opens the workbench and the panel
+                    // hotkey toggles the quick panel.
+                    let pressed = shortcut.to_string();
+                    let state = app.state::<desktop::DesktopState>();
+                    if state.hotkey_owner(&pressed) == Some(desktop::HotkeySlot::Panel) {
+                        let _ = window::toggle_panel_window(app);
+                    } else {
                         let _ = window::show_main_window(app);
                     }
                 })
@@ -55,15 +69,38 @@ pub fn run() {
                 diagnostics.clone(),
             );
             let config = config_store.load().unwrap_or_default();
-            let desktop_state = desktop::DesktopState::new(config.hotkey.clone());
+            let desktop_state = desktop::DesktopState::new_with_panel(
+                config.hotkey.clone(),
+                config.panel_hotkey.clone(),
+            );
             let _ = desktop::register_hotkey(app.handle(), &desktop_state, &config.hotkey);
+            let _ =
+                desktop::register_panel_hotkey(app.handle(), &desktop_state, &config.panel_hotkey);
             if desktop::setup_tray(app).is_ok() {
                 desktop_state.mark_tray_available();
             }
+            // Pre-create the hidden quick panel so toggling it later only
+            // pays show/focus cost.
+            let _ = window::ensure_panel_window(app.handle());
             app.manage(commands::TauriRuntimeState::new(
                 app.handle().clone(),
                 diagnostics,
             ));
+            // Warm the Runtime from the host side: hidden WebView windows may
+            // defer page load on Windows, so the first request must not depend
+            // on the frontend ever having run.
+            let warmup_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let state = warmup_handle.state::<commands::TauriRuntimeState>();
+                state
+                    .diagnostics()
+                    .emit_lifecycle("runtime_warmup", "started");
+                let result = state.runtime().warmup();
+                state.diagnostics().emit_lifecycle(
+                    "runtime_warmup",
+                    if result.is_ok() { "ready" } else { "failed" },
+                );
+            });
             app.manage(config_store);
             app.manage(desktop_state);
             app.manage(secret_store::SecretStore::windows());
@@ -80,6 +117,8 @@ pub fn run() {
             commands::show_main_window,
             commands::hide_main_window,
             commands::show_history_window,
+            commands::show_panel_window,
+            commands::hide_panel_window,
             commands::minimize_window,
             commands::toggle_maximize_window,
             commands::set_window_size,
@@ -90,6 +129,7 @@ pub fn run() {
             commands::save_provider_secret,
             commands::delete_provider_secret,
             commands::runtime_available,
+            commands::runtime_warmup,
             commands::runtime_optimize,
             commands::runtime_cancel,
             commands::runtime_list_providers,
@@ -122,11 +162,24 @@ pub fn run() {
             label,
             event: tauri::WindowEvent::CloseRequested { api, .. },
             ..
-        } if label == "main" => {
-            if app.state::<desktop::DesktopState>().tray_available() {
-                api.prevent_close();
-                let _ = window::hide_main_window(app);
-            }
+        } if label == "main" && app.state::<desktop::DesktopState>().tray_available() => {
+            api.prevent_close();
+            let _ = window::hide_main_window(app);
+        }
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == window::PANEL_WINDOW_LABEL => {
+            api.prevent_close();
+            let _ = window::hide_panel_window(app);
+        }
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Focused(false),
+            ..
+        } if label == window::PANEL_WINDOW_LABEL => {
+            let _ = window::hide_panel_window(app);
         }
         tauri::RunEvent::Exit => {
             app.state::<commands::TauriRuntimeState>().shutdown();
@@ -184,6 +237,8 @@ mod tests {
             "allow-provider-secret-status",
             "allow-save-provider-secret",
             "allow-delete-provider-secret",
+            "allow-runtime-available",
+            "allow-runtime-warmup",
             "allow-runtime-list-providers",
             "allow-runtime-list-plugins",
             "allow-runtime-plugin-call",
@@ -252,7 +307,7 @@ mod tests {
         let config: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(
             config["app"]["security"]["capabilities"],
-            serde_json::json!(["main-capability", "history-capability"])
+            serde_json::json!(["main-capability", "history-capability", "panel-capability"])
         );
         let csp = config["app"]["security"]["csp"].as_str().unwrap();
         for directive in [

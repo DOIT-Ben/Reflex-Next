@@ -6,7 +6,9 @@
     WorkbenchPhase
   } from "./types";
   import type { WorkbenchModelOption } from "../../domain/providerCatalog";
-  import SelectField from "../ui/SelectField.svelte";
+  import { Button } from "@/components/ui/button";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
+  import AppSelect from "@/components/ui/AppSelect.svelte";
   import Spinner from "../ui/Spinner.svelte";
   import { translator } from "../../domain/i18nStore";
 
@@ -64,27 +66,29 @@
 
   {#if (models.length > 0 && onModelChange) || onAdjust}
     <details class="advanced-config">
-      <summary>{translate("更多设置")}</summary>
+      <summary>
+        <ChevronRight class="disclosure-caret" size={14} strokeWidth={2} aria-hidden="true" />
+        {translate("更多设置")}
+      </summary>
       <div class="advanced-config-content">
         {#if models.length > 0 && onModelChange}
           <label class="model-picker">
             <span>{translate("模型")}</span>
-            <SelectField
+            <AppSelect
               ariaLabel={translate("切换润色模型")}
               disabled={running}
               value={optionValue(selectedProvider ?? "", selectedModel ?? "")}
               options={modelOptions}
               className="model-select"
-              size="compact"
-              fullWidth={false}
+              size="sm"
               onValueChange={changeModel}
             />
           </label>
         {/if}
         {#if onAdjust}
-          <button class="adjust-button" type="button" disabled={running} on:click={() => void onAdjust?.()}>
+          <Button variant="outline" size="sm" class="adjust-button" disabled={running} onclick={() => void onAdjust?.()}>
             {adjustLabel}
-          </button>
+          </Button>
         {/if}
       </div>
     </details>
@@ -92,29 +96,28 @@
 
   <div class="action-row">
     {#if running}
-      <button
+      <Button
+        variant="outline"
         class="cancel-button"
-        type="button"
         disabled={!onCancel}
-        on:click={() => void onCancel?.()}
+        onclick={() => void onCancel?.()}
       >
         <span class="stop-mark" aria-hidden="true"></span>
         {cancelLabel}
-      </button>
+      </Button>
       <p class="run-status" role="status" aria-live="polite">
         <Spinner size={13} thickness={2} />
         <span>{statusMessage}</span>
       </p>
     {:else}
-      <button
+      <Button
         class="run-button"
-        type="button"
         disabled={!canRun || !onRun}
-        on:click={() => void onRun?.()}
+        onclick={() => void onRun?.()}
       >
         <span>{runLabel}</span>
         <kbd>Ctrl+Enter</kbd>
-      </button>
+      </Button>
     {/if}
   </div>
   {#if trustSummary}
@@ -123,6 +126,23 @@
 </section>
 
 <style>
+  :global(.run-button),
+  :global(.cancel-button) {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  :global(.cancel-button) {
+    color: var(--danger);
+    background: var(--danger-soft);
+    border-color: var(--danger-line);
+  }
+
+  :global(.cancel-button:hover:not(:disabled)) {
+    background: color-mix(in srgb, var(--danger-soft) 76%, var(--danger));
+    border-color: color-mix(in srgb, var(--danger) 46%, var(--danger-line));
+  }
+
   .config-summary {
     container-type: inline-size;
     display: flex;
@@ -130,7 +150,7 @@
     flex: 0 0 auto;
     flex-direction: column;
     gap: 8px;
-    padding: 9px 12px 11px;
+    padding: 8px 12px;
     color: var(--text, #202535);
     background: var(--surface, #fff);
     border-top: 1px solid var(--line, #e1e6ee);
@@ -148,7 +168,7 @@
     margin: 0;
     color: var(--muted, #697386);
     font-size: var(--font-meta);
-    line-height: 1.48;
+    line-height: var(--leading-meta);
     overflow-wrap: anywhere;
   }
 
@@ -157,7 +177,7 @@
     min-width: 0;
     flex: 1 1 auto;
     flex-wrap: wrap;
-    gap: 5px;
+    gap: 4px;
   }
 
   .advanced-config {
@@ -165,11 +185,35 @@
   }
 
   .advanced-config summary {
+    display: flex;
     width: fit-content;
-    color: var(--muted, #697386);
+    align-items: center;
+    gap: 4px;
+    color: var(--muted, #71717a);
     cursor: pointer;
     font-size: var(--font-meta);
+    line-height: var(--leading-meta);
     font-weight: 600;
+    list-style: none;
+  }
+
+  .advanced-config summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .advanced-config summary::marker {
+    content: "";
+  }
+
+  /* 展开指示交给 lucide 图标，与全库图标语言一致（原生 ▶ 在不同渲染后端会长得不一样） */
+  .advanced-config :global(.disclosure-caret) {
+    flex: 0 0 auto;
+    color: var(--weak, #98a2b3);
+    transition: transform 150ms ease;
+  }
+
+  .advanced-config[open] :global(.disclosure-caret) {
+    transform: rotate(90deg);
   }
 
   .advanced-config-content {
@@ -188,17 +232,17 @@
   .summary-chip {
     display: inline-flex;
     max-width: min(100%, 220px);
-    min-height: 25px;
+    min-height: 24px;
     align-items: center;
-    gap: 5px;
-    padding: 3px 8px;
+    gap: 4px;
+    padding: 2px 8px;
     overflow: hidden;
     color: var(--muted, #697386);
     background: color-mix(in srgb, var(--accent-soft, #eef1ff) 38%, var(--surface, #fff));
     border: 1px solid var(--line, #e1e6ee);
-    border-radius: 7px;
+    border-radius: 6px;
     font-size: var(--font-meta);
-    line-height: 1.35;
+    line-height: var(--leading-meta);
     white-space: nowrap;
   }
 
@@ -211,22 +255,30 @@
     min-width: 0;
     overflow: hidden;
     color: var(--text, #202535);
-    font-weight: 620;
+    font-weight: 600;
     text-overflow: ellipsis;
   }
 
   .model-picker {
     display: inline-flex;
+    min-width: 0;
     max-width: min(100%, 300px);
-    min-height: 25px;
+    min-height: 24px;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     padding-left: 8px;
     color: var(--weak, #98a2b3);
     background: var(--surface, #fff);
     border: 1px solid var(--line, #e1e6ee);
-    border-radius: 7px;
+    border-radius: 8px;
     font-size: var(--font-meta);
+    line-height: var(--leading-meta);
+  }
+
+  /* 标签不可被 select 挤成竖排两行 */
+  .model-picker > span {
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 
   .model-picker :global(.model-select) {
@@ -235,99 +287,35 @@
     flex: 1 1 auto;
   }
 
-  button {
-    border-radius: 7px;
-    font: inherit;
-    font-size: var(--font-meta);
-    font-weight: 620;
-    line-height: 1;
-    white-space: nowrap;
-    transition: color 140ms ease, background 140ms ease, border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
-  }
 
-  button:focus-visible {
-    outline: 2px solid var(--accent, #5065c7);
-    outline-offset: 2px;
-  }
 
-  button:active:not(:disabled) {
-    transform: translateY(1px);
-  }
 
-  button:disabled {
-    cursor: not-allowed;
-    opacity: 0.44;
-  }
 
-  .adjust-button {
-    height: 29px;
-    flex: 0 0 auto;
-    padding: 0 10px;
-    color: var(--muted, #697386);
-    background: var(--surface, #fff);
-    border: 1px solid var(--line, #e1e6ee);
-  }
 
-  .adjust-button:hover:not(:disabled) {
-    color: var(--text, #202535);
-    background: var(--accent-soft, #eef1ff);
-    border-color: var(--line-strong, #cbd4e2);
-  }
 
-  .run-button,
-  .cancel-button {
-    display: inline-flex;
-    min-width: 0;
-    height: 39px;
-    flex: 1 1 auto;
-    align-items: center;
-    justify-content: center;
-    gap: 9px;
-    padding: 0 14px;
-  }
 
-  .run-button {
-    color: #fff;
-    background: var(--accent, #5065c7);
-    border: 1px solid var(--accent, #5065c7);
-    box-shadow: 0 5px 14px color-mix(in srgb, var(--accent, #5065c7) 20%, transparent);
-  }
 
-  .run-button:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent, #5065c7) 88%, #000);
-    box-shadow: 0 7px 18px color-mix(in srgb, var(--accent, #5065c7) 26%, transparent);
-    transform: translateY(-1px);
-  }
 
-  .run-button kbd {
-    padding: 3px 5px;
+  :global(.run-button) kbd {
+    padding: 2px 4px;
     color: inherit;
     background: rgb(255 255 255 / 15%);
     border: 1px solid rgb(255 255 255 / 22%);
-    border-radius: 5px;
+    border-radius: 6px;
     font: inherit;
     font-size: var(--font-meta);
+    line-height: var(--leading-meta);
     font-weight: 500;
   }
 
-  .cancel-button {
-    color: var(--danger, #dc2626);
-    background: var(--danger-soft, #fff8f8);
-    border: 1px solid var(--danger-line, #f4caca);
-  }
 
-  .cancel-button:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--danger-soft, #fff8f8) 76%, var(--danger, #dc2626));
-    border-color: color-mix(in srgb, var(--danger, #dc2626) 46%, var(--danger-line, #f4caca));
-    transform: translateY(-1px);
-  }
 
   .stop-mark {
-    width: 9px;
-    height: 9px;
-    flex: 0 0 9px;
+    width: 8px;
+    height: 8px;
+    flex: 0 0 8px;
     background: currentColor;
-    border-radius: 2px;
+    border-radius: 4px;
   }
 
   .run-status {
@@ -340,7 +328,7 @@
     overflow: hidden;
     color: var(--muted, #697386);
     font-size: var(--font-meta);
-    line-height: 1.4;
+    line-height: var(--leading-meta);
   }
 
   .run-status span:last-child {
@@ -384,12 +372,12 @@
   @media (max-height: 520px) {
     .config-summary {
       gap: 6px;
-      padding-block: 6px 7px;
+      padding-block: 6px;
     }
 
     .run-button,
     .cancel-button {
-      height: 35px;
+      height: 36px;
     }
   }
 

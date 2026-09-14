@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "@/components/ui/button";
   import MessageSquareText from "@lucide/svelte/icons/message-square-text";
   import ThumbsDown from "@lucide/svelte/icons/thumbs-down";
   import ThumbsUp from "@lucide/svelte/icons/thumbs-up";
@@ -29,32 +30,32 @@
         <h2 id="feedback-prompt-title">{translate("这次结果有帮助吗？")}</h2>
         <p>{translate("你的选择会帮助我们改进场景和模型效果，不会附带输入或结果。")}</p>
       </div>
-      <button
-        class="icon-button"
-        type="button"
+      <Button
+        variant="ghost"
+        size="icon-sm"
         aria-label={translate("稍后反馈")}
         title={translate("稍后")}
         disabled={busy}
         onclick={onLater}
       >
         <X size={17} strokeWidth={2} />
-      </button>
+      </Button>
     </header>
 
     <div class="sentiment-actions">
-      <button type="button" disabled={busy} onclick={onPositive}>
+      <Button variant="outline" size="sm" disabled={busy} onclick={onPositive}>
         <ThumbsUp size={17} strokeWidth={2} />{translate(busy ? "正在记录" : "有帮助")}
-      </button>
-      <button type="button" disabled={busy} onclick={onNegative}>
+      </Button>
+      <Button variant="outline" size="sm" disabled={busy} onclick={onNegative}>
         <ThumbsDown size={17} strokeWidth={2} />{translate(busy ? "正在记录" : "需要改进")}
-      </button>
+      </Button>
     </div>
 
     {#if notice}<p class="prompt-notice" role="status">{translate(notice)}</p>{/if}
 
     <footer>
-      <button type="button" disabled={busy} onclick={onLater}>{translate("稍后再问")}</button>
-      <button type="button" disabled={busy} onclick={onDisable}>{translate("不再主动询问")}</button>
+      <Button variant="ghost" size="sm" disabled={busy} onclick={onLater}>{translate("稍后再问")}</Button>
+      <Button variant="ghost" size="sm" disabled={busy} onclick={onDisable}>{translate("不再主动询问")}</Button>
     </footer>
   </div>
 </div>
@@ -67,7 +68,7 @@
     display: flex;
     align-items: flex-end;
     justify-content: flex-end;
-    padding: 18px;
+    padding: 16px;
     pointer-events: none;
   }
 
@@ -77,7 +78,7 @@
     color: var(--text);
     background: var(--surface);
     border: 1px solid var(--line-strong);
-    border-radius: 8px;
+    border-radius: 12px;
     box-shadow: 0 18px 44px rgb(18 24 38 / 22%);
     pointer-events: auto;
   }
@@ -99,7 +100,7 @@
     color: var(--accent);
     background: var(--accent-soft);
     border: 0;
-    border-radius: 6px;
+    border-radius: 8px;
   }
 
   .icon-button {
@@ -110,14 +111,14 @@
   h2 {
     margin: 0;
     font-size: var(--font-body);
-    line-height: 1.35;
+    line-height: var(--leading-body);
   }
 
   p {
     margin: 4px 0 0;
     color: var(--muted);
     font-size: var(--font-meta);
-    line-height: 1.55;
+    line-height: var(--leading-meta);
   }
 
   .sentiment-actions {
@@ -129,15 +130,15 @@
 
   .sentiment-actions button {
     display: inline-flex;
-    min-height: 38px;
+    min-height: 40px;
     align-items: center;
     justify-content: center;
-    gap: 7px;
+    gap: 8px;
     color: var(--text);
     background: var(--surface);
     border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    font-weight: 650;
+    border-radius: 8px;
+    font-weight: 600;
   }
 
   .sentiment-actions button:hover {
@@ -157,23 +158,25 @@
     margin: -6px 14px 12px;
     color: var(--danger);
     font-size: var(--font-meta);
+    line-height: var(--leading-meta);
   }
 
   footer {
     display: flex;
     justify-content: flex-end;
     gap: 10px;
-    padding: 9px 14px;
+    padding: 8px 12px;
     background: color-mix(in srgb, var(--window) 72%, var(--surface));
     border-top: 1px solid var(--line);
   }
 
   footer button {
-    padding: 3px 0;
+    padding: 4px 0;
     color: var(--muted);
     background: transparent;
     border: 0;
     font-size: var(--font-meta);
+    line-height: var(--leading-meta);
   }
 
   footer button:hover,

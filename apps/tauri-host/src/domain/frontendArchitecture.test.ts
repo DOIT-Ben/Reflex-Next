@@ -248,8 +248,7 @@ describe("production frontend architecture", () => {
   it("wires the redesigned shell and workbench to existing host actions", () => {
     const appSource = readFileSync(join(sourceRoot, "App.svelte"), "utf8");
     for (const component of [
-      "ReflexTitleBar",
-      "NavRail",
+      "AppToolbar",
       "StatusBar",
       "SettingsDialog",
       "TranslationDialog",
@@ -279,7 +278,7 @@ describe("production frontend architecture", () => {
       "readClipboard",
       "copyResult",
       "askReplaceClipboard",
-      "openHistoryWindow",
+      "openHistoryView",
       "rateCurrentResult",
       "hide_main_window"
     ]) {
@@ -288,7 +287,15 @@ describe("production frontend architecture", () => {
 
     const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
     expect(styles).toContain(".workbench-grid");
-    expect(styles).toContain(".adjust-dialog");
+    // 调整面板已重建为 DialogShell 弹窗（与 CC Switch 同构），不再有专属外壳样式
+    const adjustSource = readFileSync(
+      join(sourceRoot, "components", "workbench", "AdjustPanel.svelte"),
+      "utf8"
+    );
+    expect(adjustSource).toContain('from "@/components/ui/DialogShell.svelte"');
+    expect(adjustSource).toContain('from "@/components/ui/SegmentedControl.svelte"');
+    expect(adjustSource).toContain('from "@/components/ui/AppSelect.svelte"');
+    expect(styles).not.toContain(".adjust-dialog");
     expect(styles).toMatch(/\.confirm-layer\s*\{[\s\S]*z-index:\s*80/);
     expect(styles).toMatch(/@media\s*\(max-width:\s*620px\)/);
     expect(appSource).not.toContain("false &&");
@@ -306,31 +313,94 @@ describe("production frontend architecture", () => {
       join(sourceRoot, "components", "workbench", "ConfigSummary.svelte"),
       "utf8"
     );
-    const titleBarSource = readFileSync(
-      join(sourceRoot, "components", "shell", "ReflexTitleBar.svelte"),
-      "utf8"
-    );
-
     expect(inputSource).not.toContain('<span>{translate("常用任务")}</span>');
     expect(inputSource).not.toContain('<small>{translate(action.hint)}</small>');
     expect(configSource).toContain('<details class="advanced-config">');
     expect(configSource).toContain('translate("更多设置")');
-    expect(titleBarSource).toContain('<details class="workspace-controls">');
   });
 
-  it("uses one exposed outer window contour instead of nested workbench cards", () => {
+  it("uses a native full-bleed shell window (CC Switch parity)", () => {
     const tauriConfig = JSON.parse(
       readFileSync(join(frontendRoot, "src-tauri", "tauri.conf.json"), "utf8")
-    ) as { app: { windows: Array<{ transparent?: boolean }> } };
-    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+    ) as {
+      app: {
+        windows: Array<{
+          width?: number;
+          height?: number;
+          minWidth?: number;
+          minHeight?: number;
+          transparent?: boolean;
+          decorations?: boolean;
+          resizable?: boolean;
+        }>;
+      };
+    };
+    const window = tauriConfig.app.windows[0] ?? {};
+    expect(window.transparent).not.toBe(true);
+    expect(window.decorations).toBe(true);
+    expect(window.resizable).toBe(true);
+    expect(window.width).toBe(1200);
+    expect(window.height).toBe(650);
+    expect(window.minWidth).toBe(945);
+    expect(window.minHeight).toBe(600);
 
-    expect(tauriConfig.app.windows[0]?.transparent).toBe(true);
-    expect(styles).toMatch(
-      /\.app-shell\.outer-contour\s*\{[^}]*padding:\s*0;[^}]*background:\s*transparent;[^}]*border-radius:\s*24px;[^}]*overflow:\s*hidden;/s
-    );
-    expect(styles).toMatch(
-      /\.app-shell\.outer-contour \.workbench-grid\s*\{[^}]*gap:\s*0;/s
-    );
+    const appSource = readFileSync(join(sourceRoot, "App.svelte"), "utf8");
+    expect(appSource).not.toMatch(/import\s+ReflexTitleBar\s+from/);
+
+    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+    // 壳层三段：64px 顶栏 / 弹性正文 / 32px 状态条（对齐 CC Switch 的 64px header）
+    expect(styles).toMatch(/\.app-shell \.window \{[^}]*grid-template-rows: 64px minmax\(0, 1fr\) 32px;/s);
+  });
+
+  it("keeps one focus contract (CC Switch parity)", () => {
+    const appCss = readFileSync(join(sourceRoot, "app.css"), "utf8");
+    // 全局只有一条焦点规则：2px 蓝色 outline + 2px 偏移，无光晕
+    expect(appCss).toMatch(/\*:focus-visible \{\s*outline: 2px solid #0a84ff;\s*outline-offset: 2px;\s*\}/);
+
+    // 组件不得再出现「3px 环 + 边框变色」的旧版 registry 配方（叠三层会成双蓝圈）
+    const offenders: string[] = [];
+    for (const { path, source } of productionFiles) {
+      if (!path.endsWith(".svelte")) continue;
+      for (const token of [
+        "focus-visible:ring-[3px]",
+        "focus-visible:border-ring",
+        "focus-visible:ring-ring/50"
+      ]) {
+        if (source.includes(token)) offenders.push(`${path}:${token}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    // styles.css 里不允许再出现逐组件的 focus-visible 描边/光晕覆盖；
+    // 只做抑制（outline: none / transparent）是允许的，那正是控件把焦点交给 ring 的方式
+    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+    const focusBlocks = [...styles.matchAll(/:focus-visible[^{]*\{([^}]*)\}/g)].map((m) => m[1]);
+    const decorated = focusBlocks
+      .map((body) => body.replace(/outline(-[a-z]+)?:\s*(none|transparent)\s*;?/g, ""))
+      .filter((body) => /outline|box-shadow|border-color/.test(body));
+    expect(decorated).toEqual([]);
+  });
+
+  it("keeps one spacing and surface contract (CC Switch parity)", () => {
+    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+    const layer = styles.slice(styles.indexOf("最终间距与表面契约"));
+
+    // 间距尺度：页面 gutter 24px、面板间距 16px、底部呼吸 24px
+    expect(layer).toMatch(/\.app-shell\.outer-contour \.app-toolbar \{[^}]*padding: 0 24px;/s);
+    expect(layer).toMatch(/\.app-shell\.outer-contour \.status-bar \{[^}]*padding: 0 24px;/s);
+    expect(styles).toMatch(/\.app-shell\.outer-contour \.workbench-grid \{\s*gap: 16px;/);
+    expect(styles).toMatch(/\.app-shell\.outer-contour \.workbench-surface \{\s*padding: 16px 24px 24px;/);
+
+    // 表面层次：卡片 = 白底 + 描边 + lg 圆角，静止无阴影
+    expect(styles).toMatch(/\.app-shell\.outer-contour \.workbench-grid > \.result-pane \{[^}]*background: #fff;[^}]*border: 1px solid var\(--line\);[^}]*border-radius: var\(--radius-lg\);[^}]*box-shadow: none;/s);
+
+    // 圆角刻度对齐 CC Switch：md 8 / lg 12 / xl 14
+    expect(styles).toMatch(/--radius-sm: 6px;\s*--radius-md: 8px;\s*--radius-lg: 12px;\s*--radius-xl: 14px;/);
+
+    // 圆角不再出现历史遗留的碎片取值
+    const radii = [...styles.matchAll(/border-radius\s*:\s*([^;}\n]+)/g)].map((m) => m[1].trim());
+    const allowed = new Set(["0", "4px", "6px", "8px", "12px", "14px", "50%", "999px", "var(--radius-lg)", "var(--radius-md)"]);
+    expect(radii.filter((value) => !value.startsWith("0 ") && !allowed.has(value))).toEqual([]);
   });
 
   it("keeps the first-success loop in the host UI without leaking credentials", () => {
@@ -382,7 +452,7 @@ describe("production frontend architecture", () => {
       /<\/section>[\s\S]{0,8000}\{#if \$activationOpen && state\.overlay !== "settings"\}[\s\S]{0,480}<FirstRunDialog/
     );
     expect(appSource).toMatch(
-      /<\/section>[\s\S]{0,1200}\{#if state\.overlay === "settings"\}[\s\S]{0,480}<SettingsDialog/
+      /\{#if activeView === "history"\}[\s\S]{0,200}<HistoryView \/>[\s\S]{0,200}\{:else if activeView !== "settings"\}[\s\S]{0,8000}\{:else\}\s*<SettingsDialog\s+variant="page"/
     );
     expect(firstRunSource).toContain("focusableSelector");
     expect(firstRunSource).toContain("onClose={() => void onLater()}");
@@ -411,12 +481,20 @@ describe("production frontend architecture", () => {
     expect(appSource).not.toMatch(/first_run_activation[\s\S]{0,240}(?:api[_-]?key|secret|token|endpoint)/i);
   });
 
-  it("keeps the history window componentized and responsive", () => {
-    const historySource = readFileSync(join(sourceRoot, "HistoryApp.svelte"), "utf8");
-    for (const component of ["HistoryHeader", "HistoryFilters", "HistoryList", "HistoryDetail"]) {
+  it("keeps the history view componentized and responsive", () => {
+    const historySource = readFileSync(
+      join(sourceRoot, "components", "history", "HistoryView.svelte"),
+      "utf8"
+    );
+    for (const component of ["HistoryFilters", "HistoryList", "HistoryDetail"]) {
       expect(historySource).toMatch(new RegExp(`import\\s+${component}\\s+from`));
       expect(historySource).toContain(`<${component}`);
     }
+    // 历史记录是主窗口内的视图（与 CC Switch 同构），不再独立开窗
+    expect(existsSync(join(sourceRoot, "HistoryApp.svelte"))).toBe(false);
+    const shellSource = readFileSync(join(sourceRoot, "App.svelte"), "utf8");
+    expect(shellSource).toContain('import HistoryView from "./components/history/HistoryView.svelte"');
+    expect(shellSource).toContain('activeView === "history"');
 
     const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
     expect(styles).not.toMatch(/\.history-shell\s*\{[^}]*min-width:\s*760px/s);
@@ -426,9 +504,12 @@ describe("production frontend architecture", () => {
   });
 
   it("keeps shared UI primitives as the single source for common materials", () => {
-    for (const component of ["BaseButton", "GlassPanel", "Field", "DialogShell", "EmptyState", "SelectField"]) {
+    for (const component of ["DialogShell", "EmptyState", "Spinner", "AppSelect", "SegmentedControl"]) {
       expect(existsSync(join(sourceRoot, "components", "ui", `${component}.svelte`))).toBe(true);
     }
+    // shadcn Button 是唯一按钮原语：手写壳层已退役
+    expect(existsSync(join(sourceRoot, "components", "ui", "BaseButton.svelte"))).toBe(false);
+    expect(readFileSync(join(sourceRoot, "styles.css"), "utf8")).not.toContain(".ui-button");
 
     const historyList = readFileSync(join(sourceRoot, "components", "history", "HistoryList.svelte"), "utf8");
     const historyDetail = readFileSync(join(sourceRoot, "components", "history", "HistoryDetail.svelte"), "utf8");
@@ -436,28 +517,62 @@ describe("production frontend architecture", () => {
     expect(historyDetail).toContain('from "../ui/EmptyState.svelte"');
   });
 
-  it("uses one accessible custom select instead of browser-native option popups", () => {
+  it("routes every action button through the shared shadcn Button", () => {
+    const legacyActionButton = productionFiles
+      .filter(({ path }) => path.endsWith(".svelte") && !path.includes("components/ui/"))
+      .filter(({ source }) =>
+        [...source.matchAll(/<button[^>]*class="([^"]*)"/g)].some((match) =>
+          match[1].split(/\s+/).some((token) => ["outline", "primary", "danger-icon"].includes(token))
+        )
+      )
+      .map(({ path }) => path);
+    expect(legacyActionButton).toEqual([]);
+
+    const sharedButtonUsers = productionFiles
+      .filter(({ path }) => path.endsWith(".svelte") && !path.includes("components/ui/"))
+      .filter(({ source }) => /<Button[\s>]/.test(source));
+    expect(sharedButtonUsers.length).toBeGreaterThanOrEqual(12);
+
+    const toolbar = readFileSync(
+      join(sourceRoot, "components", "shell", "AppToolbar.svelte"),
+      "utf8"
+    );
+    expect(toolbar).toContain('from "@/components/ui/button"');
+    expect(toolbar).toContain("toolbar-shortcuts");
+
+    const maintenanceMenu = readFileSync(
+      join(sourceRoot, "components", "history", "HistoryMaintenanceMenu.svelte"),
+      "utf8"
+    );
+    expect(maintenanceMenu).toContain('from "@/components/ui/button"');
+    expect(maintenanceMenu).toContain("history-menu");
+  });
+
+  it("routes every select through the shared shadcn-based AppSelect wrapper", () => {
     const nativeSelectUsages = productionFiles
       .filter(({ path }) => path.endsWith(".svelte"))
-      .filter(({ source }) => /<(?:select|option)\b/i.test(source))
+      .filter(({ source }) => /<(?:select|option)[\s>]/.test(source))
       .map(({ path }) => path);
     expect(nativeSelectUsages).toEqual([]);
 
     const selectSource = readFileSync(
-      join(sourceRoot, "components", "ui", "SelectField.svelte"),
+      join(sourceRoot, "components", "ui", "AppSelect.svelte"),
       "utf8"
     );
-    expect(selectSource).toContain('role="combobox"');
-    expect(selectSource).toContain('role="listbox"');
-    expect(selectSource).toContain("ArrowDown");
-    expect(selectSource).toContain("aria-selected");
-    expect(selectSource).toContain("event.stopPropagation()");
-    expect(selectSource).toContain('tabindex="-1"');
-    expect(selectSource).toContain("scrollIntoView");
-    expect(selectSource).toContain("viewportZoom");
+    expect(selectSource).toContain('from "@/components/ui/select"');
+    expect(selectSource).toContain("<Select.Trigger");
+    expect(selectSource).toContain("<Select.Content");
+    expect(selectSource).toContain("<Select.Item");
+    expect(selectSource).toContain("aria-label={ariaLabel}");
+
+    const rawSelectUsages = productionFiles
+      .filter(({ path }) => path.endsWith(".svelte") && !path.includes("components/ui/"))
+      .filter(({ source }) => /<Select\.(Root|Trigger|Content|Item)/.test(source))
+      .map(({ path }) => path);
+    expect(rawSelectUsages).toEqual([]);
   });
 
-  it("uses the three-level typography token scale everywhere", () => {
+  it("uses the token-only type and leading scale everywhere", () => {
     const styles = [
       {
         path: "src/styles.css",
@@ -468,10 +583,28 @@ describe("production frontend architecture", () => {
     const allowed = new Set([
       "var(--font-meta)",
       "var(--font-body)",
-      "var(--font-title)"
+      "var(--font-title)",
+      // 徽章级：只用于内联标签胶囊，不参与正文层级
+      "var(--font-badge)",
+      // 根字号的 rem 基准，只允许出现在 styles.css 的 :root 上
+      "16px"
+    ]);
+    const allowedLeading = new Set([
+      "var(--leading-none)",
+      "var(--leading-meta)",
+      "var(--leading-body)",
+      "var(--leading-prose)",
+      "var(--leading-title)",
+      "var(--leading-badge)"
     ]);
     const declarations = styles.flatMap(({ path, source }) =>
       [...source.matchAll(/font-size\s*:\s*([^;}\n]+)/g)].map((match) => ({
+        path,
+        value: match[1].replace(/\s*!important\s*$/, "").trim()
+      }))
+    );
+    const leading = styles.flatMap(({ path, source }) =>
+      [...source.matchAll(/line-height\s*:\s*([^;}\n]+)/g)].map((match) => ({
         path,
         value: match[1].replace(/\s*!important\s*$/, "").trim()
       }))
@@ -480,9 +613,118 @@ describe("production frontend architecture", () => {
     expect(styles[0].source).toContain("--font-meta: 12px");
     expect(styles[0].source).toContain("--font-body: 14px");
     expect(styles[0].source).toContain("--font-title: 18px");
+    expect(styles[0].source).toContain("--font-badge: 10px");
+    expect(styles[0].source).toContain("--leading-none: 1");
+    expect(styles[0].source).toContain("--leading-meta: 18px");
+    expect(styles[0].source).toContain("--leading-body: 21px");
+    expect(styles[0].source).toContain("--leading-prose: 23px");
+    expect(styles[0].source).toContain("--leading-title: 27px");
+    expect(styles[0].source).toContain("--leading-badge: 14px");
     expect(styles[0].source).not.toMatch(
       /(?:\.settings-head h2|\.settings-content h3)[^{]*\{[^}]*font-size:\s*var\(--font-title\)/s
     );
     expect(declarations.filter(({ value }) => !allowed.has(value))).toEqual([]);
+    expect(declarations.filter(({ value }) => value === "16px")).toEqual([
+      { path: "src/styles.css", value: "16px" }
+    ]);
+    // 倍数列高会按各自字号重算出 16.2 / 17.76 / 19.8 这类碎片值，只允许 token。
+    expect(leading.filter(({ value }) => !allowedLeading.has(value))).toEqual([]);
+    expect(styles[0].source).toMatch(/:root\s*\{[^}]*font-size:\s*16px/s);
+  });
+
+  it("keeps one empty-state recipe across workbench and history (CC Switch parity)", () => {
+    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+
+    // 唯一配方：36/40 留白、18px 标题、14px 说明、512px 行宽、虚线卡片
+    expect(styles).toMatch(
+      /\.app-shell\.outer-contour \.result-pane \.center-state \{\s*gap: 16px;\s*padding: 40px;/s
+    );
+    expect(styles).toMatch(
+      /\.app-shell\.outer-contour \.result-pane \.center-state h3 \{[^}]*font-size: var\(--font-title\);[^}]*font-weight: 600;[^}]*line-height: var\(--leading-title\);/s
+    );
+    expect(styles).toMatch(
+      /\.app-shell\.outer-contour \.result-pane \.center-state p \{[^}]*max-width: 512px;[^}]*font-size: var\(--font-body\);[^}]*line-height: var\(--leading-body\);/s
+    );
+    expect(styles).toMatch(
+      /\.app-shell\.outer-contour \.result-pane \.center-state\.empty-state \{[^}]*border: 1px dashed var\(--line\);[^}]*border-radius: var\(--radius-lg\);/s
+    );
+
+    // 历史上 result-pane 有 4 代 .center-state 规则互相覆盖，任何一代回归都会重新分裂空状态
+    const legacyGenerations = [...styles.matchAll(/^\.app-shell \.result-pane \.center-state[^\n]*\{/gm)];
+    expect(legacyGenerations).toEqual([]);
+
+    // 组件不得再自带一套空状态排版
+    const competingTypography = productionFiles
+      .filter(({ path }) => path.endsWith(".svelte"))
+      .filter(({ source }) => /\.center-state (?:h3|p)[^{]*\{[^}]*font-size/s.test(source))
+      .map(({ path }) => path);
+    expect(competingTypography).toEqual([]);
+  });
+
+  it("never falls back to the browser's native disclosure marker", () => {
+    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+    const componentStyles = productionFiles
+      .filter(({ path }) => path.endsWith(".svelte"))
+      .map(({ path, source }) => ({ path, source: source.match(/<style[^>]*>([\s\S]*)<\/style>/)?.[1] ?? "" }))
+      .filter(({ source }) => source.length > 0);
+
+    // 用 CSS 三角形冒充 marker 会重新引入与原生 ▶ 一样的实心三角
+    const triangleTrick = [...componentStyles, { path: "src/styles.css", source: styles }]
+      .filter(({ source }) => /border-top: 4px solid transparent/.test(source))
+      .map(({ path }) => path);
+    expect(triangleTrick).toEqual([]);
+
+    // 每条 summary 元素规则都要显式关掉原生 marker
+    // （::-webkit-details-marker / ::marker 本身就是抑制规则，不在此列；
+    //   summary-chip、config-summary 这类把 summary 当子串的类名，
+    //   以及 .history-menu summary span 这类后代规则也不算）
+    const summaryRules = [...styles.matchAll(/([^{}\n]*)\{([^}]*)\}/gm)]
+      .filter(([, selector]) => / summary(?::[a-z-]+(?:\([^)]*\))?)*\s*$/.test(selector));
+    expect(summaryRules.length).toBeGreaterThanOrEqual(3);
+    const missing = summaryRules
+      .filter(([, , body]) => !/list-style:\s*none/.test(body))
+      .map(([, selector]) => selector.trim());
+    expect(missing).toEqual([]);
+
+    // 展开指示由 lucide 图标承担，打开的 details 旋转 90°
+    for (const path of ["ConfigSummary", "ResultPane"]) {
+      const component = readFileSync(join(sourceRoot, "components", "workbench", `${path}.svelte`), "utf8");
+      expect(component).toContain("@lucide/svelte/icons/chevron-right");
+      expect(component).toContain("disclosure-caret");
+    }
+    expect(styles).toMatch(/\.secondary-tools\[open\] \.disclosure-caret \{\s*transform: rotate\(90deg\);/s);
+  });
+
+  it("keeps component styles on the shared spacing and radius scale", () => {
+    const spacingScale = new Set([0, 1, 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 32, 36, 40, 48, 56, 64, 80]);
+    const radiusScale = new Set(["0", "4px", "6px", "8px", "12px", "14px", "16px", "50%", "999px", "9999px"]);
+    const spacingOffenders: string[] = [];
+    const radiusOffenders: string[] = [];
+
+    for (const { path, source } of productionFiles.filter(({ path }) => path.endsWith(".svelte"))) {
+      const styleBlock = source.match(/<style[^>]*>([\s\S]*)<\/style>/)?.[1];
+      if (!styleBlock) continue;
+      styleBlock.split("\n").forEach((line, index) => {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("/*") || trimmed.startsWith("*")) return;
+        const spacing = /^(gap|row-gap|column-gap|padding|padding-\w+|margin|margin-\w+)\s*:\s*(.+?);?$/.exec(trimmed);
+        if (spacing) {
+          const off = [...spacing[2].matchAll(/(?<![\w-])(\d+(?:\.\d+)?)px/g)]
+            .map((match) => Number(match[1]))
+            .filter((value) => !spacingScale.has(value));
+          if (off.length) spacingOffenders.push(`${path}:${index + 1} ${trimmed}`);
+        }
+        const radius = /^border-radius\s*:\s*(.+?);?$/.exec(trimmed);
+        if (radius) {
+          const off = radius[1]
+            .split(/\s+/)
+            .filter((value) => !value.startsWith("var(") && !radiusScale.has(value));
+          if (off.length) radiusOffenders.push(`${path}:${index + 1} ${trimmed}`);
+        }
+      });
+    }
+
+    expect(spacingOffenders).toEqual([]);
+    expect(radiusOffenders).toEqual([]);
   });
 });

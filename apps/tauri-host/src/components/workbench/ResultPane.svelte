@@ -1,5 +1,7 @@
 <script lang="ts">
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import ThumbsDown from "@lucide/svelte/icons/thumbs-down";
+  import { Button } from "@/components/ui/button";
   import ThumbsUp from "@lucide/svelte/icons/thumbs-up";
   import Spinner from "../ui/Spinner.svelte";
   import { translator } from "../../domain/i18nStore";
@@ -103,20 +105,15 @@
         </div>
         <div class="state-actions">
           {#if errorRecoverable && onRetry}
-            <button class="primary-action" type="button" on:click={() => void onRetry?.()}>{translate("重试")}</button>
+            <Button size="sm" onclick={() => void onRetry?.()}>{translate("重试")}</Button>
           {/if}
           {#if onOpenSettings}
-            <button class="secondary-action" type="button" on:click={() => void onOpenSettings?.()}>{translate("打开设置")}</button>
+            <Button variant="outline" size="sm" onclick={() => void onOpenSettings?.()}>{translate("打开设置")}</Button>
           {/if}
         </div>
         {#if diagnosticId}
-          <button
-            class="diagnostic-action"
-            type="button"
-            disabled={!onCopyDiagnosticId}
-            title="复制诊断 ID"
-            on:click={() => void onCopyDiagnosticId?.()}
-          >诊断 ID：{diagnosticId}</button>
+          <Button variant="ghost" size="sm" disabled={!onCopyDiagnosticId}
+            title="复制诊断 ID" onclick={() => void onCopyDiagnosticId?.()}>诊断 ID：{diagnosticId}</Button>
         {/if}
       </div>
     {:else if phase === "cancelled" && !hasOutput}
@@ -127,7 +124,7 @@
           <p>{translate("本次没有生成内容，可以重新运行。")}</p>
         </div>
         {#if onRetry}
-          <button class="primary-action" type="button" on:click={() => void onRetry?.()}>{translate("重新生成")}</button>
+          <Button size="sm" onclick={() => void onRetry?.()}>{translate("重新生成")}</Button>
         {/if}
       </div>
     {:else if showOutput}
@@ -140,7 +137,7 @@
             <strong>生成中断</strong>
             <span>{errorMessage} 已输出内容已保留。</span>
             {#if errorRecoverable && onRetry}
-              <button type="button" on:click={() => void onRetry?.()}>重试</button>
+              <Button variant="link" size="sm" onclick={() => void onRetry?.()}>重试</Button>
             {/if}
           </div>
         {/if}
@@ -159,60 +156,56 @@
   {#if hasOutput}
     <footer class="result-footer">
       <div class="primary-actions">
-        <button
-          class="copy-button"
-          type="button"
+        <Button
+          size="sm"
           disabled={!onCopy}
-          on:click={() => void onCopy?.()}
-        >{copied ? translate("已复制") : translate("复制结果")}</button>
+          onclick={() => void onCopy?.()}
+        >{copied ? translate("已复制") : translate("复制结果")}</Button>
         {#if onReplace}
-          <button class="secondary-result-action" type="button" on:click={() => void onReplace?.()}>{translate("替换剪贴板")}</button>
+          <Button variant="outline" size="sm" onclick={() => void onReplace?.()}>{translate("替换剪贴板")}</Button>
         {/if}
         {#if onCompare && sourceAvailable}
-          <button class="secondary-result-action" type="button" on:click={() => void onCompare?.()}>{translate("对比原文")}</button>
+          <Button variant="outline" size="sm" onclick={() => void onCompare?.()}>{translate("对比原文")}</Button>
         {/if}
         {#if onAdjust}
-          <button class="secondary-result-action" type="button" on:click={() => void onAdjust?.()}>{translate("再调整")}</button>
+          <Button variant="outline" size="sm" onclick={() => void onAdjust?.()}>{translate("再调整")}</Button>
         {/if}
       </div>
       <details class="secondary-tools">
-        <summary>{translate("更多结果工具")}</summary>
+        <summary>
+          <ChevronRight class="disclosure-caret" size={14} strokeWidth={2} aria-hidden="true" />
+          {translate("更多结果工具")}
+        </summary>
         <div class="secondary-tools-content">
           {#if onRegenerate}
-            <button class="secondary-result-action" type="button" on:click={() => void onRegenerate?.()}>{translate("重新生成")}</button>
+            <Button variant="outline" size="sm" onclick={() => void onRegenerate?.()}>{translate("重新生成")}</Button>
           {/if}
           {#if onExport}
-            <button class="secondary-result-action" type="button" on:click={() => void onExport?.()}>{translate("导出")}</button>
+            <Button variant="outline" size="sm" onclick={() => void onExport?.()}>{translate("导出")}</Button>
           {/if}
           {#if onOpenHistory}
-            <button class="secondary-result-action" type="button" on:click={() => void onOpenHistory?.()}>{translate("历史")}</button>
+            <Button variant="outline" size="sm" onclick={() => void onOpenHistory?.()}>{translate("历史")}</Button>
           {/if}
           {#if onTranslate}
-            <button class="secondary-result-action" type="button" on:click={() => void onTranslate?.()}>{translate("翻译")}</button>
+            <Button variant="outline" size="sm" onclick={() => void onTranslate?.()}>{translate("翻译")}</Button>
           {/if}
           {#if onPreview}
-            <button class="secondary-result-action" type="button" on:click={() => void onPreview?.()}>{translate("预览")}</button>
+            <Button variant="outline" size="sm" onclick={() => void onPreview?.()}>{translate("预览")}</Button>
           {/if}
           {#if onPositiveFeedback || onNegativeFeedback}
             <span class="feedback-actions" aria-label={translate("结果反馈")}>
-              <button type="button" aria-label={translate("结果满意")} title={translate("满意")} disabled={!onPositiveFeedback} on:click={() => void onPositiveFeedback?.()}>
+              <Button variant="ghost" size="icon-sm" aria-label={translate("结果满意")} title={translate("满意")} disabled={!onPositiveFeedback} onclick={() => void onPositiveFeedback?.()}>
                 <ThumbsUp size={15} strokeWidth={2} />
-              </button>
-              <button type="button" aria-label={translate("结果不满意")} title={translate("不满意")} disabled={!onNegativeFeedback} on:click={() => void onNegativeFeedback?.()}>
+              </Button>
+              <Button variant="ghost" size="icon-sm" aria-label={translate("结果不满意")} title={translate("不满意")} disabled={!onNegativeFeedback} onclick={() => void onNegativeFeedback?.()}>
                 <ThumbsDown size={15} strokeWidth={2} />
-              </button>
+              </Button>
             </span>
           {/if}
           {#if onRate}
             <span class="rating-actions" aria-label={translate("结果评分")}>
               {#each [1, 2, 3, 4, 5] as score}
-                <button
-                  type="button"
-                  aria-label={translate("评分 {score}", { score })}
-                  aria-pressed={rating === score}
-                  disabled={!ratingEnabled}
-                  on:click={() => void onRate?.(score)}
-                >{score}</button>
+                <Button variant="ghost" size="icon-sm" aria-label={translate("评分 {score}", { score })} aria-pressed={rating === score} disabled={!ratingEnabled} onclick={() => void onRate?.(score)}>{score}</Button>
               {/each}
             </span>
           {/if}
@@ -253,7 +246,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 7px 10px 7px 12px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--line, #e1e6ee);
   }
 
@@ -268,7 +261,7 @@
 
   .title-group {
     flex: 1 1 auto;
-    gap: 7px;
+    gap: 8px;
     overflow: hidden;
   }
 
@@ -281,20 +274,20 @@
   h2 {
     flex: 0 0 auto;
     font-size: var(--font-body);
-    font-weight: 650;
-    line-height: 1.4;
+    font-weight: 600;
+    line-height: var(--leading-body);
   }
 
   .scene-badge {
     max-width: 190px;
-    padding: 3px 7px;
+    padding: 2px 6px;
     overflow: hidden;
-    color: var(--accent, #5065c7);
+    color: var(--accent-strong, #0a84ff);
     background: var(--accent-soft, #eef1ff);
-    border-radius: 999px;
-    font-size: var(--font-meta);
-    font-weight: 620;
-    line-height: 1.4;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-badge);
+    font-weight: 600;
+    line-height: var(--leading-badge);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -303,24 +296,13 @@
     flex: 0 0 auto;
     color: var(--muted, #697386);
     font-size: var(--font-meta);
+    line-height: var(--leading-meta);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
 
-  button {
-    font: inherit;
-    transition: color 140ms ease, background 140ms ease, border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
-  }
 
-  button:focus-visible {
-    outline: 2px solid var(--accent, #5065c7);
-    outline-offset: 2px;
-  }
 
-  button:disabled {
-    cursor: not-allowed;
-    opacity: 0.4;
-  }
 
   .result-body {
     position: relative;
@@ -339,24 +321,16 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    padding: 22px;
     overflow: auto;
     text-align: center;
   }
 
   .center-state h3 {
-    font-size: var(--font-body);
-    font-weight: 650;
-    line-height: 1.45;
+    color: var(--text);
   }
 
   .center-state p {
-    max-width: 360px;
     margin-top: 4px;
-    color: var(--muted, #697386);
-    font-size: var(--font-meta);
-    line-height: 1.6;
     overflow-wrap: anywhere;
   }
 
@@ -368,9 +342,9 @@
   .error-mark,
   .cancelled-mark {
     display: grid;
-    width: 42px;
-    height: 42px;
-    flex: 0 0 42px;
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
     place-items: center;
     border-radius: 50%;
   }
@@ -388,7 +362,7 @@
     height: 2px;
     content: "";
     background: var(--accent, #5065c7);
-    border-radius: 2px;
+    border-radius: 4px;
   }
 
   .state-mark::after {
@@ -400,7 +374,8 @@
     background: var(--danger-soft, #fff8f8);
     border: 1px solid var(--danger-line, #f4caca);
     font-size: var(--font-title);
-    font-weight: 760;
+    font-weight: 700;
+    line-height: var(--leading-none);
   }
 
   .cancelled-mark {
@@ -409,102 +384,31 @@
   }
 
   .cancelled-mark::before {
-    width: 13px;
-    height: 13px;
+    width: 12px;
+    height: 12px;
     content: "";
     background: var(--muted, #697386);
-    border-radius: 3px;
+    border-radius: 4px;
   }
 
   .state-actions {
     justify-content: center;
     flex-wrap: wrap;
-    gap: 7px;
-  }
-
-  .primary-action,
-  .secondary-action,
-  .diagnostic-action,
-  .copy-button,
-  .inline-notice button {
-    min-height: 31px;
-    padding: 0 11px;
-    border-radius: 7px;
-    font-size: var(--font-meta);
-    font-weight: 620;
-  }
-
-  .primary-action,
-  .copy-button {
-    color: #fff;
-    background: var(--accent, #5065c7);
-    border: 1px solid var(--accent, #5065c7);
-  }
-
-  .secondary-tools {
-    min-width: 0;
-    padding: 0 11px 7px;
-  }
-
-  .secondary-tools summary {
-    width: fit-content;
-    color: var(--muted, #697386);
-    font-size: var(--font-meta);
-    cursor: pointer;
+    gap: 8px;
   }
 
   .secondary-tools-content {
     display: none;
     align-items: center;
     flex-wrap: wrap;
-    gap: 5px;
-    padding-top: 7px;
+    gap: 4px;
+    padding-top: 8px;
   }
 
   .secondary-tools[open] .secondary-tools-content {
     display: flex;
   }
 
-  .primary-action:hover:not(:disabled),
-  .copy-button:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent, #5065c7) 88%, #000);
-    box-shadow: 0 4px 12px color-mix(in srgb, var(--accent, #5065c7) 18%, transparent);
-    transform: translateY(-1px);
-  }
-
-  .secondary-action {
-    color: var(--text, #202535);
-    background: var(--surface, #fff);
-    border: 1px solid var(--line, #e1e6ee);
-  }
-
-  .secondary-action:hover:not(:disabled) {
-    background: var(--accent-soft, #eef1ff);
-    border-color: var(--line-strong, #cbd4e2);
-  }
-
-  .diagnostic-action {
-    display: block;
-    max-width: min(100%, 360px);
-    min-height: 0;
-    padding: 2px 4px;
-    overflow: hidden;
-    color: var(--muted, #697386);
-    background: transparent;
-    border: 0;
-    font-size: var(--font-meta);
-    font-weight: 500;
-    overflow-wrap: anywhere;
-    text-decoration: underline;
-    text-decoration-color: transparent;
-    text-underline-offset: 3px;
-    white-space: normal;
-  }
-
-  .diagnostic-action:hover:not(:disabled) {
-    color: var(--text, #202535);
-    text-decoration-color: currentColor;
-  }
 
   .output-layout {
     display: flex;
@@ -520,12 +424,12 @@
     min-height: 0;
     margin: 0;
     flex: 1 1 auto;
-    padding: 13px 15px;
+    padding: 12px 16px;
     overflow: auto;
     color: var(--text, #202535);
     font: inherit;
     font-size: var(--font-body);
-    line-height: 1.72;
+    line-height: var(--leading-prose);
     overflow-wrap: anywhere;
     white-space: pre-wrap;
     word-break: break-word;
@@ -553,11 +457,11 @@
     margin: 0 12px 10px;
     flex: 0 0 auto;
     align-items: center;
-    gap: 7px;
+    gap: 8px;
     padding: 8px 10px;
-    border-radius: 7px;
+    border-radius: 8px;
     font-size: var(--font-meta);
-    line-height: 1.5;
+    line-height: var(--leading-meta);
     overflow-wrap: anywhere;
   }
 
@@ -578,13 +482,6 @@
     flex: 1 1 auto;
   }
 
-  .error-notice button {
-    flex: 0 0 auto;
-    color: var(--danger, #dc2626);
-    background: var(--surface, #fff);
-    border: 1px solid var(--danger-line, #f4caca);
-  }
-
   .result-footer {
     display: flex;
     min-width: 0;
@@ -593,39 +490,6 @@
     border-top: 1px solid var(--line, #e1e6ee);
   }
 
-  .primary-actions {
-    display: flex;
-    min-height: 44px;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 5px;
-    padding: 6px 11px;
-  }
-
-  .copy-button {
-    min-width: 84px;
-  }
-
-  .secondary-result-action,
-  .rating-actions button,
-  .feedback-actions button {
-    min-height: 31px;
-    padding: 0 9px;
-    color: var(--muted, #697386);
-    background: var(--surface, #fff);
-    border: 1px solid var(--line, #e1e6ee);
-    border-radius: 7px;
-    font-size: var(--font-meta);
-    font-weight: 600;
-  }
-
-  .secondary-result-action:hover:not(:disabled),
-  .rating-actions button:hover:not(:disabled),
-  .feedback-actions button:hover:not(:disabled) {
-    color: var(--text, #202535);
-    background: var(--accent-soft, #eef1ff);
-    border-color: var(--line-strong, #cbd4e2);
-  }
 
   .rating-actions {
     display: inline-flex;
@@ -634,38 +498,20 @@
 
   .feedback-actions {
     display: inline-flex;
-    gap: 3px;
+    gap: 4px;
   }
 
-  .feedback-actions button {
-    display: grid;
-    width: 31px;
-    height: 31px;
-    place-items: center;
-    padding: 0;
-  }
-
-  .rating-actions button {
-    min-width: 27px;
-    padding: 0 5px;
-  }
-
-  .rating-actions button[aria-pressed="true"] {
-    color: #fff;
-    background: var(--accent, #5065c7);
-    border-color: var(--accent, #5065c7);
-  }
 
   .result-meta {
-    min-height: 29px;
+    min-height: 28px;
     justify-content: space-between;
     gap: 10px;
-    padding: 5px 11px;
+    padding: 4px 12px;
     color: var(--muted, #697386);
     background: color-mix(in srgb, var(--surface, #fff) 76%, var(--page, #edf1f6));
     border-top: 1px solid color-mix(in srgb, var(--line, #e1e6ee) 72%, transparent);
     font-size: var(--font-meta);
-    line-height: 1.4;
+    line-height: var(--leading-meta);
   }
 
   .meta-list {
@@ -692,7 +538,7 @@
 
   @container (max-width: 420px) {
     .pane-header {
-      min-height: 76px;
+      min-height: 72px;
       align-items: stretch;
       flex-direction: column;
       gap: 4px;
@@ -701,7 +547,7 @@
     .result-meta {
       align-items: flex-start;
       flex-direction: column;
-      gap: 3px;
+      gap: 4px;
     }
 
     .history-status {
@@ -718,7 +564,7 @@
   @media (max-height: 520px) {
     .result-body,
     .center-state {
-      min-height: 90px;
+      min-height: 88px;
     }
 
     .center-state {
@@ -726,14 +572,9 @@
       padding: 12px;
     }
 
-    .primary-actions {
-      min-height: 36px;
-      padding-block: 3px;
-    }
-
     .result-meta {
-      min-height: 25px;
-      padding-block: 3px;
+      min-height: 24px;
+      padding-block: 4px;
     }
   }
 

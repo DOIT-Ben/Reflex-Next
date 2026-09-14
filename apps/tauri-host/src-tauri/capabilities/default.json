@@ -15,6 +15,7 @@
     "core:window:allow-start-dragging",
     "allow-desktop-status",
     "allow-runtime-available",
+    "allow-runtime-warmup",
     "allow-runtime-optimize",
     "allow-runtime-cancel",
     "allow-runtime-list-providers",
@@ -37,6 +38,10 @@
     "allow-cloud-get-quota",
     "allow-cloud-get-quality-release",
     "allow-cloud-delete-data",
+    "allow-history-export",
+    "allow-history-admin-operation",
+    "allow-history-operation-cancel",
+    "allow-history-reuse-intent",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

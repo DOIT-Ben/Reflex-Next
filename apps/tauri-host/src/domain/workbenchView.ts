@@ -1,6 +1,6 @@
 import type { HostState, ResultStyle } from "./hostState";
 import type { ProviderAvailability } from "./providerCatalog";
-import { listSceneOptions, type OptimizeMode } from "./reflexSession";
+import { listSceneOptions, type OptimizeMode, type OptimizeStyle } from "./reflexSession";
 import type { TranslationLanguage } from "./translationState";
 import type { WorkbenchPhase } from "../components/workbench/types";
 
@@ -11,7 +11,7 @@ export const WORKBENCH_MODES: Array<{ id: OptimizeMode; label: string }> = [
   { id: "prompt", label: "提示词生成" }
 ];
 
-export const WORKBENCH_STYLES: Array<{ id: ResultStyle; label: string }> = [
+export const WORKBENCH_STYLES: Array<{ id: OptimizeStyle; label: string }> = [
   { id: "concise", label: "简洁" },
   { id: "balanced", label: "平衡" },
   { id: "detailed", label: "详细" },
@@ -115,8 +115,8 @@ export function buildNavItems(translate: Translate) {
   return [
     { id: "workbench", label: translate("工作台"), symbol: "" },
     { id: "tools", label: translate("更多工具"), symbol: "" },
-    { id: "history", label: translate("历史记录"), symbol: "", group: "utility" as const },
-    { id: "settings", label: translate("设置"), symbol: "", shortcut: "Ctrl+,", group: "utility" as const }
+    { id: "history", label: translate("历史记录"), symbol: "" },
+    { id: "settings", label: translate("设置"), symbol: "" }
   ];
 }
 

@@ -1,10 +1,16 @@
 import "./styles.css";
+import "./app.css";
 import App from "./App.svelte";
-import HistoryApp from "./HistoryApp.svelte";
+import PanelApp from "./PanelApp.svelte";
+import { installContextMenuGuard } from "./domain/contextMenuGuard";
 import { mount } from "svelte";
 
-const historyView = new URLSearchParams(window.location.search).get("view") === "history" && new URLSearchParams(window.location.search).toString() === "view=history";
-const app = mount(historyView ? HistoryApp : App, {
+installContextMenuGuard();
+
+const search = new URLSearchParams(window.location.search);
+const query = window.location.search.replace(/^\?/, "");
+const panelView = search.get("view") === "panel" && query === "view=panel";
+const app = mount(panelView ? PanelApp : App, {
   target: document.getElementById("app") as HTMLElement
 });
 

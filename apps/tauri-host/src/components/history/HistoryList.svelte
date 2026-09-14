@@ -23,7 +23,9 @@
   {:else}
     {#each state.items as item (item.id)}
       <button class:active={item.id === state.selectedId} class="history-row" type="button" onclick={() => onSelect(item)}>
-        <time>{item.created_at}</time><span>{sceneLabel(item.scene)} · {styleLabel(item.style)}</span><small>{item.provider} · {item.rating ?? translate("未评分")}</small>
+        <span class="history-row-main"
+          ><time>{item.created_at}</time><span>{sceneLabel(item.scene)} · {styleLabel(item.style)}</span></span
+        ><small>{item.provider} · {item.rating ?? translate("未评分")}</small>
       </button>
     {/each}
     {#if state.cursor}<button class="more" type="button" onclick={onMore} disabled={state.phase === "loading-more"}>{translate(state.phase === "loading-more" ? "正在加载..." : "加载更多")}</button>{/if}

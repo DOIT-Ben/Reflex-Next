@@ -74,7 +74,10 @@ export function createSettingsFlow(deps: SettingsFlowDeps): SettingsFlow {
   const desktopStatus = writable<DesktopStatus>({
     hotkey: "Ctrl+Alt+R",
     hotkeyActive: false,
-    message: null
+    message: null,
+    panelHotkey: "Alt+Q",
+    panelHotkeyActive: false,
+    panelMessage: null
   });
   let configWriteChain: Promise<void> = Promise.resolve();
 

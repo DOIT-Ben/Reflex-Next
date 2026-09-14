@@ -156,6 +156,10 @@ impl TauriRuntimeState {
     pub(crate) fn runtime(&self) -> &RuntimeController {
         &self.runtime
     }
+
+    pub(crate) fn diagnostics(&self) -> &HostDiagnostics {
+        &self.diagnostics
+    }
 }
 
 struct TauriEventEmitter {
@@ -261,8 +265,23 @@ pub async fn runtime_available() -> bool {
 }
 
 #[tauri::command]
+pub async fn runtime_warmup(state: State<'_, TauriRuntimeState>) -> Result<(), String> {
+    state.runtime().warmup().map_err(str::to_string)
+}
+
+#[tauri::command]
 pub async fn desktop_status(state: State<'_, DesktopState>) -> Result<DesktopStatus, String> {
     Ok(state.status())
+}
+
+#[tauri::command]
+pub async fn show_panel_window(app: AppHandle) -> Result<(), String> {
+    crate::window::show_panel_window(&app).map_err(str::to_string)
+}
+
+#[tauri::command]
+pub async fn hide_panel_window(app: AppHandle) -> Result<(), String> {
+    crate::window::hide_panel_window(&app).map_err(str::to_string)
 }
 
 #[tauri::command]
@@ -284,18 +303,34 @@ pub async fn save_app_config(
     )
     .map_err(|error| error.to_string())?;
     let requested_hotkey = normalized.hotkey.clone();
+    let requested_panel_hotkey = normalized.panel_hotkey.clone();
     runtime_state.runtime.replace_provider_credentials(|| {
         let previous = state.load().map_err(|error| error.to_string())?;
         let persist = || {
-            crate::desktop::replace_hotkey_and_persist(
+            crate::desktop::replace_hotkeys_and_persist(
                 &app,
                 &desktop_state,
                 &requested_hotkey,
+                &requested_panel_hotkey,
                 || state.save(&normalized).map_err(|error| error.to_string()),
             )
         };
         with_prepared_history_transition(&previous, &normalized, &history_key_store, persist)
-    })
+    })?;
+    apply_autostart_preference(&app, normalized.autostart_enabled);
+    Ok(normalized)
+}
+
+/// Best-effort sync of the OS autostart registration; a failure here must not
+/// fail the config save because the persisted preference stays authoritative.
+fn apply_autostart_preference(app: &AppHandle, enabled: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+    let autostart = app.autolaunch();
+    let _ = if enabled {
+        autostart.enable()
+    } else {
+        autostart.disable()
+    };
 }
 
 #[tauri::command]
@@ -345,7 +380,7 @@ pub async fn runtime_optimize(
     history_key_store: State<'_, HistoryKeyStore>,
     command: Value,
 ) -> Result<(), String> {
-    require_main_window(window.label())?;
+    require_runtime_window(window.label())?;
     let command = validate_command(command, CommandKind::Optimize).map_err(str::to_string)?;
     let history_path = history_database_path(paths.data_dir());
     send_configured_optimize_to(
@@ -365,7 +400,7 @@ pub async fn runtime_cancel(
     state: State<'_, TauriRuntimeState>,
     command: Value,
 ) -> Result<(), String> {
-    require_main_window(window.label())?;
+    require_runtime_window(window.label())?;
     forward_runtime_command_to(&state.runtime, window.label(), command, CommandKind::Cancel)
 }
 
@@ -1230,6 +1265,15 @@ fn history_confirmation_message(operation: &str) -> &'static str {
 
 fn require_main_window(window_label: &str) -> Result<(), String> {
     if window_label == "main" {
+        Ok(())
+    } else {
+        Err(crate::plugin_commands::PLUGIN_COMMAND_DENIED_MESSAGE.to_string())
+    }
+}
+
+/// Optimize and cancel are allowed from the workbench and the quick panel.
+fn require_runtime_window(window_label: &str) -> Result<(), String> {
+    if matches!(window_label, "main" | "panel") {
         Ok(())
     } else {
         Err(crate::plugin_commands::PLUGIN_COMMAND_DENIED_MESSAGE.to_string())

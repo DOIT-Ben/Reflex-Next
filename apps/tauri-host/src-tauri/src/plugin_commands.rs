@@ -15,6 +15,7 @@ const MAIN_CAPABILITY_PERMISSIONS: &[&str] = &[
     "core:window:allow-start-dragging",
     "allow-desktop-status",
     "allow-runtime-available",
+    "allow-runtime-warmup",
     "allow-runtime-optimize",
     "allow-runtime-cancel",
     "allow-runtime-list-providers",
@@ -37,6 +38,10 @@ const MAIN_CAPABILITY_PERMISSIONS: &[&str] = &[
     "allow-cloud-get-quota",
     "allow-cloud-get-quality-release",
     "allow-cloud-delete-data",
+    "allow-history-export",
+    "allow-history-admin-operation",
+    "allow-history-operation-cancel",
+    "allow-history-reuse-intent",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
 ];
@@ -48,13 +53,18 @@ const HISTORY_CAPABILITY_PERMISSIONS: &[&str] = &[
     "allow-history-admin-operation",
     "allow-history-operation-cancel",
     "allow-history-reuse-intent",
+    "allow-show-main-window",
     "allow-load-app-config",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
 ];
 
 const MAIN_PUBLIC_PLUGIN_CALLS: &[(&str, &str)] = &[
+    ("history-sqlite", "list"),
+    ("history-sqlite", "detail"),
     ("history-sqlite", "rate"),
+    ("history-sqlite", "backups"),
+    ("history-sqlite", "scan"),
     ("translator", "translate"),
     ("markdown-preview", "preview"),
     ("semantic-detector", "status"),
@@ -82,7 +92,7 @@ struct WindowAuthorization {
 const MAIN_AUTHORIZATION: WindowAuthorization = WindowAuthorization {
     capability_permissions: MAIN_CAPABILITY_PERMISSIONS,
     public_plugin_calls: MAIN_PUBLIC_PLUGIN_CALLS,
-    history_management_operations: &[],
+    history_management_operations: HISTORY_MANAGEMENT_OPERATIONS,
 };
 
 const HISTORY_AUTHORIZATION: WindowAuthorization = WindowAuthorization {
@@ -222,18 +232,25 @@ mod tests {
     }
 
     #[test]
-    fn private_history_management_is_bound_to_the_history_window() {
+    fn history_management_is_limited_to_the_two_known_windows() {
+        // 历史记录现在是主窗口内的视图（CC Switch 同构），管理操作对 main 与
+        // 独立历史窗口都放行；未知窗口标签一律拒绝。
         for operation in ["export", "delete", "clear", "repair", "restore", "rotate"] {
+            assert!(super::authorize_history_management("main", operation).is_ok());
             assert!(super::authorize_history_management("history", operation).is_ok());
-            assert!(super::authorize_history_management("main", operation).is_err());
             assert!(super::authorize_history_management("forged", operation).is_err());
+            assert!(super::authorize_history_management("panel", operation).is_err());
         }
     }
 
     #[test]
     fn main_window_has_only_the_minimal_public_plugin_matrix() {
         for (plugin_id, operation) in [
+            ("history-sqlite", "list"),
+            ("history-sqlite", "detail"),
             ("history-sqlite", "rate"),
+            ("history-sqlite", "backups"),
+            ("history-sqlite", "scan"),
             ("translator", "translate"),
             ("markdown-preview", "preview"),
             ("semantic-detector", "status"),
@@ -244,10 +261,6 @@ mod tests {
         }
 
         for (plugin_id, operation) in [
-            ("history-sqlite", "list"),
-            ("history-sqlite", "detail"),
-            ("history-sqlite", "backups"),
-            ("history-sqlite", "scan"),
             ("history-sqlite", "save"),
             ("history-sqlite", "delete"),
             ("history-sqlite", "clear"),

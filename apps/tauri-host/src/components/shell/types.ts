@@ -2,14 +2,11 @@ export type ProviderAvailability = "checking" | "ready" | "missing" | "unavailab
 
 export type WindowSizePreset = "compact" | "default" | "wide";
 
-export type NavItemGroup = "primary" | "utility";
-
-export interface NavRailItem {
+export interface ToolbarItem {
   id: string;
   label: string;
   symbol: string;
   shortcut?: string;
-  group?: NavItemGroup;
   disabled?: boolean;
 }
 

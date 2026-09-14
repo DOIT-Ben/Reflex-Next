@@ -9,6 +9,9 @@ pub const HISTORY_WINDOW_LABEL: &str = "history";
 const HISTORY_WINDOW_TITLE: &str = "Reflex - 历史记录";
 const HISTORY_DEFAULT_SIZE: (f64, f64) = (1040.0, 720.0);
 const HISTORY_MINIMUM_SIZE: (f64, f64) = (760.0, 560.0);
+pub const PANEL_WINDOW_LABEL: &str = "panel";
+const PANEL_WINDOW_TITLE: &str = "Reflex 快捷面板";
+const PANEL_DEFAULT_SIZE: (f64, f64) = (680.0, 460.0);
 pub const WINDOW_UNAVAILABLE_MESSAGE: &str = "窗口暂时无法打开，请从托盘重试。";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,15 +79,20 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static s
         .get_webview_window("main")
         .ok_or(WINDOW_UNAVAILABLE_MESSAGE)?;
     recover_main_window_position(&window);
+    // SW_SHOW alone leaves an iconic window iconic, so restore after show.
+    window.show().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)?;
     if window.is_minimized().unwrap_or(false) {
         let _ = window.unminimize();
     }
-    window.show().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)?;
     window.set_focus().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)
 }
 
 pub fn history_window_url() -> &'static str {
     "index.html?view=history"
+}
+
+pub fn panel_window_url() -> &'static str {
+    "index.html?view=panel"
 }
 
 pub fn navigation_guard<R: Runtime>() -> TauriPlugin<R> {
@@ -96,10 +104,10 @@ pub fn navigation_guard<R: Runtime>() -> TauriPlugin<R> {
 pub fn show_history_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static str> {
     if let Some(window) = app.get_webview_window(HISTORY_WINDOW_LABEL) {
         recover_window_position_for(&window);
+        window.show().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)?;
         if window.is_minimized().unwrap_or(false) {
             let _ = window.unminimize();
         }
-        window.show().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)?;
         return window.set_focus().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE);
     }
 
@@ -125,6 +133,124 @@ pub fn reuse_intent_is_valid(kind: &str, history_id: &str) -> bool {
         && history_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+/// Create the hidden quick panel once at startup so toggling it later only
+/// pays show/focus cost. Existing windows are kept as-is.
+pub fn ensure_panel_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static str> {
+    if app.get_webview_window(PANEL_WINDOW_LABEL).is_some() {
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        app,
+        PANEL_WINDOW_LABEL,
+        WebviewUrl::App(panel_window_url().into()),
+    )
+    .title(PANEL_WINDOW_TITLE)
+    .inner_size(PANEL_DEFAULT_SIZE.0, PANEL_DEFAULT_SIZE.1)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .visible(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .on_navigation(is_local_panel_url)
+    .on_new_window(|_, _| NewWindowResponse::Deny)
+    .build()
+    .map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)?;
+    Ok(())
+}
+
+pub fn show_panel_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static str> {
+    ensure_panel_window(app)?;
+    let window = app
+        .get_webview_window(PANEL_WINDOW_LABEL)
+        .ok_or(WINDOW_UNAVAILABLE_MESSAGE)?;
+    position_panel_window(&window);
+    window.show().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)?;
+    if window.is_minimized().unwrap_or(false) {
+        let _ = window.unminimize();
+    }
+    window.set_focus().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)
+}
+
+pub fn hide_panel_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static str> {
+    app.get_webview_window(PANEL_WINDOW_LABEL)
+        .ok_or(WINDOW_UNAVAILABLE_MESSAGE)?
+        .hide()
+        .map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)
+}
+
+pub fn toggle_panel_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static str> {
+    ensure_panel_window(app)?;
+    let window = app
+        .get_webview_window(PANEL_WINDOW_LABEL)
+        .ok_or(WINDOW_UNAVAILABLE_MESSAGE)?;
+    if window.is_visible().unwrap_or(false) {
+        return hide_panel_window(app);
+    }
+    position_panel_window(&window);
+    window.show().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)?;
+    if window.is_minimized().unwrap_or(false) {
+        let _ = window.unminimize();
+    }
+    window.set_focus().map_err(|_| WINDOW_UNAVAILABLE_MESSAGE)
+}
+
+/// Place the panel near the top-center of the monitor that hosts the cursor,
+/// falling back to the current/first monitor when the cursor is unavailable.
+fn position_panel_window<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    let app = window.app_handle();
+    let cursor = app.cursor_position().ok();
+    let monitors = window.available_monitors().unwrap_or_default();
+    let target = cursor
+        .and_then(|cursor| {
+            let cursor_x = cursor.x;
+            let cursor_y = cursor.y;
+            monitors
+                .iter()
+                .find(|monitor| {
+                    let position = monitor.position();
+                    let size = monitor.size();
+                    let contains_x = cursor_x >= f64::from(position.x)
+                        && cursor_x < f64::from(position.x + size.width as i32);
+                    let contains_y = cursor_y >= f64::from(position.y)
+                        && cursor_y < f64::from(position.y + size.height as i32);
+                    contains_x && contains_y
+                })
+                .cloned()
+        })
+        .or_else(|| window.current_monitor().ok().flatten())
+        .or_else(|| monitors.first().cloned());
+    let Some(monitor) = target else {
+        return;
+    };
+    let (x, y) = panel_position_for_work_area(
+        bounds_from_rect(monitor.work_area()),
+        i32::try_from(size.width).unwrap_or(i32::MAX),
+        i32::try_from(size.height).unwrap_or(i32::MAX),
+    );
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+}
+
+/// Pure placement rule: horizontally centered, about 12% down the work area,
+/// clamped so the panel never leaves its monitor.
+pub fn panel_position_for_work_area(
+    work_area: PhysicalBounds,
+    panel_width: i32,
+    panel_height: i32,
+) -> (i32, i32) {
+    let horizontal_space = (i64::from(work_area.width) - i64::from(panel_width)).max(0);
+    let vertical_offset = (i64::from(work_area.height) / 8).max(48);
+    let vertical_space = (i64::from(work_area.height) - i64::from(panel_height)).max(0);
+    let x = i64::from(work_area.x) + horizontal_space / 2;
+    let y = i64::from(work_area.y) + vertical_offset.min(vertical_space);
+    (x as i32, y as i32)
 }
 
 pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), &'static str> {
@@ -180,6 +306,10 @@ fn is_local_history_url(url: &Url) -> bool {
     navigation_is_allowed_for_environment(HISTORY_WINDOW_LABEL, url, cfg!(debug_assertions))
 }
 
+fn is_local_panel_url(url: &Url) -> bool {
+    navigation_is_allowed_for_environment(PANEL_WINDOW_LABEL, url, cfg!(debug_assertions))
+}
+
 fn navigation_is_allowed(window_label: &str, url: &Url) -> bool {
     navigation_is_allowed_for_environment(window_label, url, cfg!(debug_assertions))
 }
@@ -199,6 +329,11 @@ fn navigation_is_allowed_for_environment(
             is_trusted_local_origin(url, allow_dev_server)
                 && url.path() == "/index.html"
                 && url.query() == Some("view=history")
+        }
+        PANEL_WINDOW_LABEL => {
+            is_trusted_local_origin(url, allow_dev_server)
+                && url.path() == "/index.html"
+                && url.query() == Some("view=panel")
         }
         _ => false,
     }
@@ -230,8 +365,9 @@ fn bounds_from_rect(rect: &tauri::PhysicalRect<i32, u32>) -> PhysicalBounds {
 mod tests {
     use super::{
         history_window_url, is_local_history_url, navigation_is_allowed,
-        navigation_is_allowed_for_environment, recover_window_position, reuse_intent_is_valid,
-        PhysicalBounds, HISTORY_DEFAULT_SIZE, HISTORY_MINIMUM_SIZE,
+        navigation_is_allowed_for_environment, panel_position_for_work_area, panel_window_url,
+        recover_window_position, reuse_intent_is_valid, PhysicalBounds, HISTORY_DEFAULT_SIZE,
+        HISTORY_MINIMUM_SIZE, PANEL_DEFAULT_SIZE,
     };
 
     const PRIMARY: PhysicalBounds = PhysicalBounds::new(0, 0, 1920, 1040);
@@ -282,6 +418,63 @@ mod tests {
         assert_eq!(history_window_url(), "index.html?view=history");
         assert_eq!(HISTORY_DEFAULT_SIZE, (1040.0, 720.0));
         assert_eq!(HISTORY_MINIMUM_SIZE, (760.0, 560.0));
+    }
+
+    #[test]
+    fn panel_window_uses_a_fixed_local_view_query() {
+        assert_eq!(panel_window_url(), "index.html?view=panel");
+        assert_eq!(PANEL_DEFAULT_SIZE, (680.0, 460.0));
+    }
+
+    #[test]
+    fn panel_navigation_allows_only_the_fixed_local_entry() {
+        for url in [
+            "tauri://localhost/index.html?view=panel",
+            "http://tauri.localhost/index.html?view=panel",
+            "http://127.0.0.1:1420/index.html?view=panel",
+        ] {
+            assert!(
+                navigation_is_allowed("panel", &url.parse().unwrap()),
+                "expected allow: {url}"
+            );
+        }
+        for url in [
+            "https://example.com/index.html?view=panel",
+            "file:///index.html?view=panel",
+            "http://127.0.0.1:9999/index.html?view=panel",
+            "tauri://localhost/index.html?view=history",
+            "tauri://localhost/index.html?view=panel&extra=1",
+            "tauri://localhost/index.html",
+        ] {
+            assert!(
+                !navigation_is_allowed("panel", &url.parse().unwrap()),
+                "expected deny: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn panel_position_centers_near_the_top_of_the_work_area() {
+        let work_area = PhysicalBounds::new(0, 0, 1920, 1040);
+
+        assert_eq!(
+            panel_position_for_work_area(work_area, 680, 460),
+            (620, 130)
+        );
+    }
+
+    #[test]
+    fn panel_position_stays_inside_small_or_offset_monitors() {
+        let tiny = PhysicalBounds::new(100, 50, 800, 500);
+
+        let (x, y) = panel_position_for_work_area(tiny, 680, 460);
+        assert!(x >= tiny.x);
+        assert!(y >= tiny.y);
+
+        let offset = PhysicalBounds::new(-1920, 0, 1920, 1040);
+        let (x, y) = panel_position_for_work_area(offset, 680, 460);
+        assert_eq!(x, -1920 + (1920 - 680) / 2);
+        assert_eq!(y, 130);
     }
 
     #[test]

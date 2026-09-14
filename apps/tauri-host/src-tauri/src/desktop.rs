@@ -7,10 +7,11 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{App, AppHandle, Emitter, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
-use crate::window::{show_history_window, show_main_window};
+use crate::window::{show_main_window, toggle_panel_window};
 
 pub const HOTKEY_UNAVAILABLE_MESSAGE: &str = "快捷键不可用，请更换组合后重试。";
 pub const HOST_ACTION_EVENT: &str = "reflex://host-action";
+pub const DEFAULT_PANEL_HOTKEY: &str = "Alt+Q";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostAction {
@@ -19,6 +20,7 @@ pub enum HostAction {
     History,
     Plugins,
     Settings,
+    Panel,
     Quit,
 }
 
@@ -30,9 +32,18 @@ impl HostAction {
             Self::History => "history",
             Self::Plugins => "plugins",
             Self::Settings => "settings",
+            Self::Panel => "panel",
             Self::Quit => "quit",
         }
     }
+}
+
+/// The two independently registered global hotkeys. Both share one
+/// registration transaction and cleanup list but keep separate status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeySlot {
+    Main,
+    Panel,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -40,6 +51,9 @@ pub struct DesktopStatus {
     pub hotkey: String,
     pub hotkey_active: bool,
     pub message: Option<String>,
+    pub panel_hotkey: String,
+    pub panel_hotkey_active: bool,
+    pub panel_message: Option<String>,
 }
 
 impl DesktopStatus {
@@ -48,6 +62,9 @@ impl DesktopStatus {
             hotkey: hotkey.into(),
             hotkey_active: true,
             message: None,
+            panel_hotkey: DEFAULT_PANEL_HOTKEY.to_string(),
+            panel_hotkey_active: false,
+            panel_message: None,
         }
     }
 
@@ -56,6 +73,9 @@ impl DesktopStatus {
             hotkey: hotkey.into(),
             hotkey_active: false,
             message: Some(HOTKEY_UNAVAILABLE_MESSAGE.to_string()),
+            panel_hotkey: DEFAULT_PANEL_HOTKEY.to_string(),
+            panel_hotkey_active: false,
+            panel_message: None,
         }
     }
 
@@ -64,21 +84,31 @@ impl DesktopStatus {
             hotkey: hotkey.into(),
             hotkey_active: false,
             message: None,
+            panel_hotkey: DEFAULT_PANEL_HOTKEY.to_string(),
+            panel_hotkey_active: false,
+            panel_message: None,
         }
     }
 }
 
 pub struct DesktopState {
     status: Mutex<DesktopStatus>,
+    panel_status: Mutex<DesktopStatus>,
     transaction: Mutex<()>,
     pending_cleanup: Mutex<Vec<String>>,
     tray_available: AtomicBool,
 }
 
 impl DesktopState {
+    #[cfg(test)]
     pub fn new(hotkey: impl Into<String>) -> Self {
+        Self::new_with_panel(hotkey, DEFAULT_PANEL_HOTKEY)
+    }
+
+    pub fn new_with_panel(hotkey: impl Into<String>, panel_hotkey: impl Into<String>) -> Self {
         Self {
             status: Mutex::new(DesktopStatus::pending(hotkey)),
+            panel_status: Mutex::new(DesktopStatus::pending(panel_hotkey)),
             transaction: Mutex::new(()),
             pending_cleanup: Mutex::new(Vec::new()),
             tray_available: AtomicBool::new(false),
@@ -86,10 +116,66 @@ impl DesktopState {
     }
 
     pub fn status(&self) -> DesktopStatus {
-        self.status
+        let mut status = self
+            .status
             .lock()
             .map(|status| status.clone())
-            .unwrap_or_else(|_| DesktopStatus::unavailable("Ctrl+Alt+R"))
+            .unwrap_or_else(|_| DesktopStatus::unavailable("Ctrl+Alt+R"));
+        if let Ok(panel) = self.panel_status.lock() {
+            status.panel_hotkey = panel.hotkey.clone();
+            status.panel_hotkey_active = panel.hotkey_active;
+            status.panel_message = panel.message.clone();
+        }
+        status
+    }
+
+    #[cfg(test)]
+    pub fn panel_status(&self) -> DesktopStatus {
+        self.panel_status
+            .lock()
+            .map(|status| status.clone())
+            .unwrap_or_else(|_| DesktopStatus::unavailable(DEFAULT_PANEL_HOTKEY))
+    }
+
+    fn slot_status(&self, slot: HotkeySlot) -> &Mutex<DesktopStatus> {
+        match slot {
+            HotkeySlot::Main => &self.status,
+            HotkeySlot::Panel => &self.panel_status,
+        }
+    }
+
+    fn slot_status_value(&self, slot: HotkeySlot) -> DesktopStatus {
+        self.slot_status(slot)
+            .lock()
+            .map(|status| status.clone())
+            .unwrap_or_else(|_| DesktopStatus::unavailable(DEFAULT_PANEL_HOTKEY))
+    }
+
+    /// Resolve which slot owns a pressed shortcut, so the global-shortcut
+    /// handler can dispatch to the matching surface. The handler receives the
+    /// normalized `Shortcut` display form, while stored config keeps the raw
+    /// (trimmed) text, so compare via parsing when strings differ.
+    pub fn hotkey_owner(&self, shortcut: &str) -> Option<HotkeySlot> {
+        let main = self.status.lock().ok()?;
+        if main.hotkey_active && same_shortcut(&main.hotkey, shortcut) {
+            return Some(HotkeySlot::Main);
+        }
+        drop(main);
+        let panel = self.panel_status.lock().ok()?;
+        if panel.hotkey_active && same_shortcut(&panel.hotkey, shortcut) {
+            return Some(HotkeySlot::Panel);
+        }
+        None
+    }
+
+    /// The hotkey registered by the other slot; used to reject duplicates.
+    fn conflicting_hotkey(&self, slot: HotkeySlot) -> Option<String> {
+        let other = self.slot_status(match slot {
+            HotkeySlot::Main => HotkeySlot::Panel,
+            HotkeySlot::Panel => HotkeySlot::Main,
+        });
+        let status = other.lock().ok()?;
+        status.hotkey_active.then(|| status.hotkey.clone())
     }
 
     pub fn mark_tray_available(&self) {
@@ -123,9 +209,28 @@ pub fn register_hotkey<R: Runtime>(
     state: &DesktopState,
     requested: &str,
 ) -> Result<DesktopStatus, &'static str> {
-    replace_hotkey_and_persist(app, state, requested, || Ok(()))
-        .map_err(|_| HOTKEY_UNAVAILABLE_MESSAGE)?;
-    Ok(state.status())
+    register_hotkey_in_slot(app, state, HotkeySlot::Main, requested)
+}
+
+pub fn register_panel_hotkey<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &DesktopState,
+    requested: &str,
+) -> Result<DesktopStatus, &'static str> {
+    register_hotkey_in_slot(app, state, HotkeySlot::Panel, requested)
+}
+
+fn register_hotkey_in_slot<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &DesktopState,
+    slot: HotkeySlot,
+    requested: &str,
+) -> Result<DesktopStatus, &'static str> {
+    replace_hotkey_in_slot_with(&TauriShortcutRegistrar(app), state, slot, requested, || {
+        Ok(())
+    })
+    .map_err(|_| HOTKEY_UNAVAILABLE_MESSAGE)?;
+    Ok(state.slot_status_value(slot))
 }
 
 fn validated_hotkey(value: &str) -> Result<String, &'static str> {
@@ -142,22 +247,188 @@ fn validated_hotkey(value: &str) -> Result<String, &'static str> {
     Ok(normalized.to_string())
 }
 
-pub fn replace_hotkey_and_persist<R, T, F>(
-    app: &AppHandle<R>,
+#[cfg(test)]
+fn replace_hotkey_and_persist_with<B, T, F>(
+    backend: &B,
     state: &DesktopState,
     requested: &str,
+    persist: F,
+) -> Result<T, String>
+where
+    B: ShortcutRegistrar,
+    F: FnOnce() -> Result<T, String>,
+{
+    replace_hotkey_in_slot_with(backend, state, HotkeySlot::Main, requested, persist)
+}
+
+#[cfg(test)]
+fn replace_panel_hotkey_and_persist_with<B, T, F>(
+    backend: &B,
+    state: &DesktopState,
+    requested: &str,
+    persist: F,
+) -> Result<T, String>
+where
+    B: ShortcutRegistrar,
+    F: FnOnce() -> Result<T, String>,
+{
+    replace_hotkey_in_slot_with(backend, state, HotkeySlot::Panel, requested, persist)
+}
+
+/// Replace both hotkeys inside one transaction: register both new keys,
+/// persist once, then unregister the old keys. Any failure rolls both slots
+/// back to their previous registration.
+pub fn replace_hotkeys_and_persist<R, T, F>(
+    app: &AppHandle<R>,
+    state: &DesktopState,
+    main_requested: &str,
+    panel_requested: &str,
     persist: F,
 ) -> Result<T, String>
 where
     R: Runtime,
     F: FnOnce() -> Result<T, String>,
 {
-    replace_hotkey_and_persist_with(&TauriShortcutRegistrar(app), state, requested, persist)
+    replace_hotkeys_with(
+        &TauriShortcutRegistrar(app),
+        state,
+        main_requested,
+        panel_requested,
+        persist,
+    )
 }
 
-fn replace_hotkey_and_persist_with<B, T, F>(
+fn replace_hotkeys_with<B, T, F>(
     backend: &B,
     state: &DesktopState,
+    main_requested: &str,
+    panel_requested: &str,
+    persist: F,
+) -> Result<T, String>
+where
+    B: ShortcutRegistrar,
+    F: FnOnce() -> Result<T, String>,
+{
+    let _transaction = state
+        .transaction
+        .lock()
+        .map_err(|_| HOTKEY_UNAVAILABLE_MESSAGE.to_string())?;
+    let mut pending_cleanup = state
+        .pending_cleanup
+        .lock()
+        .map_err(|_| HOTKEY_UNAVAILABLE_MESSAGE.to_string())?;
+    pending_cleanup.retain(|hotkey| backend.unregister(hotkey).is_err());
+
+    let main_requested = validated_hotkey(main_requested).map_err(str::to_string)?;
+    let panel_requested = validated_hotkey(panel_requested).map_err(str::to_string)?;
+    if main_requested == panel_requested {
+        return Err(HOTKEY_UNAVAILABLE_MESSAGE.to_string());
+    }
+
+    let mut main_current = state
+        .status
+        .lock()
+        .map_err(|_| HOTKEY_UNAVAILABLE_MESSAGE.to_string())?;
+    let mut panel_current = state
+        .panel_status
+        .lock()
+        .map_err(|_| HOTKEY_UNAVAILABLE_MESSAGE.to_string())?;
+    let main_previous = main_current.clone();
+    let panel_previous = panel_current.clone();
+
+    let main_needs_register =
+        !(main_previous.hotkey_active && main_previous.hotkey == main_requested);
+    let panel_needs_register =
+        !(panel_previous.hotkey_active && panel_previous.hotkey == panel_requested);
+
+    if main_needs_register && backend.register(&main_requested).is_err() {
+        if main_previous.hotkey_active {
+            *main_current = main_previous;
+            main_current.message = Some(HOTKEY_UNAVAILABLE_MESSAGE.to_string());
+        } else {
+            *main_current = DesktopStatus::unavailable(main_requested);
+        }
+        return Err(HOTKEY_UNAVAILABLE_MESSAGE.to_string());
+    }
+    if panel_needs_register && backend.register(&panel_requested).is_err() {
+        rollback_registration(
+            backend,
+            pending_cleanup.as_mut(),
+            main_needs_register,
+            &main_requested,
+        );
+        *main_current = main_previous;
+        if panel_previous.hotkey_active {
+            *panel_current = panel_previous;
+            panel_current.message = Some(HOTKEY_UNAVAILABLE_MESSAGE.to_string());
+        } else {
+            *panel_current = DesktopStatus::unavailable(panel_requested);
+        }
+        return Err(HOTKEY_UNAVAILABLE_MESSAGE.to_string());
+    }
+
+    match persist() {
+        Ok(saved) => {
+            if main_previous.hotkey_active && main_previous.hotkey != main_requested {
+                let failed = backend.unregister(&main_previous.hotkey).is_err();
+                if failed && !pending_cleanup.contains(&main_previous.hotkey) {
+                    pending_cleanup.push(main_previous.hotkey.clone());
+                }
+            }
+            if panel_previous.hotkey_active && panel_previous.hotkey != panel_requested {
+                let failed = backend.unregister(&panel_previous.hotkey).is_err();
+                if failed && !pending_cleanup.contains(&panel_previous.hotkey) {
+                    pending_cleanup.push(panel_previous.hotkey.clone());
+                }
+            }
+            *main_current = DesktopStatus::active(main_requested);
+            *panel_current = DesktopStatus::active(panel_requested);
+            if !pending_cleanup.is_empty() {
+                main_current.message = Some(HOTKEY_UNAVAILABLE_MESSAGE.to_string());
+                panel_current.message = Some(HOTKEY_UNAVAILABLE_MESSAGE.to_string());
+            }
+            Ok(saved)
+        }
+        Err(error) => {
+            rollback_registration(
+                backend,
+                pending_cleanup.as_mut(),
+                main_needs_register,
+                &main_requested,
+            );
+            rollback_registration(
+                backend,
+                pending_cleanup.as_mut(),
+                panel_needs_register,
+                &panel_requested,
+            );
+            *main_current = main_previous;
+            *panel_current = panel_previous;
+            Err(error)
+        }
+    }
+}
+
+fn rollback_registration(
+    backend: &impl ShortcutRegistrar,
+    pending_cleanup: &mut Vec<String>,
+    registered: bool,
+    requested: &str,
+) {
+    if !registered {
+        return;
+    }
+    if backend.unregister(requested).is_err()
+        && !pending_cleanup.iter().any(|hotkey| hotkey == requested)
+    {
+        pending_cleanup.push(requested.to_string());
+    }
+}
+
+fn replace_hotkey_in_slot_with<B, T, F>(
+    backend: &B,
+    state: &DesktopState,
+    slot: HotkeySlot,
     requested: &str,
     persist: F,
 ) -> Result<T, String>
@@ -174,11 +445,17 @@ where
         .lock()
         .map_err(|_| HOTKEY_UNAVAILABLE_MESSAGE.to_string())?;
     pending_cleanup.retain(|hotkey| backend.unregister(hotkey).is_err());
+    let requested = validated_hotkey(requested).map_err(str::to_string)?;
+    // Checked before taking this slot's lock so two concurrent replacements
+    // can never lock both slots in opposite order; the transaction lock
+    // already serializes every replacement.
+    if state.conflicting_hotkey(slot).as_deref() == Some(requested.as_str()) {
+        return Err(HOTKEY_UNAVAILABLE_MESSAGE.to_string());
+    }
     let mut current = state
-        .status
+        .slot_status(slot)
         .lock()
         .map_err(|_| HOTKEY_UNAVAILABLE_MESSAGE.to_string())?;
-    let requested = validated_hotkey(requested).map_err(str::to_string)?;
     let previous = current.clone();
 
     if previous.hotkey_active && previous.hotkey == requested {
@@ -233,12 +510,16 @@ struct HostActionPayload {
 
 pub fn setup_tray(app: &mut App) -> tauri::Result<()> {
     let open = menu_item(app, HostAction::Open, "打开 Reflex")?;
+    let panel = menu_item(app, HostAction::Panel, "快捷面板")?;
     let recent = menu_item(app, HostAction::Recent, "最近结果")?;
     let history = menu_item(app, HostAction::History, "历史记录")?;
     let plugins = menu_item(app, HostAction::Plugins, "插件")?;
     let settings = menu_item(app, HostAction::Settings, "设置")?;
     let quit = menu_item(app, HostAction::Quit, "退出")?;
-    let menu = Menu::with_items(app, &[&open, &recent, &history, &plugins, &settings, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[&open, &panel, &recent, &history, &plugins, &settings, &quit],
+    )?;
 
     let mut builder = TrayIconBuilder::with_id("reflex-main")
         .menu(&menu)
@@ -246,6 +527,7 @@ pub fn setup_tray(app: &mut App) -> tauri::Result<()> {
         .tooltip("Reflex")
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => dispatch_host_action(app, HostAction::Open),
+            "panel" => dispatch_host_action(app, HostAction::Panel),
             "recent" => dispatch_host_action(app, HostAction::Recent),
             "history" => dispatch_host_action(app, HostAction::History),
             "plugins" => dispatch_host_action(app, HostAction::Plugins),
@@ -276,13 +558,24 @@ fn menu_item(app: &App, action: HostAction, label: &str) -> tauri::Result<MenuIt
     MenuItem::with_id(app, action.as_str(), label, true, None::<&str>)
 }
 
+fn same_shortcut(stored: &str, pressed: &str) -> bool {
+    if stored == pressed {
+        return true;
+    }
+    match (stored.parse::<Shortcut>(), pressed.parse::<Shortcut>()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
 fn dispatch_host_action(app: &AppHandle, action: HostAction) {
     if action == HostAction::Quit {
         app.exit(0);
         return;
     }
-    if action == HostAction::History {
-        let _ = show_history_window(app);
+    // 历史记录：主窗口内的视图（与 CC Switch 同构），不再单独开窗
+    if action == HostAction::Panel {
+        let _ = toggle_panel_window(app);
         return;
     }
     let _ = show_main_window(app);
@@ -376,6 +669,66 @@ mod tests {
         assert_eq!(HostAction::Settings.as_str(), "settings");
         assert_eq!(HostAction::Quit.as_str(), "quit");
         assert_eq!(HostAction::History.as_str(), "history");
+        assert_eq!(HostAction::Panel.as_str(), "panel");
+    }
+
+    #[test]
+    fn hotkey_owner_resolves_each_registered_slot() {
+        let state = DesktopState::new_with_panel("Ctrl+Alt+R", "Alt+Q");
+        *state.status.lock().unwrap() = DesktopStatus::active("Ctrl+Alt+R");
+        *state.panel_status.lock().unwrap() = DesktopStatus::active("Alt+Q");
+
+        assert_eq!(
+            state.hotkey_owner("Ctrl+Alt+R"),
+            Some(super::HotkeySlot::Main)
+        );
+        assert_eq!(state.hotkey_owner("Alt+Q"), Some(super::HotkeySlot::Panel));
+        assert_eq!(state.hotkey_owner("Ctrl+Shift+Z"), None);
+    }
+
+    #[test]
+    fn panel_hotkey_cannot_duplicate_an_active_main_hotkey() {
+        let backend = FakeRegistrar::recording(None);
+        let state = DesktopState::new_with_panel("Ctrl+Alt+R", "Alt+Q");
+        *state.status.lock().unwrap() = DesktopStatus::active("Ctrl+Alt+R");
+        *state.panel_status.lock().unwrap() = DesktopStatus::active("Alt+Q");
+
+        let result =
+            super::replace_panel_hotkey_and_persist_with(&backend, &state, "Ctrl+Alt+R", || {
+                backend.record("persist");
+                Ok(())
+            });
+
+        assert_eq!(result, Err(HOTKEY_UNAVAILABLE_MESSAGE.to_string()));
+        assert_eq!(state.panel_status(), DesktopStatus::active("Alt+Q"));
+        assert!(!backend.calls().contains(&"persist".to_string()));
+    }
+
+    #[test]
+    fn panel_hotkey_replacement_persists_and_swaps_independently() {
+        let backend = FakeRegistrar::recording(None);
+        let state = DesktopState::new_with_panel("Ctrl+Alt+R", "Alt+Q");
+        *state.status.lock().unwrap() = DesktopStatus::active("Ctrl+Alt+R");
+        *state.panel_status.lock().unwrap() = DesktopStatus::active("Alt+Q");
+
+        let saved =
+            super::replace_panel_hotkey_and_persist_with(&backend, &state, "Ctrl+Shift+P", || {
+                backend.record("persist");
+                Ok("saved")
+            })
+            .unwrap();
+
+        assert_eq!(saved, "saved");
+        let panel = state.panel_status();
+        assert_eq!(panel.hotkey, "Ctrl+Shift+P");
+        assert!(panel.hotkey_active);
+        let main = state.status();
+        assert_eq!(main.hotkey, "Ctrl+Alt+R");
+        assert!(main.hotkey_active);
+        assert_eq!(
+            backend.calls(),
+            vec!["register:Ctrl+Shift+P", "persist", "unregister:Alt+Q"]
+        );
     }
 
     #[test]

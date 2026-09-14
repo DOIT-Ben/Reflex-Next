@@ -7,7 +7,22 @@
     "strict": true,
     "isolatedModules": true,
     "useDefineForClassFields": true,
-    "types": ["node", "svelte", "vitest/globals"]
+    "types": [
+      "node",
+      "svelte",
+      "vitest/globals"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    },
+    "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.svelte",
+    "vite.config.ts"
+  ]
 }

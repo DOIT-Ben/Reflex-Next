@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { Button } from "@/components/ui/button";
   import ImageOff from "@lucide/svelte/icons/image-off";
   import Send from "@lucide/svelte/icons/send";
   import DialogShell from "../ui/DialogShell.svelte";
-  import SelectField from "../ui/SelectField.svelte";
+  import AppSelect from "@/components/ui/AppSelect.svelte";
   import { translator } from "../../domain/i18nStore";
 
   import type {
@@ -96,7 +97,7 @@
     <div class="feedback-fields">
       <label>
         <span>{translate("反馈类型")}</span>
-        <SelectField
+        <AppSelect
           value={category}
           options={categoryOptions}
           ariaLabel={translate("反馈类型")}
@@ -122,9 +123,9 @@
       <div class="evidence-head">
         <strong>{translate("应用截图预览")}</strong>
         {#if screenshot}
-          <button type="button" title={translate("移除截图")} aria-label={translate("移除截图")} disabled={busy} onclick={() => { includeScreenshot = false; onRemoveScreenshot(); }}>
+          <Button variant="ghost" size="icon-sm" title={translate("移除截图")} aria-label={translate("移除截图")} disabled={busy} onclick={() => { includeScreenshot = false; onRemoveScreenshot(); }}>
             <ImageOff size={15} strokeWidth={2} />
-          </button>
+          </Button>
         {/if}
       </div>
       {#if screenshot}
@@ -151,10 +152,10 @@
     <div class="feedback-footer-inner">
       <span class:error={notice?.includes("失败")}>{notice ? translate(notice) : ""}</span>
       <div class="feedback-footer-actions">
-        <button class="outline" type="button" disabled={busy} onclick={onClose}>{translate("取消")}</button>
-        <button class="primary" type="button" disabled={busy || (sentiment === "negative" && category === "other" && !message.trim())} onclick={submit}>
+        <Button variant="outline" disabled={busy} onclick={onClose}>{translate("取消")}</Button>
+        <Button size="sm" disabled={busy || (sentiment === "negative" && category === "other" && !message.trim())} onclick={submit}>
           <Send size={15} strokeWidth={2} />{translate(busy ? "正在发送" : "发送反馈")}
-        </button>
+        </Button>
       </div>
     </div>
   </footer>
@@ -165,27 +166,27 @@
   .feedback-fields, .feedback-evidence { display: flex; min-width: 0; flex-direction: column; gap: 12px; padding: 16px; }
   .feedback-fields { padding-left: 0; }
   .feedback-evidence { background: color-mix(in srgb, var(--window) 74%, var(--surface)); border-left: 1px solid var(--line); }
-  label { display: grid; gap: 6px; color: var(--muted); font-size: var(--font-meta); }
-  input, textarea { width: 100%; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 6px; }
+  label { display: grid; gap: 6px; color: var(--muted); font-size: var(--font-meta);  line-height: var(--leading-meta); }
+  input, textarea { width: 100%; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; }
   input { min-height: 36px; padding: 0 10px; }
   textarea { padding: 9px 10px; resize: vertical; }
   input:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 26%, transparent); border-color: var(--accent); }
   .evidence-head { display: flex; min-height: 32px; align-items: center; justify-content: space-between; }
   .evidence-head button { display: grid; width: 32px; height: 32px; place-items: center; padding: 0; color: var(--muted); background: transparent; border: 0; border-radius: 50%; }
   .evidence-head button:hover { color: var(--text); background: var(--accent-soft); }
-  .evidence-head strong { font-size: var(--font-body); }
-  img, .screenshot-empty { width: 100%; aspect-ratio: 16 / 10; border: 1px solid var(--line); border-radius: 6px; }
+  .evidence-head strong { font-size: var(--font-body);  line-height: var(--leading-body); }
+  img, .screenshot-empty { width: 100%; aspect-ratio: 16 / 10; border: 1px solid var(--line); border-radius: 12px; }
   img { object-fit: contain; background: #fff; }
-  .screenshot-empty { display: grid; place-items: center; color: var(--muted); background: var(--window); font-size: var(--font-meta); }
+  .screenshot-empty { display: grid; place-items: center; color: var(--muted); background: var(--window); font-size: var(--font-meta);  line-height: var(--leading-meta); }
   .privacy-options { display: grid; gap: 7px; }
   .privacy-options label { display: flex; align-items: center; gap: 7px; color: var(--text); }
   .privacy-options input { width: 15px; min-height: 15px; }
-  .privacy-note, .notice { margin: 0; color: var(--muted); font-size: var(--font-meta); line-height: 1.45; }
+  .privacy-note, .notice { margin: 0; color: var(--muted); font-size: var(--font-meta); line-height: var(--leading-meta); }
   .feedback-footer-inner { display: flex; flex: 1 1 auto; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; }
-  .feedback-footer-inner > span { min-width: 0; color: #287a52; font-size: var(--font-meta); }
+  .feedback-footer-inner > span { min-width: 0; color: #287a52; font-size: var(--font-meta);  line-height: var(--leading-meta); }
   .feedback-footer-inner > span.error { color: var(--danger); }
   .feedback-footer-actions { display: flex; flex: 0 0 auto; gap: 8px; }
-  .feedback-footer-actions button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: 6px; padding: 0 14px; border-radius: 6px; }
+  .feedback-footer-actions button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: 6px; padding: 0 14px; border-radius: 8px; }
   .outline { color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); }
   .primary { color: #fff; background: var(--accent); border: 1px solid var(--accent); }
   button:disabled { cursor: default; opacity: .55; }

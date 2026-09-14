@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { setTranslator } from "./domain/i18nStore";
+  import { applyDocumentTheme, type ThemeChoice } from "./domain/themeApply";
   import FeedbackDialog from "./components/feedback/FeedbackDialog.svelte";
   import FeedbackPromptDialog from "./components/feedback/FeedbackPromptDialog.svelte";
   import FirstRunDialog from "./components/onboarding/FirstRunDialog.svelte";
@@ -17,12 +18,12 @@
   import TranslationDialog from "./components/tools/TranslationDialog.svelte";
   import TemplateManagerDialog from "./components/tools/TemplateManagerDialog.svelte";
   import BatchDialog from "./components/tools/BatchDialog.svelte";
-  import NavRail from "./components/shell/NavRail.svelte";
-  import ReflexTitleBar from "./components/shell/ReflexTitleBar.svelte";
+  import AppToolbar from "./components/shell/AppToolbar.svelte";
   import StatusBar from "./components/shell/StatusBar.svelte";
-  import type { NavRailItem, StatusTone } from "./components/shell/types";
+  import type { ToolbarItem, StatusTone } from "./components/shell/types";
   import ConfigSummary from "./components/workbench/ConfigSummary.svelte";
   import AdjustPanel from "./components/workbench/AdjustPanel.svelte";
+  import HistoryView from "./components/history/HistoryView.svelte";
   import InputPane from "./components/workbench/InputPane.svelte";
   import ResultPane from "./components/workbench/ResultPane.svelte";
   import ScenePromptDialog from "./components/workbench/ScenePromptDialog.svelte";
@@ -52,7 +53,6 @@
   import { createFirstRunFlow } from "./domain/firstRunFlow";
   import { createOptimizationFlow } from "./domain/optimizationFlow";
   import { resolveAppShortcut } from "./domain/appShortcuts";
-  import { createWindowControls } from "./domain/windowControls";
   import { createWorkbenchScroll } from "./domain/workbenchScroll";
   import {
     buildConfigSummaryItems,
@@ -63,7 +63,6 @@
     deriveWorkbenchStatusMessage,
     isGeneratingPhase,
     listWorkbenchScenes,
-    providerAvailabilityLabel,
     saveStatusLabel,
     sceneLabel,
     translationLanguageLabel,
@@ -152,7 +151,7 @@
     semanticModelSizeLabel
   } from "./domain/semanticModelState";
   import { createSemanticModelFlow } from "./domain/semanticModelFlow";
-  import { t, translate } from "./domain/i18n";
+  import { t, translate, type UiLanguage } from "./domain/i18n";
   import { resultMarkdownContent, resultMarkdownFilename } from "./domain/resultExport";
   import { triggerDownload, TEXT_MARKDOWN_MIME } from "./domain/downloads";
   import { createToastController } from "./domain/toastState";
@@ -182,11 +181,10 @@
   let settingsSection: SettingsSection = "provider";
   let providerStatus: ProviderAvailability = "checking";
   let activeProviderId = "minimax";
-  let providerStatusText = "";
+  let activeView: "workbench" | "history" | "settings" = "workbench";
   let clipboardReading = false;
   let startupClipboardRead = false;
-  const toast = createToastController({ translate: (message) => tr(message) });
-  const showToast = toast.show;
+  const toast = createToastController({ translate: (message) => tr(message) }); const { state: toastState, show: showToast } = toast;
   let resultRatingBusy = false;
   let appVersion = __REFLEX_APP_VERSION__;
   let commandPaletteOpen = false;
@@ -203,7 +201,7 @@
   let workbenchSurfaceEl: HTMLElement | null = null;
   let workbenchStatusMessage = "准备就绪";
   let statusTone: StatusTone = "idle";
-  let navItems: NavRailItem[] = [];
+  let navItems: ToolbarItem[] = [];
   let configSummaryItems: ConfigSummaryItem[] = [];
   let resultMetaItems: ResultMetaItem[] = [];
   let tr: (source: string, values?: Record<string, string | number>) => string = (source) => source;
@@ -321,11 +319,11 @@
     hasPersistedConfig: () => Boolean($persistedConfig),
     persistReplaceConfirmation: async () => {
       try {
-        await settingsFlow.persistConfigPatch((latest) => ({
+        const savedConfig = await settingsFlow.persistConfigPatch((latest) => ({
           ...latest,
           clipboard_replace_confirmed: true
         }));
-        settingsDraft = settingsDraftFromConfig($persistedConfig);
+        settingsDraft = settingsDraftFromConfig(savedConfig);
       } catch {
         clipboardFlow.notice.set("本次已替换，下次使用时仍会再次确认。");
       }
@@ -343,14 +341,14 @@
     hasPersistedConfig: () => Boolean(settingsApi && $persistedConfig),
     settle: () => tick(),
     appVersion: () => appVersion,
-    buildContext: () => feedbackContextFor(state),
+    buildContext: () => feedbackContextFor(state.currentResult),
     promptText: () => state.currentResult?.sourceText ?? state.inputText,
     resultText: () => state.currentResult?.output ?? null,
+    consentVersion: () => $cloudConsent.policy_version ?? null,
     updateConsent: (latest) => cloudConsent.set(latest),
     showToast
   });
-  const feedbackOpen = feedbackFlow.open;
-  const feedbackPromptOpen = feedbackFlow.promptOpen;
+  const feedbackOpen = feedbackFlow.open, feedbackPromptOpen = feedbackFlow.promptOpen;
   const feedbackPromptBusy = feedbackFlow.promptBusy;
   const feedbackPromptNotice = feedbackFlow.promptNotice;
   const feedbackPromptState = feedbackFlow.promptState;
@@ -388,11 +386,6 @@
   const scenePromptOpen = optimizationFlow.scenePromptOpen;
   const scenePromptSelection = optimizationFlow.scenePromptSelection;
 
-  const windowControls = createWindowControls({
-    desktopBridge: () => desktopBridge,
-    showToast
-  });
-  const windowSizePreset = windowControls.sizePreset;
 
   const workbenchScroll = createWorkbenchScroll({
     getSurface: () => workbenchSurfaceEl,
@@ -475,6 +468,10 @@
       await Promise.all([hydrateSettings(), refreshDesktopStatus(), refreshProviderCatalog()]);
       if (disposed) return;
       await readStartupClipboard();
+      // Warm the Runtime sidecar in the background so the first optimization
+      // skips process startup. Idle warm-up failure is harmless: the next
+      // request retries lazily.
+      void host.invoke("runtime_warmup").catch(() => undefined);
     });
 
     return () => {
@@ -501,9 +498,10 @@
   $: batchRunnerEnabled = $persistedConfig?.enabled_plugins.includes("batch-runner") ?? true;
   $: semanticDetectorEnabled = settingsDraft.enabled_plugins.includes("semantic-detector");
   $: semanticDetectorActive = $persistedConfig?.enabled_plugins.includes("semantic-detector") ?? false;
-  $: uiLanguage = settingsDraft.language === "en-US" || $persistedConfig?.language === "en-US"
+  $: uiLanguage = (settingsDraft.language === "en-US" || $persistedConfig?.language === "en-US"
     ? "en-US"
-    : "zh-CN";
+    : "zh-CN") as UiLanguage;
+  $: applyDocumentTheme(settingsDraft.theme as ThemeChoice);
   $: tr = (source, values = {}) => translate(uiLanguage, source, values);
   $: setTranslator(tr);
   $: settingsProviderModels = providerModels(settingsDraft.default_provider, $providerOptions);
@@ -516,7 +514,6 @@
     $providerStatusError,
     $cloudAvailability
   );
-  $: providerStatusText = providerAvailabilityLabel(tr, providerStatus);
   $: activationRoutes = availableActivationRoutes($cloudAvailability);
   $: activationProviderReady = providerStatus === "ready";
   $: activeProviderLabel = tr(providerName(activeProviderId, $providerOptions));
@@ -554,7 +551,11 @@
               ? "markdown"
               : commandPaletteOpen
                 ? "tools"
-                : "workbench";
+                : activeView === "settings"
+                  ? "settings"
+                  : activeView === "history"
+                    ? "history"
+                    : "workbench";
   $: navItems = buildNavItems(tr);
   $: commandItems = [
     { id: "adjust", label: "调整生成方案", run: () => { closeCommandPalette(); beginAdjust(); } },
@@ -562,7 +563,7 @@
     { id: "batch", label: "批量处理", disabled: !batchRunnerEnabled, run: () => { closeCommandPalette(); openBatchView(); } },
     { id: "translate", label: "翻译当前结果", disabled: !translatorEnabled || !state.currentResult?.output, run: () => { closeCommandPalette(); openTranslationView(); } },
     { id: "markdown", label: "预览 Markdown", disabled: !markdownPreviewEnabled || !state.currentResult?.output, run: () => { closeCommandPalette(); openMarkdownPreviewView(); } },
-    { id: "history", label: "打开历史记录", run: () => { closeCommandPalette(); openHistoryWindow(); } },
+    { id: "history", label: "打开历史记录", run: () => { closeCommandPalette(); openHistoryView(); } },
     { id: "settings", label: "打开设置", run: () => { closeCommandPalette(); beginSettings(); } }
   ];
   $: configSummaryItems = buildConfigSummaryItems(tr, state.requestDraft);
@@ -607,18 +608,12 @@
 
   function handleNavigation(id: string) {
     commandPaletteOpen = false;
-    if (id === "workbench") returnToWorkbench();
-    else if (id === "tools") openCommandPalette();
-    else if (id === "history") openHistoryWindow();
-    else if (id === "settings") beginSettings();
-  }
-
-  async function hideMainWindow() {
-    try {
-      await hostApi?.invoke("hide_main_window");
-    } catch {
-      showToast("窗口操作暂不可用。");
-    }
+    if (id === "workbench") {
+      activeView = "workbench";
+      returnToWorkbench();
+    } else if (id === "tools") openCommandPalette();
+    else if (id === "history") openHistoryView();
+    else if (id === "settings") activeView = "settings";
   }
 
   async function readClipboard() {
@@ -645,6 +640,10 @@
     if ($translation.phase !== "closed") closeTranslationView();
     if (action === "settings") {
       beginSettings();
+      return;
+    }
+    if (action === "history") {
+      openHistoryView();
       return;
     }
     state = applyHostAction(state, action);
@@ -676,6 +675,7 @@
   function beginSettings(preferredProviderId: string | null = null) {
     if ($markdownPreview.phase !== "closed") closeMarkdownPreviewView();
     if ($translation.phase !== "closed") closeTranslationView();
+    activeView = "settings";
     state = openSettings(state);
     settingsDraft = { ...(state.settingsDraft ?? settingsDraft) };
     feedbackPromptEnabledDraft.set($feedbackPromptState.enabled);
@@ -716,8 +716,8 @@
     settingsNotice.set(null);
     try {
       const nextFeedbackPromptState = {
-        ...feedbackPromptState,
-        enabled: feedbackPromptEnabledDraft
+        ...$feedbackPromptState,
+        enabled: $feedbackPromptEnabledDraft
       };
       const draftToSave = settingsDraft;
       const saved = await settingsFlow.persistConfigPatch((latest) => ({
@@ -803,7 +803,7 @@
 
   async function saveSecret() {
     const savedProvider = settingsDraft.default_provider ?? "minimax";
-    const byokActivation = activationOpen && activationState.route === "byok";
+    const byokActivation = $activationOpen && $activationState.route === "byok";
     await settingsFlow.saveSecret(
       savedProvider,
       secretInput.trim(),
@@ -901,7 +901,7 @@
       !$feedbackPromptBusy &&
       !confirmation &&
       !commandPaletteOpen &&
-      !scenePromptOpen &&
+      !$scenePromptOpen &&
       state.overlay === null &&
       $batch.phase === "closed" &&
       $translation.phase === "closed" &&
@@ -1094,8 +1094,9 @@
     showToast("评分已保存");
   }
 
-  function openHistoryWindow() {
-    void hostApi?.invoke("show_history_window").catch(() => showToast("历史记录暂时不可用。"));
+  function openHistoryView() {
+    activeView = "history";
+    returnToWorkbench();
   }
 
   function askReplaceClipboard() {
@@ -1143,19 +1144,19 @@
     feedbackFlow.disablePrompt();
   }
 
-  function feedbackContextFor(result: CurrentResult): FeedbackContext {
+  function feedbackContextFor(result: CurrentResult | null): FeedbackContext {
     return {
       app_version: appVersion,
       os_version: navigator.userAgent.slice(0, 128),
-      provider: result.provider ?? state.requestDraft.provider ?? "",
-      model: result.model ?? state.requestDraft.model ?? "",
-      mode: result.mode,
-      style: result.style,
-      scene: result.scene ?? state.detectedScene ?? "",
-      request_id: result.requestId,
+      provider: result?.provider ?? state.requestDraft.provider ?? "",
+      model: result?.model ?? state.requestDraft.model ?? "",
+      mode: result?.mode ?? state.requestDraft.mode,
+      style: result?.style ?? state.requestDraft.style,
+      scene: result?.scene ?? state.detectedScene ?? "",
+      request_id: result?.requestId ?? "",
       diagnostic_id: state.diagnosticId ?? "",
       error_code: state.errorCode ?? "",
-      elapsed_ms: result.elapsedMs
+      elapsed_ms: result?.elapsedMs ?? 0
     };
   }
 
@@ -1398,97 +1399,158 @@
     aria-label="Reflex quick window"
     inert={state.overlay === "settings" || $activationOpen}
   >
-    <ReflexTitleBar
-      providerName={tr(providerName(state.requestDraft.provider, providerOptions))}
-      modelName={state.requestDraft.model ?? ""}
-      availability={providerStatus}
-      availabilityLabel={providerStatusText}
-      scale={$viewScale}
-      windowSize={$windowSizePreset}
-      onOpenProvider={beginSettings}
-      onOpenCommand={openCommandPalette}
-      onZoomOut={() => viewScale.step("out")}
-      onResetZoom={() => viewScale.reset()}
-      onZoomIn={() => viewScale.step("in")}
-      onWindowSizeChange={desktopBridge ? windowControls.setSize : undefined}
-      onMinimize={desktopBridge ? windowControls.minimize : undefined}
-      onMaximize={desktopBridge ? windowControls.toggleMaximize : undefined}
-      onClose={hostApi ? hideMainWindow : undefined}
+    <AppToolbar
+      items={navItems}
+      activeId={activeNavId}
+      providerLabel={tr(providerName(state.requestDraft.provider, $providerOptions))}
+      onSelect={handleNavigation}
+      onCommand={openCommandPalette}
     />
 
     <div class="shell-main">
-      <NavRail items={navItems} {activeNavId} onSelect={handleNavigation} />
-      <section class="workbench-surface" aria-label={tr("工作台")} bind:this={workbenchSurfaceEl}>
-        <div class="workbench-grid">
-          <div class="input-column">
-            <InputPane
-              value={state.inputText}
-              phase={workbenchPhase}
-              label={t(uiLanguage, "input")}
-              placeholder={t(uiLanguage, "paste")}
-              notice={state.inputNotice ? tr(state.inputNotice) : ""}
-              maxLength={100_000}
-              disabled={state.phase === "adjusting"}
-              clipboardBusy={clipboardReading}
-              quickActions={quickActions}
-              onInput={setInput}
-              onQuickAction={applyQuickActionToDraft}
-              onRun={runOptimization}
-              onReadClipboard={readClipboard}
-              onClear={clearInput}
+      {#if activeView === "history"}
+        <HistoryView />
+      {:else if activeView !== "settings"}
+        <section
+          class="workbench-surface animate-fade-in"
+          aria-label={tr("工作台")}
+          bind:this={workbenchSurfaceEl}
+        >
+          <div class="workbench-grid">
+            <div class="input-column">
+              <InputPane
+                value={state.inputText}
+                phase={workbenchPhase}
+                label={t(uiLanguage, "input")}
+                placeholder={t(uiLanguage, "paste")}
+                notice={state.inputNotice ? tr(state.inputNotice) : ""}
+                maxLength={100_000}
+                disabled={state.phase === "adjusting"}
+                clipboardBusy={clipboardReading}
+                quickActions={quickActions}
+                onInput={setInput}
+                onQuickAction={applyQuickActionToDraft}
+                onRun={runOptimization}
+                onReadClipboard={readClipboard}
+                onClear={clearInput}
 
-            />
-            <ConfigSummary
-              items={configSummaryItems}
-              models={selectableModels}
-              selectedProvider={state.requestDraft.provider}
-              selectedModel={state.requestDraft.model}
+              />
+              <ConfigSummary
+                items={configSummaryItems}
+                models={selectableModels}
+                selectedProvider={state.requestDraft.provider}
+                selectedModel={state.requestDraft.model}
+                phase={workbenchPhase}
+                canRun={canGenerate}
+                statusMessage={workbenchStatusMessage}
+                trustSummary={generationTrust}
+                onRun={runOptimization}
+                onCancel={cancelRun}
+                onAdjust={beginAdjust}
+                onModelChange={switchWorkbenchModel}
+
+              />
+            </div>
+            <ResultPane
               phase={workbenchPhase}
-              canRun={canGenerate}
+              output={state.output}
               statusMessage={workbenchStatusMessage}
-              trustSummary={generationTrust}
-              onRun={runOptimization}
-              onCancel={cancelRun}
+              errorMessage={state.errorMessage ? tr(state.errorMessage) : t(uiLanguage, "noProvider")}
+              errorRecoverable={state.errorRecoverable}
+              errorAction={state.errorAction}
+              diagnosticId={state.diagnosticId}
+              sceneLabel={state.detectedScene ? sceneLabel(tr, state.detectedScene) : state.currentResult?.scene ? sceneLabel(tr, state.currentResult.scene) : null}
+              elapsedMs={state.currentResult?.elapsedMs ?? null}
+              sourceAvailable={Boolean(state.currentResult?.sourceText?.trim())}
+              historyStatus={state.currentResult ? saveStatusLabel(tr, state.currentResult.saveStatus ?? "unsaved") : ""}
+              meta={resultMetaItems}
+              copied={state.copied || ($toastState.message.includes("已复制") && $toastState.visible)}
+              rating={state.currentResult?.rating ?? null}
+              ratingEnabled={state.currentResult?.saveStatus === "saved" && !resultRatingBusy}
+              onCopy={copyResult}
+              onReplace={askReplaceClipboard}
               onAdjust={beginAdjust}
-              onModelChange={switchWorkbenchModel}
+              onRegenerate={runOptimization}
+              onExport={exportResultMarkdown}
+              onOpenHistory={openHistoryView}
+              onRate={rateCurrentResult}
+              onTranslate={translatorEnabled && state.currentResult?.output ? openTranslationView : undefined}
+              onPreview={markdownPreviewEnabled && state.currentResult?.output ? openMarkdownPreviewView : undefined}
+              onCompare={state.currentResult?.sourceText?.trim() ? openResultCompare : undefined}
+              onRetry={state.errorRecoverable && state.errorAction !== "settings" && state.errorAction !== "edit" && state.errorAction !== "restart" ? retryRun : undefined}
+              onOpenSettings={state.errorAction === "settings" ? openSettingsView : undefined}
+              onCopyDiagnosticId={state.diagnosticId ? copyDiagnosticId : undefined}
+              onPositiveFeedback={() => beginFeedback("positive")}
+              onNegativeFeedback={() => beginFeedback("negative")}
 
             />
           </div>
-          <ResultPane
-            phase={workbenchPhase}
-            output={state.output}
-            statusMessage={workbenchStatusMessage}
-            errorMessage={state.errorMessage ? tr(state.errorMessage) : t(uiLanguage, "noProvider")}
-            errorRecoverable={state.errorRecoverable}
-            errorAction={state.errorAction}
-            diagnosticId={state.diagnosticId}
-            sceneLabel={state.detectedScene ? sceneLabel(tr, state.detectedScene) : state.currentResult?.scene ? sceneLabel(tr, state.currentResult.scene) : null}
-            elapsedMs={state.currentResult?.elapsedMs ?? null}
-            sourceAvailable={Boolean(state.currentResult?.sourceText?.trim())}
-            historyStatus={state.currentResult ? saveStatusLabel(tr, state.currentResult.saveStatus ?? "unsaved") : ""}
-            meta={resultMetaItems}
-            copied={state.copied || ($toast.message.includes("已复制") && $toast.visible)}
-            rating={state.currentResult?.rating ?? null}
-            ratingEnabled={state.currentResult?.saveStatus === "saved" && !resultRatingBusy}
-            onCopy={copyResult}
-            onReplace={askReplaceClipboard}
-            onAdjust={beginAdjust}
-            onRegenerate={runOptimization}
-            onExport={exportResultMarkdown}
-            onOpenHistory={openHistoryWindow}
-            onRate={rateCurrentResult}
-            onTranslate={translatorEnabled && state.currentResult?.output ? openTranslationView : undefined}
-            onPreview={markdownPreviewEnabled && state.currentResult?.output ? openMarkdownPreviewView : undefined}
-            onCompare={state.currentResult?.sourceText?.trim() ? openResultCompare : undefined}
-            onRetry={state.errorRecoverable && state.errorAction !== "settings" && state.errorAction !== "edit" && state.errorAction !== "restart" ? retryRun : undefined}
-            onOpenSettings={state.errorAction === "settings" ? openSettingsView : undefined}
-            onCopyDiagnosticId={state.diagnosticId ? copyDiagnosticId : undefined}
-            onPositiveFeedback={() => beginFeedback("positive")}
-            onNegativeFeedback={() => beginFeedback("negative")}
+        </section>
+      {:else}
+        <SettingsDialog variant="page"
+          draft={settingsDraft}
+          section={settingsSection}
+          busy={$settingsBusy}
+          secretBusy={$secretBusy}
+          {secretInput}
+          secretStatus={$secretStatus}
+          secretNotice={$secretNotice}
+          providerConnectionBusy={$providerConnectionBusy}
+          providerConnectionNotice={$providerConnectionNotice}
+          notice={$settingsNotice}
+          providerCatalogNotice={$providerCatalogNotice}
+          providers={$providerOptions}
+          models={settingsProviderModels}
+          {modes}
+          {styles}
+          desktopStatus={$desktopStatus}
+          semanticModel={$semanticModel}
+          semanticEnabled={semanticDetectorEnabled}
+          semanticActive={semanticDetectorActive}
+          semanticStatusText={semanticModelStatusText()}
+          diagnosticBusy={$diagnosticExportBusy}
+          diagnosticNotice={$diagnosticExportNotice}
+          cloudUsageMetricsEnabled={$cloudUsageMetricsDraft}
+          cloudImprovementEnabled={$cloudImprovementDraft}
+          feedbackPromptEnabled={$feedbackPromptEnabledDraft}
+          cloudQualityRelease={$cloudQualityRelease}
+          cloudQuota={$cloudQuota}
+          cloudPrivacyBusy={$cloudPrivacyBusy}
+          cloudPrivacyNotice={$cloudPrivacyNotice}
 
-          />
-        </div>
-      </section>
+          onClose={cancelSettingsView}
+          onSave={saveSettings}
+          onSectionChange={selectSettingsSection}
+          onDraftChange={(value) => (settingsDraft = value)}
+          onProviderChange={selectSettingsProvider}
+          onSecretInput={(value) => (secretInput = value)}
+          onSaveSecret={saveSecret}
+          onDeleteSecret={deleteSecret}
+          onBaseUrlChange={updateProviderBaseUrl}
+          onDiscoverModels={discoverProviderModels}
+          onTestConnection={testProviderConnection}
+          onModelCandidatesChange={(models) => {
+            const providerId = settingsDraft.default_provider ?? "minimax";
+            settingsDraft = {
+              ...settingsDraft,
+              provider_models: { ...settingsDraft.provider_models, [providerId]: models }
+            };
+            settingsFlow.applyConfiguredModels(settingsDraft.provider_models);
+          }}
+          onPluginChange={setPluginEnabled}
+          onSemanticRefresh={refreshSemanticModelStatus}
+          onSemanticCancel={cancelSemanticModelDownload}
+          onSemanticDelete={deleteSemanticModel}
+          onSemanticDownload={downloadSemanticModel}
+          onDiagnosticExport={exportDiagnosticBundle}
+          onDiagnosticCancel={cancelDiagnosticBundleExport}
+          onCloudUsageMetricsChange={(enabled) => cloudUsageMetricsDraft.set(enabled)}
+          onCloudImprovementChange={(enabled) => cloudImprovementDraft.set(enabled)}
+          onFeedbackPromptEnabledChange={(enabled) => feedbackPromptEnabledDraft.set(enabled)}
+          onCloudRefresh={hydrateCloudPrivacy}
+          onCloudDeleteData={confirmDeleteCloudData}
+        />
+      {/if}
     </div>
 
     <StatusBar
@@ -1500,7 +1562,7 @@
       versionLabel={`v${appVersion}`}
     />
 
-    <Toast visible={$toast.visible} message={$toast.message} tone={$toast.tone} />
+    <Toast visible={$toastState.visible} message={$toastState.message} tone={$toastState.tone} />
 
     {#if confirmation}
       <ConfirmDialog
@@ -1514,14 +1576,14 @@
       />
     {/if}
 
-    {#if feedbackOpen}
+    {#if $feedbackOpen}
       <FeedbackDialog
-        sentiment={feedbackSentiment}
-        screenshot={feedbackScreenshot}
-        captureNotice={feedbackCaptureNotice}
-        improvementConsent={cloudConsent.improvement_data}
-        busy={feedbackSubmitBusy}
-        notice={feedbackSubmitNotice}
+        sentiment={$feedbackSentiment}
+        screenshot={$feedbackScreenshot}
+        captureNotice={$feedbackCaptureNotice}
+        improvementConsent={$cloudConsent.improvement_data}
+        busy={$feedbackSubmitBusy}
+        notice={$feedbackSubmitNotice}
 
         onClose={closeFeedback}
         onRemoveScreenshot={removeFeedbackScreenshot}
@@ -1529,10 +1591,10 @@
       />
     {/if}
 
-    {#if feedbackPromptOpen}
+    {#if $feedbackPromptOpen}
       <FeedbackPromptDialog
-        busy={feedbackPromptBusy}
-        notice={feedbackPromptNotice}
+        busy={$feedbackPromptBusy}
+        notice={$feedbackPromptNotice}
 
         onPositive={() => answerFeedbackPrompt("positive")}
         onNegative={() => answerFeedbackPrompt("negative")}
@@ -1541,7 +1603,7 @@
       />
     {/if}
 
-    {#if scenePromptOpen}
+    {#if $scenePromptOpen}
       <ScenePromptDialog
         {scenes}
         selectedScene={$scenePromptSelection}
@@ -1661,71 +1723,6 @@
 
   </section>
 
-    {#if state.overlay === "settings"}
-      <SettingsDialog
-        draft={settingsDraft}
-        section={settingsSection}
-        busy={$settingsBusy}
-        secretBusy={$secretBusy}
-        {secretInput}
-        secretStatus={$secretStatus}
-        secretNotice={$secretNotice}
-        providerConnectionBusy={$providerConnectionBusy}
-        providerConnectionNotice={$providerConnectionNotice}
-        notice={$settingsNotice}
-        providerCatalogNotice={$providerCatalogNotice}
-        providers={$providerOptions}
-        models={settingsProviderModels}
-        {modes}
-        {styles}
-        desktopStatus={$desktopStatus}
-        semanticModel={$semanticModel}
-        semanticEnabled={semanticDetectorEnabled}
-        semanticActive={semanticDetectorActive}
-        semanticStatusText={semanticModelStatusText()}
-        diagnosticBusy={$diagnosticExportBusy}
-        diagnosticNotice={$diagnosticExportNotice}
-        cloudUsageMetricsEnabled={$cloudUsageMetricsDraft}
-        cloudImprovementEnabled={$cloudImprovementDraft}
-        feedbackPromptEnabled={feedbackPromptEnabledDraft}
-        cloudQualityRelease={$cloudQualityRelease}
-        cloudQuota={$cloudQuota}
-        cloudPrivacyBusy={$cloudPrivacyBusy}
-        cloudPrivacyNotice={$cloudPrivacyNotice}
-
-        onClose={cancelSettingsView}
-        onSave={saveSettings}
-        onSectionChange={selectSettingsSection}
-        onDraftChange={(value) => (settingsDraft = value)}
-        onProviderChange={selectSettingsProvider}
-        onSecretInput={(value) => (secretInput = value)}
-        onSaveSecret={saveSecret}
-        onDeleteSecret={deleteSecret}
-        onBaseUrlChange={updateProviderBaseUrl}
-        onDiscoverModels={discoverProviderModels}
-        onTestConnection={testProviderConnection}
-        onModelCandidatesChange={(models) => {
-          const providerId = settingsDraft.default_provider ?? "minimax";
-          settingsDraft = {
-            ...settingsDraft,
-            provider_models: { ...settingsDraft.provider_models, [providerId]: models }
-          };
-          settingsFlow.applyConfiguredModels(settingsDraft.provider_models);
-        }}
-        onPluginChange={setPluginEnabled}
-        onSemanticRefresh={refreshSemanticModelStatus}
-        onSemanticCancel={cancelSemanticModelDownload}
-        onSemanticDelete={deleteSemanticModel}
-        onSemanticDownload={downloadSemanticModel}
-        onDiagnosticExport={exportDiagnosticBundle}
-        onDiagnosticCancel={cancelDiagnosticBundleExport}
-        onCloudUsageMetricsChange={(enabled) => cloudUsageMetricsDraft.set(enabled)}
-        onCloudImprovementChange={(enabled) => cloudImprovementDraft.set(enabled)}
-        onFeedbackPromptEnabledChange={(enabled) => feedbackPromptEnabledDraft.set(enabled)}
-        onCloudRefresh={hydrateCloudPrivacy}
-        onCloudDeleteData={confirmDeleteCloudData}
-      />
-    {/if}
 
   {#if $activationOpen && state.overlay !== "settings"}
     <FirstRunDialog

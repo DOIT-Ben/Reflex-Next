@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { Button } from "@/components/ui/button";
   import Plus from "@lucide/svelte/icons/plus";
   import DialogShell from "../ui/DialogShell.svelte";
   import { templateVariables, type PromptTemplate, type TemplateDraft } from "../../domain/templateLibrary";
-  import SelectField from "../ui/SelectField.svelte";
+  import AppSelect from "@/components/ui/AppSelect.svelte";
   import { translator } from "../../domain/i18nStore";
 
   interface Props {
@@ -65,8 +66,8 @@
   <div class="template-layout">
       <aside class="template-list">
         <input aria-label={translate("搜索模板")} value={query} placeholder={translate("搜索名称、分类或标签")} oninput={(event) => onQueryChange(event.currentTarget.value)} />
-        <SelectField ariaLabel={translate("模板分类")} value={category ?? ""} options={categoryOptions} size="compact" onValueChange={(value) => onCategoryChange(value || null)} />
-        <button class="outline template-new" type="button" onclick={onNew}><Plus size={15} strokeWidth={2} />{translate("新建模板")}</button>
+        <AppSelect ariaLabel={translate("模板分类")} value={category ?? ""} options={categoryOptions} size="sm" onValueChange={(value) => onCategoryChange(value || null)} />
+        <Button variant="outline" class="template-new" onclick={onNew}><Plus size={15} strokeWidth={2} />{translate("新建模板")}</Button>
         <div class="template-list-items">
           {#each templates as template (template.id)}
             <button class:active={selectedId === template.id} type="button" onclick={() => onSelect(template)}>
@@ -96,10 +97,10 @@
         {/if}
         <p class="template-notice" aria-live="polite">{notice ? translate(notice) : ""}</p>
         <footer class="template-footer">
-          <button class="outline danger" type="button" disabled={!selectedId || busy} onclick={onDelete}>{translate("删除")}</button>
+          <Button variant="outline" class="text-destructive hover:text-destructive" disabled={!selectedId || busy} onclick={onDelete}>{translate("删除")}</Button>
           <span></span>
-          <button class="outline" type="button" disabled={busy} onclick={onSave}>{translate("保存模板")}</button>
-          <button class="primary small" type="button" onclick={onApply}>{translate("应用到输入区")}</button>
+          <Button variant="outline" disabled={busy} onclick={onSave}>{translate("保存模板")}</Button>
+          <Button variant="default" size="sm" onclick={onApply}>{translate("应用到输入区")}</Button>
         </footer>
       </section>
   </div>

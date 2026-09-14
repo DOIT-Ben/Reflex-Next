@@ -4,12 +4,15 @@ import type { WindowSizePreset } from "./viewControls";
 const HOST_ACTION_EVENT = "reflex://host-action";
 const HOTKEY_UNAVAILABLE_MESSAGE = "快捷键不可用，请更换组合后重试。";
 
-export type HostAction = "open" | "recent" | "plugins" | "settings" | "quit";
+export type HostAction = "open" | "recent" | "plugins" | "settings" | "history" | "quit";
 
 export type DesktopStatus = {
   hotkey: string;
   hotkeyActive: boolean;
   message: string | null;
+  panelHotkey: string;
+  panelHotkeyActive: boolean;
+  panelMessage: string | null;
 };
 
 export type DesktopBridge = {
@@ -55,7 +58,14 @@ function normalizeDesktopStatus(value: unknown): DesktopStatus {
   return {
     hotkey: typeof raw.hotkey === "string" && raw.hotkey.trim() ? raw.hotkey.trim() : "Ctrl+Alt+R",
     hotkeyActive: raw.hotkey_active === true,
-    message: typeof raw.message === "string" && raw.message.trim() ? raw.message.trim() : null
+    message: typeof raw.message === "string" && raw.message.trim() ? raw.message.trim() : null,
+    panelHotkey:
+      typeof raw.panel_hotkey === "string" && raw.panel_hotkey.trim()
+        ? raw.panel_hotkey.trim()
+        : "Alt+Q",
+    panelHotkeyActive: raw.panel_hotkey_active === true,
+    panelMessage:
+      typeof raw.panel_message === "string" && raw.panel_message.trim() ? raw.panel_message.trim() : null
   };
 }
 
@@ -65,6 +75,7 @@ function hostActionFrom(value: unknown): HostAction | null {
     value.action === "recent" ||
     value.action === "plugins" ||
     value.action === "settings" ||
+    value.action === "history" ||
     value.action === "quit"
     ? value.action
     : null;

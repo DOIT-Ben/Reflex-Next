@@ -1,23 +1,49 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import X from "@lucide/svelte/icons/x";
+  import { Button } from "@/components/ui/button";
+  import { cn } from "@/utils.js";
 
-  export let title: string;
-  export let description = "";
-  export let size: "sm" | "md" | "lg" | "sheet" = "md";
-  export let z = 8;
-  export let onClose: (() => void) | undefined = undefined;
-  export let closeLabel = "关闭";
-  export let contentClass = "";
-  export let autofocusClose = true;
-  export let closeOnBackdrop = false;
-  export let showClose = true;
+  interface Props {
+    title: string;
+    description?: string;
+    size?: "sm" | "md" | "lg" | "sheet";
+    variant?: "dialog" | "page";
+    z?: number;
+    onClose?: () => void;
+    closeLabel?: string;
+    contentClass?: string;
+    autofocusClose?: boolean;
+    closeOnBackdrop?: boolean;
+    showClose?: boolean;
+  }
 
-  let closeButton: HTMLButtonElement;
-  let shell: HTMLElement;
+  let {
+    title,
+    description = "",
+    size = "md",
+    variant = "dialog",
+    z = 8,
+    onClose = undefined,
+    closeLabel = "关闭",
+    contentClass = "",
+    autofocusClose = true,
+    closeOnBackdrop = false,
+    showClose = true
+  }: Props = $props();
+
+  let closeButton = $state<HTMLButtonElement | null>(null);
+  let shell = $state<HTMLElement>(undefined as unknown as HTMLElement);
 
   const focusableSelector =
     'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+
+  const sizeClass: Record<"sm" | "md" | "lg" | "sheet", string> = {
+    sm: "max-w-sm",
+    md: "max-w-lg",
+    lg: "max-w-2xl",
+    sheet: "max-w-md"
+  };
 
   onMount(() => {
     if (!onClose) return;
@@ -63,8 +89,20 @@
   }
 </script>
 
-<div class="ui-dialog-layer" role="presentation" style={`z-index: ${z}`} onclick={handleLayerClick}>
-  <section class={`ui-dialog-shell ${size}`} role="dialog" aria-modal="true" aria-label={title} bind:this={shell}>
+<!-- 弹窗外壳：与 CC Switch 同构（50% 黑遮罩+模糊、居中、max-h-90vh、头/底 px-6 py-5 + 分隔线 + muted 底） -->
+<div
+  class={variant === "page" ? "ui-dialog-page" : "ui-dialog-layer"}
+  role="presentation"
+  style={variant === "page" ? undefined : `z-index: ${z}`}
+  onclick={variant === "page" ? undefined : handleLayerClick}
+>
+  <section
+    class={cn("ui-dialog-shell", variant === "page" ? "page" : sizeClass[size])}
+    role={variant === "page" ? "region" : "dialog"}
+    aria-modal={variant === "page" ? undefined : "true"}
+    aria-label={title}
+    bind:this={shell}
+  >
     <header>
       <div>
         <h2>{title}</h2>
@@ -72,10 +110,17 @@
       </div>
       <div class="ui-dialog-header-actions">
         <slot name="actions" />
-        {#if onClose && showClose}
-          <button class="icon-button" type="button" aria-label={closeLabel} bind:this={closeButton} onclick={onClose}>
-            <X size={17} strokeWidth={2} />
-          </button>
+        {#if onClose && showClose && variant !== "page"}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            class="text-muted-foreground hover:text-foreground"
+            aria-label={closeLabel}
+            bind:ref={closeButton}
+            onclick={onClose}
+          >
+            <X size={16} strokeWidth={2} />
+          </Button>
         {/if}
       </div>
     </header>
@@ -85,95 +130,91 @@
     {#if $$slots.footer}
       <footer><slot name="footer" /></footer>
     {/if}
-  </section>
-</div>
+    </section>
+  </div>
 
 <style>
+  .ui-dialog-page {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .ui-dialog-shell.page {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    padding: 16px 24px;
+    background: hsl(var(--background));
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
   .ui-dialog-layer {
-    position: absolute;
+    position: fixed;
     inset: 0;
+    z-index: 40;
     display: grid;
     place-items: center;
-    padding: 16px;
-    background: var(--overlay, rgb(28 29 32 / 30%));
+    padding: 24px;
+    background: rgb(0 0 0 / 50%);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
   }
 
   .ui-dialog-shell {
     display: flex;
     flex-direction: column;
-    min-height: 0;
-    max-height: 100%;
-    overflow: hidden;
-  }
-
-  .ui-dialog-shell.sm {
-    width: min(440px, 100%);
-    height: fit-content;
-  }
-
-  .ui-dialog-shell.md {
-    width: min(720px, 100%);
-    height: min(508px, 100%);
-  }
-
-  .ui-dialog-shell.lg {
-    width: min(760px, 100%);
-    height: min(540px, 100%);
-  }
-
-  .ui-dialog-layer.sheet {
-    inset: 44px 0 24px;
-    padding: 12px;
-    background: var(--window, #fff);
-  }
-
-  .ui-dialog-shell.sheet {
     width: 100%;
-    height: 100%;
-    background: var(--surface, #fff);
-    border-color: var(--line, #e1e6ee);
-    border-radius: 8px;
-    box-shadow: none;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+    min-height: 0;
+    max-height: 90vh;
+    overflow: hidden;
+    color: hsl(var(--foreground));
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--border));
+    border-radius: 12px;
+    box-shadow:
+      0 10px 15px -3px rgb(0 0 0 / 10%),
+      0 4px 6px -4px rgb(0 0 0 / 10%);
   }
 
-  .ui-dialog-shell.sm .ui-dialog-content {
-    overflow: visible;
-  }
-
-  .ui-dialog-header-actions {
+  .ui-dialog-shell > header {
     display: flex;
     flex: 0 0 auto;
-    align-items: center;
-    gap: 8px;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 20px;
+    background: color-mix(in srgb, var(--surface, #f4f4f5) 60%, var(--page, #fff));
+    border-bottom: 1px solid hsl(var(--border));
   }
 
-  .ui-dialog-shell .icon-button {
-    display: grid;
-    width: 32px;
-    height: 32px;
-    place-items: center;
-    color: var(--muted, #697386);
-    background: transparent;
-    border: 0;
-    border-radius: 8px;
-    cursor: pointer;
+  .ui-dialog-shell h2,
+  .ui-dialog-shell p {
+    margin: 0;
   }
 
-  .ui-dialog-shell .icon-button:hover {
-    color: var(--text, #202535);
-    background: var(--accent-soft, #eef1ff);
+  .ui-dialog-shell h2 {
+    font-size: var(--font-title);
+    font-weight: 600;
+    line-height: var(--leading-title);
+    letter-spacing: -0.01em;
   }
 
-  .ui-dialog-shell .icon-button:focus-visible {
-    outline: 2px solid var(--accent, #5065c7);
-    outline-offset: 2px;
+  .ui-dialog-shell header p {
+    margin-top: 6px;
+    color: hsl(var(--muted-foreground));
+    font-size: var(--font-body);
+    line-height: var(--leading-body);
   }
 
   .ui-dialog-content {
     flex: 1 1 auto;
     min-height: 0;
+    padding: 16px 20px;
     overflow: auto;
   }
 
@@ -183,6 +224,15 @@
     align-items: center;
     justify-content: flex-end;
     gap: 8px;
-    padding-top: 14px;
+    padding: 16px 20px;
+    background: color-mix(in srgb, var(--surface, #f4f4f5) 60%, var(--page, #fff));
+    border-top: 1px solid hsl(var(--border));
+  }
+
+  .ui-dialog-header-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
   }
 </style>

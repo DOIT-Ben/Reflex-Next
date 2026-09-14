@@ -34,6 +34,8 @@ pub struct AppConfig {
     pub language: String,
     pub theme: String,
     pub hotkey: String,
+    pub panel_hotkey: String,
+    pub autostart_enabled: bool,
     pub tls_verify: bool,
     pub ca_bundle_path: Option<String>,
     pub provider_endpoints: BTreeMap<String, String>,
@@ -60,6 +62,8 @@ impl Default for AppConfig {
             language: "zh-CN".to_string(),
             theme: "system".to_string(),
             hotkey: "Ctrl+Alt+R".to_string(),
+            panel_hotkey: "Alt+Q".to_string(),
+            autostart_enabled: false,
             tls_verify: true,
             ca_bundle_path: None,
             provider_endpoints: BTreeMap::new(),
@@ -114,6 +118,8 @@ impl AppConfig {
             &["light", "dark", "system"],
         );
         let hotkey = normalized_bounded_string(object.get("hotkey"), &defaults.hotkey, 128);
+        let panel_hotkey =
+            normalized_bounded_string(object.get("panel_hotkey"), &defaults.panel_hotkey, 128);
         let ca_bundle_path = normalized_ca_bundle_path(object.get("ca_bundle_path"));
         let provider_endpoints = normalized_provider_endpoints(object.get("provider_endpoints"));
         let provider_models = normalized_provider_models(object.get("provider_models"));
@@ -155,6 +161,11 @@ impl AppConfig {
             language,
             theme,
             hotkey,
+            panel_hotkey,
+            autostart_enabled: object
+                .get("autostart_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(defaults.autostart_enabled),
             tls_verify: true,
             ca_bundle_path,
             provider_endpoints,
@@ -377,6 +388,8 @@ fn known_config_fields() -> HashSet<&'static str> {
         "language",
         "theme",
         "hotkey",
+        "panel_hotkey",
+        "autostart_enabled",
         "tls_verify",
         "ca_bundle_path",
         "provider_endpoints",

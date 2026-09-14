@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
-  import BaseButton from "../ui/BaseButton.svelte";
+  import { Button } from "@/components/ui/button";
   import DialogShell from "../ui/DialogShell.svelte";
   import { translator } from "../../domain/i18nStore";
 
@@ -13,7 +13,7 @@
 
   let { notice, onCancel, onConfirm }: Props = $props();
   let translate = $derived($translator);
-  let cancelButton: { focus: () => void };
+  let cancelButton = $state<HTMLButtonElement | null>(null);
   onMount(() => cancelButton?.focus());
 </script>
 
@@ -21,7 +21,7 @@
   <span class="confirm-icon" aria-hidden="true"><ClipboardPaste size={19} strokeWidth={2} /></span>
   {#if notice}<p class="clipboard-feedback" aria-live="polite">{translate(notice)}</p>{/if}
   <div>
-    <BaseButton variant="secondary" bind:this={cancelButton} onclick={onCancel}>{translate("取消")}</BaseButton>
-    <BaseButton variant="primary" onclick={onConfirm}>{translate("确认替换")}</BaseButton>
+    <Button variant="outline" size="sm" bind:ref={cancelButton} onclick={onCancel}>{translate("取消")}</Button>
+    <Button size="sm" onclick={onConfirm}>{translate("确认替换")}</Button>
   </div>
 </DialogShell>

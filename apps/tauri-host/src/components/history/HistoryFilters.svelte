@@ -2,7 +2,9 @@
   import { translator } from "../../domain/i18nStore";
   import Search from "@lucide/svelte/icons/search";
   import type { SceneOption } from "../../domain/reflexSession";
-  import SelectField from "../ui/SelectField.svelte";
+  import AppSelect from "@/components/ui/AppSelect.svelte";
+  import { Input } from "@/components/ui/input";
+  import { Button } from "@/components/ui/button";
 
   interface Props {
     search: string;
@@ -32,9 +34,9 @@
 </script>
 
 <section class="history-tools" aria-label={translate("筛选")}>
-  <input aria-label={translate("搜索历史记录")} value={search} placeholder={translate("搜索历史记录")} oninput={(event) => onSearchChange(event.currentTarget.value)} onkeydown={(event) => event.key === "Enter" && onSubmit()} />
-  <SelectField ariaLabel={translate("场景筛选")} value={scene} options={sceneOptions} size="compact" onValueChange={onSceneChange} />
-  <SelectField ariaLabel={translate("风格筛选")} value={style} options={styleOptions} size="compact" onValueChange={onStyleChange} />
-  <input aria-label={translate("Provider 筛选")} value={provider} placeholder={translate("全部 Provider")} oninput={(event) => onProviderChange(event.currentTarget.value)} onkeydown={(event) => event.key === "Enter" && onSubmit()} />
-  <button type="button" onclick={onSubmit}><Search size={15} strokeWidth={2} />{translate("筛选")}</button>
+  <Input class="h-8" aria-label={translate("搜索历史记录")} value={search} placeholder={translate("搜索历史记录")} oninput={(event) => onSearchChange(event.currentTarget.value)} onkeydown={(event) => event.key === "Enter" && onSubmit()} />
+  <AppSelect ariaLabel={translate("场景筛选")} value={scene} options={sceneOptions} size="sm" onValueChange={onSceneChange} />
+  <AppSelect ariaLabel={translate("风格筛选")} value={style} options={styleOptions} size="sm" onValueChange={onStyleChange} />
+  <Input class="h-8" aria-label={translate("Provider 筛选")} value={provider} placeholder={translate("全部 Provider")} oninput={(event) => onProviderChange(event.currentTarget.value)} onkeydown={(event) => event.key === "Enter" && onSubmit()} />
+  <Button variant="outline" size="sm" onclick={onSubmit}><Search size={15} strokeWidth={2} />{translate("筛选")}</Button>
 </section>

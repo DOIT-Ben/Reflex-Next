@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
-  import BaseButton from "../ui/BaseButton.svelte";
+  import { Button } from "@/components/ui/button";
   import DialogShell from "../ui/DialogShell.svelte";
 
   interface Props {
@@ -15,7 +15,7 @@
   }
 
   let { title, description, confirmLabel, cancelLabel, danger = false, onCancel, onConfirm }: Props = $props();
-  let cancelButton = $state<{ focus: () => void }>();
+  let cancelButton = $state<HTMLButtonElement | null>(null);
   onMount(() => {
     cancelButton?.focus();
     const handleKeydown = (event: KeyboardEvent) => {
@@ -32,7 +32,7 @@
 <DialogShell title={title} description={description} z={80} size="sm">
     <span class="confirm-icon warning" aria-hidden="true"><TriangleAlert size={19} strokeWidth={2} /></span>
     <div class="confirm-actions">
-      <BaseButton variant="secondary" bind:this={cancelButton} onclick={onCancel}>{cancelLabel}</BaseButton>
-      <BaseButton variant={danger ? "danger" : "primary"} onclick={onConfirm}>{confirmLabel}</BaseButton>
+      <Button variant="outline" size="sm" bind:ref={cancelButton} onclick={onCancel}>{cancelLabel}</Button>
+      <Button variant={danger ? "destructive" : "default"} size="sm" onclick={onConfirm}>{confirmLabel}</Button>
     </div>
   </DialogShell>

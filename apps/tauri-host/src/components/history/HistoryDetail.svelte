@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "@/components/ui/button";
   import { translator } from "../../domain/i18nStore";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import { historyElapsedLabel, type HistoryState } from "../../domain/historyState";
@@ -24,7 +25,7 @@
   {:else if !detail}<p class="history-state" role="status" aria-live="polite">{translate("正在加载详情...")}</p>
   {:else if typeof detail.error === "string"}<p class="history-state error" role="alert">{translate(detail.error)}</p>
   {:else}
-    <div class="detail-actions history-rating"><span>{translate("评分")}</span>{#each [1, 2, 3, 4, 5] as score}<button type="button" aria-label={`${translate("评分")} ${score}`} aria-pressed={detail.rating === score} onclick={() => onRate(score)}>{score}</button>{/each}<button class="danger-icon" type="button" aria-label={translate("删除当前历史记录")} title={translate("删除当前历史记录")} onclick={onDelete}><Trash2 size={15} strokeWidth={2} /></button></div>
+    <div class="detail-actions history-rating"><span>{translate("评分")}</span>{#each [1, 2, 3, 4, 5] as score}<button type="button" aria-label={`${translate("评分")} ${score}`} aria-pressed={detail.rating === score} onclick={() => onRate(score)}>{score}</button>{/each}<Button variant="ghost" size="icon-sm" aria-label={translate("删除当前历史记录")} title={translate("删除当前历史记录")} onclick={onDelete}><Trash2 size={15} strokeWidth={2} /></Button></div>
     <dl class="history-fields">
       <div><dt>{translate("场景")}</dt><dd>{typeof detail.scene === "string" ? sceneLabel(detail.scene) : "-"}</dd></div>
       <div><dt>Provider</dt><dd>{detail.provider ?? "-"}</dd></div>

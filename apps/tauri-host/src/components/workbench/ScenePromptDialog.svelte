@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { Button } from "@/components/ui/button";
   import { onMount } from "svelte";
   import Search from "@lucide/svelte/icons/search";
   import DialogShell from "../ui/DialogShell.svelte";
-  import SelectField from "../ui/SelectField.svelte";
+  import AppSelect from "@/components/ui/AppSelect.svelte";
+  import { Input } from "@/components/ui/input";
   import { translator } from "../../domain/i18nStore";
   import {
     listSceneCategories,
@@ -30,7 +32,7 @@
   const categories = listSceneCategories();
   let query = $state("");
   let category = $state<SceneCategoryId | null>(null);
-  let searchInput: HTMLInputElement;
+  let searchInput = $state<HTMLInputElement | null>(null);
   let visibleScenes = $derived(
     scenes.filter((scene) => {
       if (category && scene.category !== category) return false;
@@ -63,17 +65,17 @@
     <label class="scene-search">
       <span class="sr-only">{translate("搜索场景")}</span>
       <span class="scene-search-icon" aria-hidden="true"><Search size={15} strokeWidth={2} /></span>
-      <input
+      <Input
+        bind:ref={searchInput}
         type="search"
-        bind:this={searchInput}
-        value={query}
+        class="scene-search-input"
+        bind:value={query}
         placeholder={translate("搜索场景")}
-        oninput={(event) => (query = event.currentTarget.value)}
       />
     </label>
     <label>
       <span class="sr-only">{translate("场景分类")}</span>
-      <SelectField
+      <AppSelect
         value={category ?? ""}
         options={categoryOptions}
         ariaLabel={translate("场景分类")}
@@ -131,8 +133,8 @@
         })}</strong>
       </div>
       <div class="scene-footer-actions">
-        <button class="outline" type="button" onclick={onCancel}>{translate("取消")}</button>
-        <button class="primary small" type="button" onclick={onConfirm}>{translate("开始生成")}</button>
+        <Button variant="outline" onclick={onCancel}>{translate("取消")}</Button>
+        <Button variant="default" size="sm" onclick={onConfirm}>{translate("开始生成")}</Button>
       </div>
     </div>
   </footer>
@@ -170,24 +172,19 @@
   .scene-search-icon {
     position: absolute;
     top: 50%;
-    left: 10px;
     display: grid;
     color: var(--muted);
     pointer-events: none;
     transform: translateY(-50%);
   }
 
-  input[type="search"] {
-    width: 100%;
-    min-height: 36px;
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
+  /* 搜索图标绝对定位在输入框内左侧，输入框留出对应左内边距 */
+  .scene-search-icon {
+    left: 12px;
   }
 
-  input[type="search"] {
-    padding: 0 10px 0 32px;
+  .scene-search :global(.scene-search-input) {
+    padding-left: 36px;
   }
 
   .scene-list {
@@ -201,7 +198,8 @@
     padding: 10px 0 6px;
     color: var(--muted);
     font-size: var(--font-meta);
-    font-weight: 700;
+    line-height: var(--leading-meta);
+    font-weight: 600;
   }
 
   .scene-group {
@@ -215,11 +213,11 @@
     grid-template-columns: 18px minmax(0, 1fr);
     gap: 8px;
     align-items: start;
-    min-height: 54px;
+    min-height: 56px;
     padding: 8px 10px;
     background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
   }
 
@@ -231,7 +229,7 @@
 
   .scene-choice input {
     width: 15px;
-    height: 15px;
+    height: 16px;
     margin: 2px 0 0;
     accent-color: var(--accent);
   }
@@ -247,18 +245,18 @@
 
   .scene-choice strong {
     font-size: var(--font-body);
-    line-height: 1.4;
+    line-height: var(--leading-body);
   }
 
   .scene-choice small {
-    margin-top: 3px;
+    margin-top: 4px;
     color: var(--muted);
     font-size: var(--font-meta);
-    line-height: 1.45;
+    line-height: var(--leading-meta);
   }
 
   .empty-state {
-    padding: 18px 0;
+    padding: 16px 0;
     color: var(--muted);
     text-align: center;
   }
@@ -270,14 +268,16 @@
   }
 
   .scene-summary span {
-    margin-top: 3px;
+    margin-top: 4px;
     color: var(--muted);
     font-size: var(--font-meta);
+    line-height: var(--leading-meta);
   }
 
   .scene-summary strong {
     overflow: hidden;
     font-size: var(--font-meta);
+    line-height: var(--leading-meta);
     text-overflow: ellipsis;
     white-space: nowrap;
   }

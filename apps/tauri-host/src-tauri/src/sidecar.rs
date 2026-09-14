@@ -732,6 +732,28 @@ where
         self.send_to(command, "main")
     }
 
+    /// Spawn the Runtime process now (including the startup probe) and keep
+    /// it as the active session, so the first real request skips process
+    /// startup. A later send reuses the warm process unless it exited or was
+    /// marked unhealthy. Fail-open by design: callers treat errors as "not
+    /// warmed yet".
+    pub fn warmup(&self) -> Result<(), &'static str> {
+        let mut running = self
+            .running
+            .lock()
+            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+        if let Some(child) = running.as_mut() {
+            if !child.unhealthy.load(Ordering::Acquire)
+                && !child.process.has_exited().unwrap_or(true)
+            {
+                return Ok(());
+            }
+        }
+        let child = self.start_process()?;
+        *running = Some(child);
+        Ok(())
+    }
+
     pub fn send_to(&self, command: ValidatedCommand, target: &str) -> Result<(), &'static str> {
         if is_private_command(command.kind) {
             return Err(RUNTIME_UNAVAILABLE_MESSAGE);
@@ -1614,6 +1636,18 @@ impl RuntimeController {
         Ok(result)
     }
 
+    /// Start the Runtime sidecar ahead of the first request so the startup
+    /// probe cost is paid during idle time. Fail-open: callers treat an error
+    /// as "not warmed yet" and the next request retries lazily.
+    pub fn warmup(&self) -> Result<(), &'static str> {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| RUNTIME_UNAVAILABLE_MESSAGE)?;
+        let sidecar = self.get_or_start_sidecar()?;
+        sidecar.warmup()
+    }
+
     pub fn shutdown(&self) {
         let Ok(mut lifecycle) = self.lifecycle.lock() else {
             return;
@@ -1802,7 +1836,7 @@ fn request_expects_provider_catalog(active_requests: &ActiveRequests, request_id
 }
 
 fn public_route(target: &str) -> Result<RequestRoute, &'static str> {
-    if matches!(target, "main" | "history") {
+    if matches!(target, "main" | "history" | "panel") {
         Ok(RequestRoute::PublicTo(target.to_string()))
     } else {
         Err(RUNTIME_UNAVAILABLE_MESSAGE)

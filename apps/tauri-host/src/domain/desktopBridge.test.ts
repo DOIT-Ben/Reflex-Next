@@ -17,7 +17,10 @@ describe("desktop bridge", () => {
         return {
           hotkey: "Ctrl+Alt+R",
           hotkey_active: true,
-          message: null
+          message: null,
+          panel_hotkey: "Alt+Q",
+          panel_hotkey_active: false,
+          panel_message: null
         };
       },
       listen: async (eventName, handler) => {
@@ -33,7 +36,10 @@ describe("desktop bridge", () => {
     await expect(bridge.status()).resolves.toEqual({
       hotkey: "Ctrl+Alt+R",
       hotkeyActive: true,
-      message: null
+      message: null,
+      panelHotkey: "Alt+Q",
+      panelHotkeyActive: false,
+      panelMessage: null
     });
     await expect(bridge.listen((action) => actions.push(action))).resolves.toBe(unlisten);
     await bridge.minimizeWindow();

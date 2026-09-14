@@ -13,10 +13,15 @@
   import type { SecretStatus } from "../../domain/settingsApi";
   import type { SemanticModelState } from "../../domain/semanticModelState";
   import DialogShell from "../ui/DialogShell.svelte";
-  import SelectField from "../ui/SelectField.svelte";
+  import { Button } from "@/components/ui/button";
+  import SegmentedControl from "@/components/ui/SegmentedControl.svelte";
+  import AppSelect from "@/components/ui/AppSelect.svelte";
+  import { Input } from "@/components/ui/input";
+  import { Switch } from "@/components/ui/switch";
   import { settingsSections, type SettingsSection } from "./types";
 
   interface Props {
+    variant?: "dialog" | "page";
     draft: HostSettingsDraft;
     section: SettingsSection;
     busy: boolean;
@@ -73,6 +78,7 @@
   }
 
   let {
+    variant = "dialog",
     draft,
     section,
     busy,
@@ -247,6 +253,7 @@
 </script>
 
 <DialogShell
+  {variant}
   title={translate("设置")}
   description={translate("管理模型、默认行为和本地隐私。")}
   size="sheet"
@@ -256,25 +263,26 @@
   autofocusClose={false}
 >
   <div class="settings-body" bind:this={body}>
-    <div class="settings-layout">
-      <nav class="settings-nav" aria-label={translate("设置分类")}>
-        {#each settingsSections as item}
-          <button
-            type="button"
-            class:active={section === item.id}
-            aria-pressed={section === item.id}
-            onclick={() => onSectionChange(item.id)}
-          >{translate(item.label)}</button>
-        {/each}
-      </nav>
+    <nav class="settings-nav" aria-label={translate("设置分类")}>
+      {#each settingsSections as item}
+        <Button
+          variant={section === item.id ? "secondary" : "ghost"}
+          size="sm"
+          class={`settings-nav-item${section === item.id ? " settings-nav-item-active" : ""}`}
+          aria-pressed={section === item.id}
+          onclick={() => onSectionChange(item.id)}
+        ><span class="text-xs font-medium">{translate(item.label)}</span></Button>
+      {/each}
+    </nav>
 
+    <div class="settings-layout">
       <div class="settings-content">
         {#if section === "provider"}
           <h3>{translate("模型与 Provider")}</h3>
           <div class="settings-grid">
             <label>
               <span>{translate("默认 Provider")}</span>
-              <SelectField
+              <AppSelect
                 value={draft.default_provider ?? "minimax"}
                 options={providerSelectOptions}
                 ariaLabel={translate("默认 Provider")}
@@ -284,7 +292,7 @@
             </label>
             <label>
               <span>{translate("默认模型")}</span>
-              <SelectField
+              <AppSelect
                 value={draft.default_model ?? ""}
                 options={modelSelectOptions}
                 ariaLabel={translate("默认模型")}
@@ -296,31 +304,31 @@
             {#if supportsCustomModel}
               <label>
                 <span>{translate("自定义模型 ID")}</span>
-                <input
+                <Input
                   value={customModelId}
                   disabled={busy}
                   autocomplete="off"
                   spellcheck="false"
-                  maxlength="256"
+                  maxlength={256}
                   placeholder="e.g. gpt-5.6-luna"
                   oninput={(event) => (customModelId = event.currentTarget.value)}
                 />
               </label>
               <div class="model-candidate-actions">
-                <button class="outline" type="button" disabled={busy || !customModelId.trim()} onclick={addCustomModel}>{translate("加入候选")}</button>
-                <button class="outline danger" type="button" disabled={busy || models.length <= 1} onclick={removeSelectedModel}>{translate("移除当前")}</button>
+                <Button variant="outline" disabled={busy || !customModelId.trim()} onclick={addCustomModel}>{translate("加入候选")}</Button>
+                <Button variant="outline" class="text-destructive hover:text-destructive" disabled={busy || models.length < 1} onclick={removeSelectedModel}>{translate("移除当前")}</Button>
               </div>
             {/if}
             {#if draft.default_provider !== "reflex-cloud"}
               <label class="settings-wide-field">
                 <span>Base URL</span>
-                <input
+                <Input
                   type="url"
                   value={draft.provider_endpoints[currentProviderId] ?? ""}
                   disabled={busy || providerConnectionBusy !== null}
                   autocomplete="url"
                   spellcheck="false"
-                  maxlength="2048"
+                  maxlength={2048}
                   placeholder="https://api.example.com/v1"
                   oninput={(event) => onBaseUrlChange(event.currentTarget.value)}
                 />
@@ -348,7 +356,7 @@
           <div class="api-key-row">
             <label>
               <span>API Key</span>
-              <input
+              <Input
                 type="password"
                 value={secretInput}
                 autocomplete="off"
@@ -359,12 +367,12 @@
                 oninput={(event) => onSecretInput(event.currentTarget.value)}
               />
             </label>
-            <button class="outline" type="button" disabled={secretBusy} onclick={onSaveSecret}>
+            <Button variant="outline" size="sm" disabled={secretBusy} onclick={onSaveSecret}>
               {translate(secretBusy ? "正在保存" : "保存密钥")}
-            </button>
-            <button class="outline danger" type="button" disabled={secretBusy || !secretStatus.configured} onclick={onDeleteSecret}>
+            </Button>
+            <Button variant="outline" size="sm" class="text-destructive hover:text-destructive" disabled={secretBusy || !secretStatus.configured} onclick={onDeleteSecret}>
               {translate("删除密钥")}
-            </button>
+            </Button>
           </div>
           <p id="secret-feedback" class="settings-feedback" aria-live="polite">
             {translate(secretNotice ?? "密钥只保存在系统安全存储中，输入不会保留。")}
@@ -381,58 +389,56 @@
             </div>
           </div>
           <div class="provider-connection-actions">
-            <button class="outline" type="button" disabled={!providerConnectionReady || providerConnectionBusy !== null} onclick={onDiscoverModels}>
+            <Button variant="outline" size="sm" disabled={!providerConnectionReady || providerConnectionBusy !== null} onclick={onDiscoverModels}>
               {translate(providerConnectionBusy === "models" ? "正在获取模型" : "获取模型")}
-            </button>
-            <button class="outline" type="button" disabled={!providerConnectionReady || !draft.default_model || providerConnectionBusy !== null} onclick={onTestConnection}>
+            </Button>
+            <Button variant="outline" size="sm" disabled={!providerConnectionReady || !draft.default_model || providerConnectionBusy !== null} onclick={onTestConnection}>
               {translate(providerConnectionBusy === "test" ? "正在测试连接" : "测试连接")}
-            </button>
+            </Button>
           </div>
           <p class="settings-feedback" role="status" aria-live="polite">{providerConnectionNotice ? translate(providerConnectionNotice) : ""}</p>
           {/if}
         {:else if section === "defaults"}
           <h3>{translate("默认行为")}</h3>
-          <div class="settings-grid">
-            <div>
-              <span class="field-label">{translate("默认模式")}</span>
-              <div class="segments compact">
-                {#each modes as item}
-                  <button type="button" class:active={draft.default_mode === item.id} onclick={() => patchDraft({ default_mode: item.id })}>{translate(item.label)}</button>
-                {/each}
-              </div>
-            </div>
-            <div>
-              <span class="field-label">{translate("默认风格")}</span>
-              <div class="segments compact">
-                {#each styles as item}
-                  <button type="button" class:active={draft.default_style === item.id} onclick={() => patchDraft({ default_style: item.id })}>{translate(item.label)}</button>
-                {/each}
-              </div>
-            </div>
+          <div class="settings-block">
+            <span class="field-label">{translate("默认模式")}</span>
+            <SegmentedControl
+              options={modes.map((item) => ({ id: item.id, label: translate(item.label) }))}
+              value={draft.default_mode}
+              onValueChange={(value) => patchDraft({ default_mode: value })} 
+            />
+          </div>
+          <div class="settings-block">
+            <span class="field-label">{translate("默认风格")}</span>
+            <SegmentedControl
+              options={styles.map((item) => ({ id: item.id, label: translate(item.label) }))}
+              value={draft.default_style}
+              onValueChange={(value) => patchDraft({ default_style: value })} 
+            />
           </div>
           <div class="settings-block">
             <span class="field-label">{translate("场景识别策略")}</span>
-            <div class="segments compact">
-              {#each scenePolicies as item}
-                <button type="button" class:active={draft.scene_policy === item.id} onclick={() => patchDraft({ scene_policy: item.id })}>{translate(item.label)}</button>
-              {/each}
-            </div>
+            <SegmentedControl
+              options={scenePolicies.map((item) => ({ id: item.id, label: translate(item.label) }))}
+              value={draft.scene_policy}
+              onValueChange={(value) => patchDraft({ scene_policy: value })} 
+            />
           </div>
           <div class="settings-block">
             <span class="field-label">{translate("界面与输出语言")}</span>
-            <div class="segments compact">
-              {#each languages as item}
-                <button type="button" class:active={draft.language === item.id} onclick={() => patchDraft({ language: item.id })}>{translate(item.label)}</button>
-              {/each}
-            </div>
+            <SegmentedControl
+              options={languages.map((item) => ({ id: item.id, label: translate(item.label) }))}
+              value={draft.language}
+              onValueChange={(value) => patchDraft({ language: value })} 
+            />
           </div>
           <div class="settings-block">
             <span class="field-label">{translate("界面主题")}</span>
-            <div class="segments compact">
-              {#each themes as item}
-                <button type="button" class:active={draft.theme === item.id} onclick={() => patchDraft({ theme: item.id })}>{translate(item.label)}</button>
-              {/each}
-            </div>
+            <SegmentedControl
+              options={themes.map((item) => ({ id: item.id, label: translate(item.label) }))}
+              value={draft.theme}
+              onValueChange={(value) => patchDraft({ theme: value })} 
+            />
           </div>
           <label class="desktop-hotkey">
             <span>{translate("全局快捷键")}</span>
@@ -441,15 +447,30 @@
               {translate(desktopStatus.message ?? (desktopStatus.hotkeyActive ? "当前快捷键已启用" : "保存后启用快捷键"))}
             </small>
           </label>
+          <label class="desktop-hotkey">
+            <span>{translate("快捷面板快捷键")}</span>
+            <input value={draft.panel_hotkey} disabled={busy} autocomplete="off" spellcheck="false" oninput={(event) => patchDraft({ panel_hotkey: event.currentTarget.value })} />
+            <small class:available={desktopStatus.panelHotkeyActive}>
+              {translate(desktopStatus.panelMessage ?? (desktopStatus.panelHotkeyActive ? "当前快捷键已启用" : "保存后启用快捷键"))}
+            </small>
+          </label>
+          <div class="desktop-hotkey checkbox-row">
+            <span>{translate("开机自动启动（静默进入托盘）")}</span>
+            <Switch
+              checked={draft.autostart_enabled}
+              disabled={busy}
+              onCheckedChange={(checked) => patchDraft({ autostart_enabled: checked })}
+            />
+          </div>
         {:else if section === "clipboard"}
           <h3>{translate("剪贴板")}</h3>
           <div class="settings-block">
             <span class="field-label">{translate("读取与替换策略")}</span>
-            <div class="segments compact">
-              {#each clipboardPolicies as item}
-                <button type="button" class:active={draft.clipboard_policy === item.id} onclick={() => patchDraft({ clipboard_policy: item.id })}>{translate(item.label)}</button>
-              {/each}
-            </div>
+            <SegmentedControl
+              options={clipboardPolicies.map((item) => ({ id: item.id, label: translate(item.label) }))}
+              value={draft.clipboard_policy}
+              onValueChange={(value) => patchDraft({ clipboard_policy: value })} 
+            />
             <p class="warning-note">{translate("自动替换会覆盖当前剪贴板内容，首次使用仍需确认。")}</p>
           </div>
         {:else if section === "privacy"}
@@ -457,41 +478,34 @@
           <div class="settings-choice-list">
             <label class="settings-toggle">
               <span><strong>{translate("参与匿名质量分析")}</strong><small>{translate("仅记录质量发布版本与反馈结果，不包含输入或输出正文，默认关闭")}</small></span>
-              <input
-                type="checkbox"
-                checked={cloudUsageMetricsEnabled}
-                disabled={busy || cloudPrivacyBusy}
-                onchange={(event) => onCloudUsageMetricsChange(event.currentTarget.checked)}
-              />
+              <Switch checked={cloudUsageMetricsEnabled} disabled={busy || cloudPrivacyBusy} onCheckedChange={(checked) => onCloudUsageMetricsChange(checked)} />
             </label>
             <label class="settings-toggle">
               <span><strong>{translate("加入产品改进计划")}</strong><small>{translate("仅在开启后保留脱敏的云端输入和结果，默认关闭")}</small></span>
-              <input
-                type="checkbox"
-                checked={cloudImprovementEnabled}
-                disabled={busy || cloudPrivacyBusy}
-                onchange={(event) => onCloudImprovementChange(event.currentTarget.checked)}
-              />
+              <Switch checked={cloudImprovementEnabled} disabled={busy || cloudPrivacyBusy} onCheckedChange={(checked) => onCloudImprovementChange(checked)} />
             </label>
             <label class="settings-toggle">
               <span><strong>{translate("主动反馈询问")}</strong><small>{translate("在若干次成功生成后偶尔询问结果是否有帮助")}</small></span>
-              <input
-                type="checkbox"
-                checked={feedbackPromptEnabled}
-                disabled={busy}
-                onchange={(event) => onFeedbackPromptEnabledChange(event.currentTarget.checked)}
-              />
+              <Switch checked={feedbackPromptEnabled} disabled={busy} onCheckedChange={(checked) => onFeedbackPromptEnabledChange(checked)} />
             </label>
             <label class="settings-toggle">
               <span><strong>{translate("保存历史记录")}</strong><small>{translate("记录优化结果，便于稍后查看")}</small></span>
-              <input type="checkbox" checked={draft.history_enabled} disabled={busy} onchange={(event) => patchDraft({ history_enabled: event.currentTarget.checked })} />
+              <Switch
+                checked={draft.history_enabled}
+                disabled={busy}
+                onCheckedChange={(checked) => patchDraft({ history_enabled: checked })}
+              />
             </label>
             <label class="settings-toggle">
               <span><strong>{translate("隐私模式")}</strong><small>{translate("减少本地内容保留")}</small></span>
-              <input type="checkbox" checked={draft.privacy_mode} disabled={busy} onchange={(event) => patchDraft({ privacy_mode: event.currentTarget.checked })} />
+              <Switch
+                checked={draft.privacy_mode}
+                disabled={busy}
+                onCheckedChange={(checked) => patchDraft({ privacy_mode: checked })}
+              />
             </label>
           </div>
-          <div class="settings-block">
+          <div class="settings-block stacked">
             <span class="field-label">{translate("云端免费额度")}</span>
             <p class="warning-note">{translate(cloudQuotaText())}</p>
             <p class="warning-note">
@@ -500,18 +514,19 @@
                 : translate("当前尚无已发布的质量改进。")}
             </p>
             <div class="diagnostic-export-actions">
-              <button class="outline" type="button" disabled={cloudPrivacyBusy} onclick={onCloudRefresh}>{translate("刷新额度")}</button>
-              <button class="outline danger" type="button" disabled={cloudPrivacyBusy} onclick={onCloudDeleteData}>{translate("删除云端数据")}</button>
+              <Button variant="outline" disabled={cloudPrivacyBusy} onclick={onCloudRefresh}>{translate("刷新额度")}</Button>
+              <Button variant="outline" class="text-destructive hover:text-destructive" disabled={cloudPrivacyBusy} onclick={onCloudDeleteData}>{translate("删除云端数据")}</Button>
             </div>
             <p class="settings-feedback" role="status" aria-live="polite">{cloudPrivacyNotice ? translate(cloudPrivacyNotice) : ""}</p>
           </div>
           <div class="settings-block">
             <span class="field-label">{translate("历史内容处理")}</span>
-            <div class="segments compact">
-              {#each historyRedactions as item}
-                <button type="button" class:active={draft.history_redaction === item.id} disabled={busy} onclick={() => patchDraft({ history_redaction: item.id })}>{translate(item.label)}</button>
-              {/each}
-            </div>
+            <SegmentedControl
+              options={historyRedactions.map((item) => ({ id: item.id, label: translate(item.label) }))}
+              value={draft.history_redaction}
+              disabled={busy}
+              onValueChange={(value) => patchDraft({ history_redaction: value })} 
+            />
           </div>
           <section class="diagnostic-export-card" aria-label={translate("本地诊断包")}>
             <div>
@@ -520,9 +535,9 @@
             </div>
             <div class="diagnostic-export-actions">
               {#if diagnosticBusy}
-                <button class="outline" type="button" onclick={onDiagnosticCancel}>{translate("取消导出")}</button>
+                <Button variant="outline" onclick={onDiagnosticCancel}>{translate("取消导出")}</Button>
               {:else}
-                <button class="outline" type="button" onclick={onDiagnosticExport}>{translate("导出诊断包")}</button>
+                <Button variant="outline" onclick={onDiagnosticExport}>{translate("导出诊断包")}</Button>
               {/if}
             </div>
             <p class="settings-feedback" role="status" aria-live="polite">{diagnosticNotice ? translate(diagnosticNotice) : ""}</p>
@@ -533,11 +548,10 @@
             {#each plugins as plugin}
               <label class="settings-toggle">
                 <span><strong>{translate(plugin.label)}</strong><small>{translate(pluginDescription(plugin))}</small></span>
-                <input
-                  type="checkbox"
+                <Switch
                   checked={draft.enabled_plugins.includes(plugin.id)}
                   disabled={busy}
-                  onchange={(event) => onPluginChange(plugin.id, event.currentTarget.checked)}
+                  onCheckedChange={(checked) => onPluginChange(plugin.id, checked)}
                 />
               </label>
             {/each}
@@ -558,13 +572,13 @@
                 <progress max="100" value={semanticModel.percent} aria-label={translate("模型下载进度")}></progress>
               {/if}
               <div class="semantic-model-actions">
-                <button class="outline" type="button" disabled={!semanticActive || ["loading", "downloading", "deleting"].includes(semanticModel.phase)} onclick={onSemanticRefresh}>{translate("检查状态")}</button>
+                <Button variant="outline" disabled={!semanticActive || ["loading", "downloading", "deleting"].includes(semanticModel.phase)} onclick={onSemanticRefresh}>{translate("检查状态")}</Button>
                 {#if semanticModel.phase === "downloading"}
-                  <button class="outline" type="button" onclick={onSemanticCancel}>{translate("取消下载")}</button>
+                  <Button variant="outline" onclick={onSemanticCancel}>{translate("取消下载")}</Button>
                 {:else if semanticModel.phase === "ready"}
-                  <button class="outline danger" type="button" disabled={!semanticActive} onclick={onSemanticDelete}>{translate("删除模型")}</button>
+                  <Button variant="outline" class="text-destructive hover:text-destructive" disabled={!semanticActive} onclick={onSemanticDelete}>{translate("删除模型")}</Button>
                 {:else}
-                  <button class="primary small" type="button" disabled={!semanticActive || ["loading", "deleting"].includes(semanticModel.phase)} onclick={onSemanticDownload}>{translate("下载模型")}</button>
+                  <Button variant="default" size="sm" disabled={!semanticActive || ["loading", "deleting"].includes(semanticModel.phase)} onclick={onSemanticDownload}>{translate("下载模型")}</Button>
                 {/if}
               </div>
             </section>
@@ -576,10 +590,12 @@
 
   <div class="settings-footer" slot="footer">
     <p class="settings-save-notice" aria-live="polite">{notice ? translate(notice) : ""}</p>
-    <button class="outline" type="button" disabled={busy} onclick={onClose}>{translate("取消")}</button>
-    <button class="primary small" type="button" disabled={busy} onclick={onSave}>
+    {#if variant !== "page"}
+      <Button variant="outline" size="sm" disabled={busy} onclick={onClose}>{translate("取消")}</Button>
+    {/if}
+    <Button disabled={busy} onclick={onSave}>
       {translate(busy ? "正在保存" : "保存设置")}
-    </button>
+    </Button>
   </div>
 </DialogShell>
 
@@ -587,6 +603,7 @@
   .settings-body {
     display: flex;
     flex-direction: column;
+    gap: 16px;
     height: 100%;
     min-height: 0;
   }
@@ -598,6 +615,6 @@
 
   .settings-footer {
     flex: 0 0 auto;
-    margin-top: 14px;
+    min-width: 0;
   }
 </style>

@@ -14,30 +14,37 @@
       {
         "label": "main",
         "title": "Reflex",
-        "width": 760,
-        "height": 540,
-        "minWidth": 680,
-        "minHeight": 480,
-        "maxWidth": 920,
-        "maxHeight": 720,
+        "width": 1200,
+        "height": 650,
+        "minWidth": 945,
+        "minHeight": 600,
         "resizable": true,
         "center": true,
-        "transparent": true,
+        "visible": false,
+        "transparent": false,
         "shadow": true,
-        "decorations": false
+        "decorations": true
       }
     ],
     "security": {
-      "capabilities": ["main-capability", "history-capability"],
+      "capabilities": [
+        "main-capability",
+        "history-capability",
+        "panel-capability"
+      ],
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "resources": {
       "resources/runtime/reflex-runtime.exe": "runtime/reflex-runtime.exe"
     },
-    "icon": ["icons/icon.ico"]
+    "icon": [
+      "icons/icon.ico"
+    ]
   }
 }

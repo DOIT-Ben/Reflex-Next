@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "@/components/ui/button";
   import DialogShell from "../ui/DialogShell.svelte";
   import { translator } from "../../domain/i18nStore";
 
@@ -28,6 +29,6 @@
   </div>
   <footer slot="footer" class="plugin-footer">
     <span>{translate("3 项内置能力")}</span>
-    <button class="primary small" type="button" onclick={onManage}>{translate("管理设置")}</button>
+    <Button variant="default" size="sm" onclick={onManage}>{translate("管理设置")}</Button>
   </footer>
 </DialogShell>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "@/components/ui/button";
   import DialogShell from "../ui/DialogShell.svelte";
   import { translator } from "../../domain/i18nStore";
   import type { TranslationState, TranslationTarget } from "../../domain/translationState";
@@ -88,13 +89,13 @@
 
   <footer slot="footer">
     {#if state.phase === "streaming"}
-      <button class="outline" type="button" onclick={onCancel}>{translate("取消翻译")}</button>
+      <Button variant="outline" onclick={onCancel}>{translate("取消翻译")}</Button>
     {:else}
-      <button class="outline" type="button" onclick={onRetry}>{translate(state.phase === "completed" ? "重新翻译" : "重试")}</button>
+      <Button variant="outline" onclick={onRetry}>{translate(state.phase === "completed" ? "重新翻译" : "重试")}</Button>
     {/if}
     {#if state.phase === "completed"}
-      <button class="outline" type="button" onclick={onCopy}>{translate("复制译文")}</button>
-      <button class="primary small" type="button" onclick={onUseResult}>{translate("作为当前结果")}</button>
+      <Button variant="outline" onclick={onCopy}>{translate("复制译文")}</Button>
+      <Button variant="default" size="sm" onclick={onUseResult}>{translate("作为当前结果")}</Button>
     {/if}
   </footer>
 </DialogShell>

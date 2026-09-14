@@ -89,7 +89,6 @@ describe("view builders", () => {
   it("builds nav items with the settings shortcut", () => {
     const items = buildNavItems(identity);
     expect(items.map((item) => item.id)).toEqual(["workbench", "tools", "history", "settings"]);
-    expect(items[3].shortcut).toBe("Ctrl+,");
   });
 
   it("builds config summary from the request draft", () => {

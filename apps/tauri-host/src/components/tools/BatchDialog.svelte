@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "@/components/ui/button";
   import Download from "@lucide/svelte/icons/download";
   import Upload from "@lucide/svelte/icons/upload";
   import DialogShell from "../ui/DialogShell.svelte";
@@ -15,7 +16,7 @@
     type BatchState
   } from "../../domain/batchState";
   import type { OptimizeStyle, SceneOption } from "../../domain/reflexSession";
-  import SelectField from "../ui/SelectField.svelte";
+  import AppSelect from "@/components/ui/AppSelect.svelte";
   import { translator } from "../../domain/i18nStore";
 
   interface Props {
@@ -82,9 +83,9 @@
           <button type="button" class:active={state.format === item.id} aria-pressed={state.format === item.id} disabled={locked} onclick={() => onStateChange(setBatchFormat(state, item.id))}>{translate(item.label)}</button>
         {/each}
       </div>
-      <label><span>{translate("处理风格")}</span><SelectField value={state.style} options={styleOptions} ariaLabel={translate("处理风格")} disabled={state.phase === "running"} onValueChange={(value) => onStateChange(setBatchStyle(state, value as OptimizeStyle))} /></label>
-      <label><span>{translate("场景")}</span><SelectField value={state.scene ?? ""} options={sceneSelectOptions} ariaLabel={translate("场景")} disabled={state.phase === "running"} onValueChange={(value) => onStateChange(setBatchScene(state, value))} /></label>
-      <label><span>{translate("并发数")}</span><SelectField value={String(state.concurrency)} options={concurrencyOptions} ariaLabel={translate("并发数")} size="compact" disabled={state.phase === "running"} onValueChange={(value) => onStateChange(setBatchConcurrency(state, Number(value)))} /></label>
+      <label><span>{translate("处理风格")}</span><AppSelect value={state.style} options={styleOptions} ariaLabel={translate("处理风格")} disabled={state.phase === "running"} onValueChange={(value) => onStateChange(setBatchStyle(state, value as OptimizeStyle))} /></label>
+      <label><span>{translate("场景")}</span><AppSelect value={state.scene ?? ""} options={sceneSelectOptions} ariaLabel={translate("场景")} disabled={state.phase === "running"} onValueChange={(value) => onStateChange(setBatchScene(state, value))} /></label>
+      <label><span>{translate("并发数")}</span><AppSelect value={String(state.concurrency)} options={concurrencyOptions} ariaLabel={translate("并发数")} size="sm" disabled={state.phase === "running"} onValueChange={(value) => onStateChange(setBatchConcurrency(state, Number(value)))} /></label>
     </div>
 
     <label class="batch-source">
@@ -101,9 +102,9 @@
 
     <div class="batch-action-row">
       <div class="batch-import-actions">
-        <button class="outline" type="button" disabled={locked} onclick={chooseFile}><Upload size={14} strokeWidth={2} />{translate("导入文件")}</button>
-        <button class="outline" type="button" disabled={locked} onclick={onDownloadTemplate}><Download size={14} strokeWidth={2} />{translate("下载模板")}</button>
-        <button class="outline" type="button" disabled={locked || !state.sourceText.trim()} onclick={onParse}>{translate(state.phase === "parsing" ? "正在解析" : "解析内容")}</button>
+        <Button variant="outline" disabled={locked} onclick={chooseFile}><Upload size={14} strokeWidth={2} />{translate("导入文件")}</Button>
+        <Button variant="outline" disabled={locked} onclick={onDownloadTemplate}><Download size={14} strokeWidth={2} />{translate("下载模板")}</Button>
+        <Button variant="outline" disabled={locked || !state.sourceText.trim()} onclick={onParse}>{translate(state.phase === "parsing" ? "正在解析" : "解析内容")}</Button>
       </div>
       <p aria-live="polite">
         {#if fileNotice}<span class="error">{translate(fileNotice)}</span>
@@ -131,7 +132,7 @@
     </div>
 
     <footer slot="footer">
-      {#if state.phase === "running"}<button class="outline" type="button" onclick={onCancel}>{translate("停止")}</button>
-      {:else}<button class="outline" type="button" disabled={!batchCanExport(state)} onclick={onExport}>{translate("导出结果")}</button><button class="primary small" type="button" disabled={!state.items.length} onclick={onRun}>{translate("开始处理")}</button>{/if}
+      {#if state.phase === "running"}<Button variant="outline" onclick={onCancel}>{translate("停止")}</Button>
+      {:else}<Button variant="outline" disabled={!batchCanExport(state)} onclick={onExport}>{translate("导出结果")}</Button><Button variant="default" size="sm" disabled={!state.items.length} onclick={onRun}>{translate("开始处理")}</Button>{/if}
     </footer>
 </DialogShell>

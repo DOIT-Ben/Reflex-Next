@@ -34,7 +34,7 @@ export type TranslationFlowDeps = {
 
 export type TranslationFlow = {
   state: Writable<TranslationState>;
-  open: (source: CurrentResult, enabled: boolean) => void;
+  open: (source: CurrentResult | null, enabled: boolean) => void;
   run: () => Promise<void>;
   chooseTarget: (target: TranslationTarget) => void;
   cancel: () => void;
@@ -55,8 +55,8 @@ export function createTranslationFlow(deps: TranslationFlowDeps): TranslationFlo
     state.set(next);
   }
 
-  function open(source: CurrentResult, enabled: boolean) {
-    if (!source.output.trim() || !enabled) return;
+  function open(source: CurrentResult | null, enabled: boolean) {
+    if (!source || !source.output.trim() || !enabled) return;
     sourceResult = { ...source };
     const next = openTranslation(get(state), source.output);
     set(next);

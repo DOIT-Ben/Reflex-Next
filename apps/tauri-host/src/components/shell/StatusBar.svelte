@@ -60,7 +60,7 @@
     border-top: 1px solid var(--line, #e1e6ee);
     box-sizing: border-box;
     font-size: var(--font-meta);
-    line-height: 1;
+    line-height: var(--leading-none);
     user-select: none;
   }
 
