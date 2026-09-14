@@ -85,7 +85,7 @@
     flex: 0 0 auto;
     width: 6px;
     height: 6px;
-    background: #8b95a7;
+    background: var(--weak);
     border-radius: 50%;
   }
 
@@ -95,19 +95,19 @@
   }
 
   .status-message[data-tone="success"] .status-dot {
-    background: #2f9e62;
+    background: var(--success);
   }
 
   .status-message[data-tone="warning"] .status-dot {
-    background: #d08724;
+    background: var(--warning);
   }
 
   .status-message[data-tone="error"] {
-    color: #b42318;
+    color: var(--danger);
   }
 
   .status-message[data-tone="error"] .status-dot {
-    background: #cf4b4b;
+    background: var(--danger);
   }
 
   .metadata {

@@ -18,6 +18,17 @@
   import AppSelect from "@/components/ui/AppSelect.svelte";
   import { Input } from "@/components/ui/input";
   import { Switch } from "@/components/ui/switch";
+  import Cpu from "@lucide/svelte/icons/cpu";
+  import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
+  import ClipboardList from "@lucide/svelte/icons/clipboard-list";
+  import ShieldCheck from "@lucide/svelte/icons/shield-check";
+  import Puzzle from "@lucide/svelte/icons/puzzle";
+  import Power from "@lucide/svelte/icons/power";
+  import EyeOff from "@lucide/svelte/icons/eye-off";
+  import Sparkles from "@lucide/svelte/icons/sparkles";
+  import MessageSquare from "@lucide/svelte/icons/message-square";
+  import Lock from "@lucide/svelte/icons/lock";
+  import HistoryIcon from "@lucide/svelte/icons/history";
   import { settingsSections, type SettingsSection } from "./types";
 
   interface Props {
@@ -278,7 +289,7 @@
     <div class="settings-layout">
       <div class="settings-content">
         {#if section === "provider"}
-          <h3>{translate("模型与 Provider")}</h3>
+          <h3><Cpu size={16} aria-hidden="true" /><span>{translate("模型与 Provider")}</span></h3>
           <div class="settings-grid">
             <label>
               <span>{translate("默认 Provider")}</span>
@@ -399,7 +410,7 @@
           <p class="settings-feedback" role="status" aria-live="polite">{providerConnectionNotice ? translate(providerConnectionNotice) : ""}</p>
           {/if}
         {:else if section === "defaults"}
-          <h3>{translate("默认行为")}</h3>
+          <h3><SlidersHorizontal size={16} aria-hidden="true" /><span>{translate("默认行为")}</span></h3>
           <div class="settings-block">
             <span class="field-label">{translate("默认模式")}</span>
             <SegmentedControl
@@ -454,8 +465,11 @@
               {translate(desktopStatus.panelMessage ?? (desktopStatus.panelHotkeyActive ? "当前快捷键已启用" : "保存后启用快捷键"))}
             </small>
           </label>
-          <div class="desktop-hotkey checkbox-row">
-            <span>{translate("开机自动启动（静默进入托盘）")}</span>
+          <div class="settings-toggle">
+            <span class="settings-toggle-lead">
+              <span class="settings-toggle-icon" aria-hidden="true"><Power size={16} class="text-orange-500" /></span>
+              <span class="settings-toggle-text"><strong>{translate("开机自动启动（静默进入托盘）")}</strong></span>
+            </span>
             <Switch
               checked={draft.autostart_enabled}
               disabled={busy}
@@ -463,7 +477,7 @@
             />
           </div>
         {:else if section === "clipboard"}
-          <h3>{translate("剪贴板")}</h3>
+          <h3><ClipboardList size={16} aria-hidden="true" /><span>{translate("剪贴板")}</span></h3>
           <div class="settings-block">
             <span class="field-label">{translate("读取与替换策略")}</span>
             <SegmentedControl
@@ -474,22 +488,34 @@
             <p class="warning-note">{translate("自动替换会覆盖当前剪贴板内容，首次使用仍需确认。")}</p>
           </div>
         {:else if section === "privacy"}
-          <h3>{translate("安全与隐私")}</h3>
+          <h3><ShieldCheck size={16} aria-hidden="true" /><span>{translate("安全与隐私")}</span></h3>
           <div class="settings-choice-list">
             <label class="settings-toggle">
-              <span><strong>{translate("参与匿名质量分析")}</strong><small>{translate("仅记录质量发布版本与反馈结果，不包含输入或输出正文，默认关闭")}</small></span>
+              <span class="settings-toggle-lead">
+                <span class="settings-toggle-icon" aria-hidden="true"><EyeOff size={16} class="text-gray-500" /></span>
+                <span class="settings-toggle-text"><strong>{translate("参与匿名质量分析")}</strong><small>{translate("仅记录质量发布版本与反馈结果，不包含输入或输出正文，默认关闭")}</small></span>
+              </span>
               <Switch checked={cloudUsageMetricsEnabled} disabled={busy || cloudPrivacyBusy} onCheckedChange={(checked) => onCloudUsageMetricsChange(checked)} />
             </label>
             <label class="settings-toggle">
-              <span><strong>{translate("加入产品改进计划")}</strong><small>{translate("仅在开启后保留脱敏的云端输入和结果，默认关闭")}</small></span>
+              <span class="settings-toggle-lead">
+                <span class="settings-toggle-icon" aria-hidden="true"><Sparkles size={16} class="text-blue-500" /></span>
+                <span class="settings-toggle-text"><strong>{translate("加入产品改进计划")}</strong><small>{translate("仅在开启后保留脱敏的云端输入和结果，默认关闭")}</small></span>
+              </span>
               <Switch checked={cloudImprovementEnabled} disabled={busy || cloudPrivacyBusy} onCheckedChange={(checked) => onCloudImprovementChange(checked)} />
             </label>
             <label class="settings-toggle">
-              <span><strong>{translate("主动反馈询问")}</strong><small>{translate("在若干次成功生成后偶尔询问结果是否有帮助")}</small></span>
+              <span class="settings-toggle-lead">
+                <span class="settings-toggle-icon" aria-hidden="true"><MessageSquare size={16} class="text-amber-500" /></span>
+                <span class="settings-toggle-text"><strong>{translate("主动反馈询问")}</strong><small>{translate("在若干次成功生成后偶尔询问结果是否有帮助")}</small></span>
+              </span>
               <Switch checked={feedbackPromptEnabled} disabled={busy} onCheckedChange={(checked) => onFeedbackPromptEnabledChange(checked)} />
             </label>
             <label class="settings-toggle">
-              <span><strong>{translate("保存历史记录")}</strong><small>{translate("记录优化结果，便于稍后查看")}</small></span>
+              <span class="settings-toggle-lead">
+                <span class="settings-toggle-icon" aria-hidden="true"><HistoryIcon size={16} class="text-emerald-500" /></span>
+                <span class="settings-toggle-text"><strong>{translate("保存历史记录")}</strong><small>{translate("记录优化结果，便于稍后查看")}</small></span>
+              </span>
               <Switch
                 checked={draft.history_enabled}
                 disabled={busy}
@@ -497,7 +523,10 @@
               />
             </label>
             <label class="settings-toggle">
-              <span><strong>{translate("隐私模式")}</strong><small>{translate("减少本地内容保留")}</small></span>
+              <span class="settings-toggle-lead">
+                <span class="settings-toggle-icon" aria-hidden="true"><Lock size={16} class="text-gray-500" /></span>
+                <span class="settings-toggle-text"><strong>{translate("隐私模式")}</strong><small>{translate("减少本地内容保留")}</small></span>
+              </span>
               <Switch
                 checked={draft.privacy_mode}
                 disabled={busy}
@@ -543,11 +572,14 @@
             <p class="settings-feedback" role="status" aria-live="polite">{diagnosticNotice ? translate(diagnosticNotice) : ""}</p>
           </section>
         {:else}
-          <h3>{translate("插件")}</h3>
+          <h3><Puzzle size={16} aria-hidden="true" /><span>{translate("插件")}</span></h3>
           <div class="settings-choice-list">
             {#each plugins as plugin}
               <label class="settings-toggle">
-                <span><strong>{translate(plugin.label)}</strong><small>{translate(pluginDescription(plugin))}</small></span>
+                <span class="settings-toggle-lead">
+                  <span class="settings-toggle-icon" aria-hidden="true"><Puzzle size={16} class="text-gray-500" /></span>
+                  <span class="settings-toggle-text"><strong>{translate(plugin.label)}</strong><small>{translate(pluginDescription(plugin))}</small></span>
+                </span>
                 <Switch
                   checked={draft.enabled_plugins.includes(plugin.id)}
                   disabled={busy}
@@ -588,7 +620,8 @@
     </div>
   </div>
 
-  <div class="settings-footer" slot="footer">
+  {#snippet footer()}
+  <div class="settings-footer">
     <p class="settings-save-notice" aria-live="polite">{notice ? translate(notice) : ""}</p>
     {#if variant !== "page"}
       <Button variant="outline" size="sm" disabled={busy} onclick={onClose}>{translate("取消")}</Button>
@@ -597,6 +630,7 @@
       {translate(busy ? "正在保存" : "保存设置")}
     </Button>
   </div>
+  {/snippet}
 </DialogShell>
 
 <style>

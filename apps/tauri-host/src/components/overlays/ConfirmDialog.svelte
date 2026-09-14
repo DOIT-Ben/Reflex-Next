@@ -29,10 +29,14 @@
   });
 </script>
 
-<DialogShell title={title} description={description} z={80} size="sm">
-    <span class="confirm-icon warning" aria-hidden="true"><TriangleAlert size={19} strokeWidth={2} /></span>
-    <div class="confirm-actions">
-      <Button variant="outline" size="sm" bind:ref={cancelButton} onclick={onCancel}>{cancelLabel}</Button>
-      <Button variant={danger ? "destructive" : "default"} size="sm" onclick={onConfirm}>{confirmLabel}</Button>
-    </div>
-  </DialogShell>
+<!-- CC Switch 确认框形态：图标与标题同行，按钮放 footer 按钮带并使用默认尺寸 -->
+{#snippet icon()}
+  <TriangleAlert size={18} strokeWidth={2} class={danger ? "text-destructive" : "text-blue-500"} />
+{/snippet}
+
+<DialogShell title={title} description={description} z={80} size="sm" {icon}>
+  {#snippet footer()}
+    <Button variant="outline" bind:ref={cancelButton} onclick={onCancel}>{cancelLabel}</Button>
+    <Button variant={danger ? "destructive" : "default"} onclick={onConfirm}>{confirmLabel}</Button>
+  {/snippet}
+</DialogShell>

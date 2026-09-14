@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import Search from "@lucide/svelte/icons/search";
   import { Button } from "@/components/ui/button";
   import { cn } from "@/utils.js";
@@ -17,17 +18,35 @@
     onSelect: (id: string) => void;
     onCommand?: () => void;
     actions?: Snippet;
+    /** 子视图形态（对齐 CC Switch）：左侧换成「← 返回 + 页面标题」 */
+    subView?: { title: string; onBack: () => void };
   }
 
-  let { items, activeId, providerLabel = "", onSelect, onCommand, actions }: Props = $props();
+  let { items, activeId, providerLabel = "", onSelect, onCommand, actions, subView }: Props = $props();
 </script>
 
 <!-- 顶部工具栏：与 CC Switch 同构（品牌 + bg-muted 圆角分段快捷导航 + 状态/命令入口） -->
 <header class="app-toolbar">
-  <div class="app-toolbar-brand">
-    <span class="app-mark" aria-hidden="true">R</span>
-    <strong>Reflex</strong>
-  </div>
+  {#if subView}
+    <div class="app-toolbar-subview">
+      <Button
+        variant="outline"
+        size="icon-sm"
+        class="rounded-md"
+        aria-label="返回"
+        title="返回"
+        onclick={subView.onBack}
+      >
+        <ArrowLeft size={15} strokeWidth={2} />
+      </Button>
+      <h1 class="toolbar-subtitle">{subView.title}</h1>
+    </div>
+  {:else}
+    <div class="app-toolbar-brand">
+      <span class="app-mark" aria-hidden="true">R</span>
+      <strong>Reflex</strong>
+    </div>
+  {/if}
 
   <div class="toolbar-shortcuts">
     {#each items as item (item.id)}

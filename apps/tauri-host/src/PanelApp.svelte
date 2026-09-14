@@ -7,7 +7,7 @@
     type TauriHostApi
   } from "./domain/coreBridge";
   import { createTauriHostApi } from "./domain/tauriHostApi";
-  import { applyDocumentTheme, type ThemeChoice } from "./domain/themeApply";
+  import { applyDocumentTheme, watchSystemTheme, type ThemeChoice } from "./domain/themeApply";
   import { Button } from "@/components/ui/button";
   import { Textarea } from "@/components/ui/textarea";
   import X from "@lucide/svelte/icons/x";
@@ -94,7 +94,13 @@
       bridge = createDemoCoreBridge();
     }
     dark = config?.theme === "dark" || (config?.theme !== "light" && systemDark);
-    applyDocumentTheme((config?.theme ?? (systemDark ? "dark" : "light")) as ThemeChoice);
+    const themeChoice = (config?.theme ?? (systemDark ? "dark" : "light")) as ThemeChoice;
+    applyDocumentTheme(themeChoice);
+    // system 档下跟随 OS 深浅实时切换
+    watchSystemTheme((matches) => {
+      dark = themeChoice === "dark" || (themeChoice !== "light" && matches);
+      applyDocumentTheme(themeChoice);
+    });
     window.addEventListener("focus", onPanelFocus);
     window.addEventListener("keydown", onPanelKeydown);
     await onPanelFocus();

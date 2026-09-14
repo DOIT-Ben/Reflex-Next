@@ -131,8 +131,10 @@
       {/if}
     </div>
 
-    <footer slot="footer">
+    {#snippet footer()}
+    <footer>
       {#if state.phase === "running"}<Button variant="outline" onclick={onCancel}>{translate("停止")}</Button>
       {:else}<Button variant="outline" disabled={!batchCanExport(state)} onclick={onExport}>{translate("导出结果")}</Button><Button variant="default" size="sm" disabled={!state.items.length} onclick={onRun}>{translate("开始处理")}</Button>{/if}
     </footer>
+    {/snippet}
 </DialogShell>

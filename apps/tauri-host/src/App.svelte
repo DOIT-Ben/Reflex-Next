@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { setTranslator } from "./domain/i18nStore";
-  import { applyDocumentTheme, type ThemeChoice } from "./domain/themeApply";
+  import { applyDocumentTheme, watchSystemTheme, type ThemeChoice } from "./domain/themeApply";
   import FeedbackDialog from "./components/feedback/FeedbackDialog.svelte";
   import FeedbackPromptDialog from "./components/feedback/FeedbackPromptDialog.svelte";
   import FirstRunDialog from "./components/onboarding/FirstRunDialog.svelte";
@@ -501,7 +501,10 @@
   $: uiLanguage = (settingsDraft.language === "en-US" || $persistedConfig?.language === "en-US"
     ? "en-US"
     : "zh-CN") as UiLanguage;
-  $: applyDocumentTheme(settingsDraft.theme as ThemeChoice);
+  // system 档跟随 OS 深浅翻转实时重放（对齐 CC Switch 的 theme-provider）
+  $: activeTheme = (settingsDraft.theme as ThemeChoice) ?? "system";
+  $: applyDocumentTheme(activeTheme);
+  onMount(() => watchSystemTheme(() => applyDocumentTheme(activeTheme)));
   $: tr = (source, values = {}) => translate(uiLanguage, source, values);
   $: setTranslator(tr);
   $: settingsProviderModels = providerModels(settingsDraft.default_provider, $providerOptions);
@@ -1405,6 +1408,11 @@
       providerLabel={tr(providerName(state.requestDraft.provider, $providerOptions))}
       onSelect={handleNavigation}
       onCommand={openCommandPalette}
+      subView={activeView === "history"
+        ? { title: tr("历史记录"), onBack: () => handleNavigation("workbench") }
+        : activeView === "settings"
+          ? { title: tr("设置"), onBack: () => handleNavigation("workbench") }
+          : undefined}
     />
 
     <div class="shell-main">

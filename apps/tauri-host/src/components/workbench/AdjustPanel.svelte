@@ -185,10 +185,12 @@
     </div>
   </div>
 
-  <div slot="footer" class="adjust-footer">
+  {#snippet footer()}
+  <div class="adjust-footer">
     <Button variant="outline" onclick={onCancel}>{translate("取消")}</Button>
     <Button variant="default" onclick={onApply}>{translate("应用")}</Button>
   </div>
+  {/snippet}
 </DialogShell>
 
 <style>

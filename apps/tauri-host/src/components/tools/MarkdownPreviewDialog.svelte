@@ -46,8 +46,10 @@
       {/if}
     </section>
   </div>
-  <footer slot="footer">
+  {#snippet footer()}
+  <footer>
     {#if state.phase === "error"}<Button variant="outline" onclick={onRetry}>{translate("重试")}</Button>{/if}
     <Button variant="default" size="sm" onclick={onClose}>{translate("关闭")}</Button>
   </footer>
+  {/snippet}
 </DialogShell>

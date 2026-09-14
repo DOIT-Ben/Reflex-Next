@@ -16,6 +16,10 @@
     autofocusClose?: boolean;
     closeOnBackdrop?: boolean;
     showClose?: boolean;
+    icon?: import("svelte").Snippet;
+    children?: import("svelte").Snippet;
+    actions?: import("svelte").Snippet;
+    footer?: import("svelte").Snippet;
   }
 
   let {
@@ -29,7 +33,11 @@
     contentClass = "",
     autofocusClose = true,
     closeOnBackdrop = false,
-    showClose = true
+    showClose = true,
+    icon = undefined,
+    children = undefined,
+    actions = undefined,
+    footer = undefined
   }: Props = $props();
 
   let closeButton = $state<HTMLButtonElement | null>(null);
@@ -105,11 +113,11 @@
   >
     <header>
       <div>
-        <h2>{title}</h2>
+        <h2>{#if icon}<span class="ui-dialog-title-icon" aria-hidden="true">{@render icon()}</span>{/if}{title}</h2>
         {#if description}<p>{description}</p>{/if}
       </div>
       <div class="ui-dialog-header-actions">
-        <slot name="actions" />
+        {@render actions?.()}
         {#if onClose && showClose && variant !== "page"}
           <Button
             variant="ghost"
@@ -125,10 +133,10 @@
       </div>
     </header>
     <div class={`ui-dialog-content ${contentClass}`}>
-      <slot />
+      {@render children?.()}
     </div>
-    {#if $$slots.footer}
-      <footer><slot name="footer" /></footer>
+    {#if footer}
+      <footer>{@render footer()}</footer>
     {/if}
     </section>
   </div>
@@ -187,9 +195,16 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 16px;
-    padding: 16px 20px;
-    background: color-mix(in srgb, var(--surface, #f4f4f5) 60%, var(--page, #fff));
+    padding: 20px 24px;
+    /* CC Switch 的 header/footer 色带：bg-muted/20 */
+    background: hsl(var(--muted) / 0.2);
     border-bottom: 1px solid hsl(var(--border));
+  }
+
+  /* 整页形态（设置）：页头保持白底，不铺灰带 */
+  .ui-dialog-shell.page > header,
+  .ui-dialog-shell.page > footer {
+    background: transparent;
   }
 
   .ui-dialog-shell h2,
@@ -204,6 +219,15 @@
     letter-spacing: -0.01em;
   }
 
+  /* 标题行内图标（CC Switch 确认框形态：图标与标题同行） */
+  .ui-dialog-title-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    margin-right: 8px;
+    vertical-align: -3px;
+  }
+
   .ui-dialog-shell header p {
     margin-top: 6px;
     color: hsl(var(--muted-foreground));
@@ -214,7 +238,7 @@
   .ui-dialog-content {
     flex: 1 1 auto;
     min-height: 0;
-    padding: 16px 20px;
+    padding: 16px 24px;
     overflow: auto;
   }
 
@@ -224,8 +248,8 @@
     align-items: center;
     justify-content: flex-end;
     gap: 8px;
-    padding: 16px 20px;
-    background: color-mix(in srgb, var(--surface, #f4f4f5) 60%, var(--page, #fff));
+    padding: 20px 24px;
+    background: hsl(var(--muted) / 0.2);
     border-top: 1px solid hsl(var(--border));
   }
 

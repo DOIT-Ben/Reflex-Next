@@ -27,8 +27,10 @@
       </article>
     {/each}
   </div>
-  <footer slot="footer" class="plugin-footer">
+  {#snippet footer()}
+  <footer class="plugin-footer">
     <span>{translate("3 项内置能力")}</span>
     <Button variant="default" size="sm" onclick={onManage}>{translate("管理设置")}</Button>
   </footer>
+  {/snippet}
 </DialogShell>

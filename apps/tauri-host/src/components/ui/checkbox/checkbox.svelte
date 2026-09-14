@@ -17,7 +17,7 @@
 	bind:ref
 	data-slot="checkbox"
 	class={cn(
-		"border-input dark:bg-input/30 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground dark:data-[state=checked]:bg-primary data-[state=checked]:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive peer flex size-4 shrink-0 items-center justify-center rounded-[4px] border shadow-xs transition-shadow outline-none disabled:cursor-not-allowed disabled:opacity-50",
+		"border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive peer grid size-4 shrink-0 place-content-center rounded-sm border shadow-none transition-shadow outline-none disabled:cursor-not-allowed disabled:opacity-50",
 		className
 	)}
 	bind:checked
@@ -27,9 +27,9 @@
 	{#snippet children({ checked, indeterminate })}
 		<div data-slot="checkbox-indicator" class="text-current transition-none">
 			{#if checked}
-				<CheckIcon class="size-3.5" />
+				<CheckIcon class="size-4" />
 			{:else if indeterminate}
-				<MinusIcon class="size-3.5" />
+				<MinusIcon class="size-4" />
 			{/if}
 		</div>
 	{/snippet}

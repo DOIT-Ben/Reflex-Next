@@ -25,7 +25,7 @@
   {:else if !detail}<p class="history-state" role="status" aria-live="polite">{translate("正在加载详情...")}</p>
   {:else if typeof detail.error === "string"}<p class="history-state error" role="alert">{translate(detail.error)}</p>
   {:else}
-    <div class="detail-actions history-rating"><span>{translate("评分")}</span>{#each [1, 2, 3, 4, 5] as score}<button type="button" aria-label={`${translate("评分")} ${score}`} aria-pressed={detail.rating === score} onclick={() => onRate(score)}>{score}</button>{/each}<Button variant="ghost" size="icon-sm" aria-label={translate("删除当前历史记录")} title={translate("删除当前历史记录")} onclick={onDelete}><Trash2 size={15} strokeWidth={2} /></Button></div>
+    <div class="detail-actions history-rating"><span>{translate("评分")}</span>{#each [1, 2, 3, 4, 5] as score}<Button variant="outline" size="sm" class={`rating-pill${detail.rating === score ? " rated" : ""}`} aria-pressed={detail.rating === score} aria-label={`${translate("评分")} ${score}`} onclick={() => onRate(score)}>{score}</Button>{/each}<Button variant="ghost" size="icon-sm" class="rating-delete" aria-label={translate("删除当前历史记录")} title={translate("删除当前历史记录")} onclick={onDelete}><Trash2 size={15} strokeWidth={2} /></Button></div>
     <dl class="history-fields">
       <div><dt>{translate("场景")}</dt><dd>{typeof detail.scene === "string" ? sceneLabel(detail.scene) : "-"}</dd></div>
       <div><dt>Provider</dt><dd>{detail.provider ?? "-"}</dd></div>
@@ -34,6 +34,6 @@
     </dl>
     <h2>{translate("原文")}</h2><pre>{detail.input ?? ""}</pre>
     <h2>{translate("结果")}</h2><pre>{detail.output ?? ""}</pre>
-    <div class="detail-actions"><button type="button" onclick={onReuseInput}>{translate("载入原文")}</button><button type="button" onclick={onReuseResult}>{translate("使用结果")}</button></div>
+    <div class="detail-actions"><Button variant="outline" size="sm" class="detail-action" onclick={onReuseInput}>{translate("载入原文")}</Button><Button variant="outline" size="sm" class="detail-action" onclick={onReuseResult}>{translate("使用结果")}</Button></div>
   {/if}
 </article>

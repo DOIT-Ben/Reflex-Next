@@ -45,6 +45,21 @@ export default {
           400: "#409CFF",
           500: "#0A84FF",
           600: "#0060DF"
+        },
+        // CC Switch 把 zinc 灰阶命名为 gray 使用（hover:bg-gray-100、
+        // text-gray-500、dark:hover:bg-gray-800 等配方依赖这组值）
+        gray: {
+          50: "#fafafa",
+          100: "#f4f4f5",
+          200: "#e4e4e7",
+          300: "#d4d4d8",
+          400: "#a1a1aa",
+          500: "#71717a",
+          600: "#636366",
+          700: "#48484A",
+          800: "#3A3A3C",
+          900: "#2C2C2E",
+          950: "#1C1C1E"
         }
       },
       // 字号与行高钉死为项目刻度：meta 12/18、body 14/21、title 18/27，
@@ -105,6 +120,16 @@ export default {
           "Segoe UI",
           "system-ui",
           "sans-serif"
+        ],
+        // CC Switch 的 mono 栈：结果输出、代码与 JSON 场景使用
+        mono: [
+          "ui-monospace",
+          "SFMono-Regular",
+          "SF Mono",
+          "Consolas",
+          "Liberation Mono",
+          "Menlo",
+          "monospace"
         ]
       }
     }

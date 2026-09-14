@@ -24,7 +24,7 @@
     {#each state.items as item (item.id)}
       <button class:active={item.id === state.selectedId} class="history-row" type="button" onclick={() => onSelect(item)}>
         <span class="history-row-main"
-          ><time>{item.created_at}</time><span>{sceneLabel(item.scene)} · {styleLabel(item.style)}</span></span
+          ><span class="history-row-title">{sceneLabel(item.scene)} · {styleLabel(item.style)}</span><time>{item.created_at}</time></span
         ><small>{item.provider} · {item.rating ?? translate("未评分")}</small>
       </button>
     {/each}

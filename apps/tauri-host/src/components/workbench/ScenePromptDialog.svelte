@@ -124,7 +124,8 @@
     {/if}
   </div>
 
-  <footer slot="footer">
+  {#snippet footer()}
+  <footer>
     <div class="scene-footer-inner">
       <div class="scene-summary">
         <span>{translate("已显示 {count} 个场景", { count: visibleScenes.length })}</span>
@@ -138,6 +139,7 @@
       </div>
     </div>
   </footer>
+  {/snippet}
 </DialogShell>
 
 <style>

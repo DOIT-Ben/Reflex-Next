@@ -26,7 +26,9 @@
       <pre>{output}</pre>
     </section>
   </div>
-  <footer slot="footer">
+  {#snippet footer()}
+  <footer>
     <Button variant="default" size="sm" onclick={onClose}>{translate("关闭")}</Button>
   </footer>
+  {/snippet}
 </DialogShell>

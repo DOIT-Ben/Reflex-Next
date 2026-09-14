@@ -87,7 +87,8 @@
     </section>
   </div>
 
-  <footer slot="footer">
+  {#snippet footer()}
+  <footer>
     {#if state.phase === "streaming"}
       <Button variant="outline" onclick={onCancel}>{translate("取消翻译")}</Button>
     {:else}
@@ -98,4 +99,5 @@
       <Button variant="default" size="sm" onclick={onUseResult}>{translate("作为当前结果")}</Button>
     {/if}
   </footer>
+  {/snippet}
 </DialogShell>

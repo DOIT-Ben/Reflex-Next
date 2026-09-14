@@ -68,8 +68,11 @@
     border-color: hsl(var(--border));
   }
 
+  /* preflight 关闭后按钮的 UA 默认 padding 不会归零：
+     不补这条，Switch 轨道会被撑出 6px 内容边距，选中态滑块平移后溢出轨道 */
   button {
     background-color: transparent;
+    padding: 0;
   }
 
   /* 焦点：全应用只有这一条规则，对齐 CC Switch 的
@@ -113,11 +116,6 @@
 
   ::-webkit-scrollbar {
     display: none;
-  }
-
-  *:focus-visible {
-    outline: 2px solid #0a84ff;
-    outline-offset: 2px;
   }
 }
 

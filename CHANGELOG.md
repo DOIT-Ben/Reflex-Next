@@ -22,6 +22,28 @@
 
 ### 修复
 
+- 第二轮对标审查（三子智能体并发 + 逐条真机验证）修掉的硬缺陷：
+  - **关闭 preflight 的按钮 UA padding 漏网**：浏览器默认 `button { padding: 1px 6px }`
+    没被重置，shadcn Switch 轨道被撑出 6px 内容边距，选中态滑块平移 20px 后
+    溢出轨道（视觉上是一个月牙）；在 `app.css` 基座补 `padding: 0` 后，
+    滑块回到 2px 内缩、两端对齐（真机实测 track 44×24、thumb 20×20、选中 x=22）；
+  - **暗色工作台被玻璃白罩刷灰**：遗留「White studio glass」层用
+    `rgb(255 255 255 / 40%) !important` 涂 `result-pane::before`/`input-pane::before`/
+    `result-body`，亮色下不可见、暗色下整个结果区变成一片灰（`elementsFromPoint`
+    实锤）；删除白罩与 `result-body` 渐变后暗色工作台恢复干净实色；
+  - **卡片表面写死 `#fff`/`#e4e7eb` 字面量**：白页改造时留下的 8 处字面量在暗色下
+    仍是白面板（设置页白底配亮字直接不可读），全部换成 `hsl(var(--background))` /
+    `var(--line)` 令牌——亮色仍是纯白，暗色自动跟随；
+  - **DialogShell 混用 `<slot>` 与 `{@render}`**：Svelte 5 禁止同组件混用，
+    9 个调用方还停在旧 `slot="footer"` 写法；全部迁移到 snippet（`children`/
+    `actions`/`footer`），`svelte-check` 的 17 个级联错误归零；
+  - **评分按钮在组件上用 `class:` 指令**：Svelte 5 不允许，改为模板字符串 class；
+  - 设置页 h3 被第三层遗留规则改回 `font-weight: 700 / margin 20px`（与
+    CC 分节头配方打架），删除该层后统一为 500/16px；
+  - 设置页脚的浅色渐变横带在暗色下漏白，改为透明；
+  - 清理死样式：`.confirm-icon.warning`、`.confirm-actions`、
+    `.desktop-hotkey.checkbox-row`（标记已迁移后无引用）。
+
 - 依赖审计门禁（release 级 `run_heavy` 才跑）此前无法通过：两个 npm 依赖的许可证
   没被策略分类。`svelte-toolbelt@0.10.6` 上游 `package.json` 缺 `license` 字段，
   锁文件里是空值被判为 `unknown`（实为 MIT，按仓库既有做法补
@@ -95,6 +117,33 @@
   边框可见、圆角收敛（16/12/8px），主色由灰蓝改为高辨识度蓝色。
 
 ### 变更
+
+- 第二轮 CC Switch 对齐（三子智能体审查后的组件与版面批改）：
+  - **设置页开关行改造为 CC 的 toggle-row 卡片**（`toggle-row.tsx` 配方逐字对齐）：
+    左侧 32px 图标座（`bg-background` + 1px ring）+ 标题（14/500）+ 说明
+    （12/400 muted）、右侧 Switch，整行 `bg-card/50` 卡片、16px 内边距、
+    hover 提亮到 `bg-muted/50`；安全与隐私 5 行、插件行、开机自启行全部套用，
+    每行配语义色 lucide 图标（自启 Power 橙、改进计划 Sparkles 蓝、反馈
+    MessageSquare 琥珀、历史 History 绿等，同 CC 的着色思路）；
+  - **分节标题对齐 CC 配方**：图标（`h-4 w-4 text-primary`：Cpu/SlidersHorizontal/
+    ClipboardList/ShieldCheck/Puzzle）+ 标题 + `border-b border-border/40` 底边线；
+  - 12 个 shadcn 原语逐字改写为 CC Switch 的 registry 配方（Button default/outline/
+    ghost、Switch、Textarea、Tooltip 无箭头 + 方向性入场、Checkbox、Badge、
+    Select 触发器/Label、Popover、Dropdown checkbox/radio/label），并清出
+    26 处 Tailwind v4 死类（`shadow-xs`/`outline-hidden`/`rounded-xs`/
+    `field-sizing-content`/裸 `data-highlighted:`——在 v3 下不生成任何 CSS）；
+  - **主题跟随 OS 实时切换**：新增 `watchSystemTheme`（`matchMedia` change 监听），
+    主窗口与快捷面板在 `theme=system` 档下随系统深浅即时重放（对齐 CC 的
+    theme-provider）；hover 底色改用 `color-mix(var(--muted))` 主题自适应；
+  - 版面批改：四张窗口级卡片（输入列/结果面板/设置面板/历史工作区）圆角
+    12→14px（xl，嵌套内层 12 的同心规则）、历史左栏定宽 320px、历史行语义重排
+    （标题主文本 + 时间 meta）、状态栏 5 处硬编码色换令牌、确认弹窗重建为
+    CC 形态（图标座 + 标题同行 + footer snippet）、工具栏支持二级视图返回
+    （历史/设置页显示「← 标题」）；
+  - 新增三条架构契约测试：禁 Tailwind v4 死类、裸 `<button>` 只减不增
+    （存量 6 文件进白名单）、主题双轨（显式 dark + system 跟随 OS）必须同时在；
+  - 附带清理：`app.css` 重复的焦点规则、`.editor-frame` 圆角字面量改令牌、
+    圆角注释把 kbd 标注为本项目自有扩展（CC 无此元素）。
 
 - CI 依赖的 GitHub Actions 升到当前主版本，消除 runner 上的
   「Node.js 20 is deprecated，以下 action 被强制跑在 Node.js 24」告警：

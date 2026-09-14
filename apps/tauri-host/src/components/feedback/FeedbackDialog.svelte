@@ -148,7 +148,8 @@
     </div>
   </div>
 
-  <footer slot="footer">
+  {#snippet footer()}
+  <footer>
     <div class="feedback-footer-inner">
       <span class:error={notice?.includes("失败")}>{notice ? translate(notice) : ""}</span>
       <div class="feedback-footer-actions">
@@ -159,6 +160,7 @@
       </div>
     </div>
   </footer>
+  {/snippet}
 </DialogShell>
 
 <style>
@@ -183,7 +185,7 @@
   .privacy-options input { width: 15px; min-height: 15px; }
   .privacy-note, .notice { margin: 0; color: var(--muted); font-size: var(--font-meta); line-height: var(--leading-meta); }
   .feedback-footer-inner { display: flex; flex: 1 1 auto; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; }
-  .feedback-footer-inner > span { min-width: 0; color: #287a52; font-size: var(--font-meta);  line-height: var(--leading-meta); }
+  .feedback-footer-inner > span { min-width: 0; color: var(--success); font-size: var(--font-meta);  line-height: var(--leading-meta); }
   .feedback-footer-inner > span.error { color: var(--danger); }
   .feedback-footer-actions { display: flex; flex: 0 0 auto; gap: 8px; }
   .feedback-footer-actions button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: 6px; padding: 0 14px; border-radius: 8px; }

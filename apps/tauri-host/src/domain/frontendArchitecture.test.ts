@@ -234,7 +234,11 @@ describe("production frontend architecture", () => {
     expect(scenePromptSource).toContain('translate("当前场景：{scene}"');
 
     const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
-    expect(styles).toContain(".settings-content label.settings-toggle > span");
+    // CC Switch toggle-row：bg-card/50 卡片 + 图标座 + 底边线分节头
+    expect(styles).toContain(".settings-content .settings-toggle .settings-toggle-icon");
+    expect(styles).toContain(".settings-content .settings-toggle .settings-toggle-text");
+    expect(styles).toMatch(/\.settings-toggle \{[^}]*hsl\(var\(--card\) \/ 0\.5\)/);
+    expect(styles).toMatch(/\.settings-content h3 \{[^}]*border-bottom: 1px solid hsl\(var\(--border\) \/ 0\.4\)/);
 
     const tauriAdapterSource = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "tauriHostApi.ts"),
@@ -391,15 +395,29 @@ describe("production frontend architecture", () => {
     expect(styles).toMatch(/\.app-shell\.outer-contour \.workbench-grid \{\s*gap: 16px;/);
     expect(styles).toMatch(/\.app-shell\.outer-contour \.workbench-surface \{\s*padding: 16px 24px 24px;/);
 
-    // 表面层次：卡片 = 白底 + 描边 + lg 圆角，静止无阴影
-    expect(styles).toMatch(/\.app-shell\.outer-contour \.workbench-grid > \.result-pane \{[^}]*background: #fff;[^}]*border: 1px solid var\(--line\);[^}]*border-radius: var\(--radius-lg\);[^}]*box-shadow: none;/s);
+    // 表面层次：卡片 = 页面底色令牌 + 描边 + xl 圆角（14，嵌套内层 12），静止无阴影
+    expect(styles).toMatch(/\.app-shell\.outer-contour \.workbench-grid > \.result-pane \{[^}]*background: hsl\(var\(--background\)\);[^}]*border: 1px solid var\(--line\);[^}]*border-radius: var\(--radius-xl\);[^}]*box-shadow: none;/s);
 
     // 圆角刻度对齐 CC Switch：md 8 / lg 12 / xl 14
     expect(styles).toMatch(/--radius-sm: 6px;\s*--radius-md: 8px;\s*--radius-lg: 12px;\s*--radius-xl: 14px;/);
 
     // 圆角不再出现历史遗留的碎片取值
     const radii = [...styles.matchAll(/border-radius\s*:\s*([^;}\n]+)/g)].map((m) => m[1].trim());
-    const allowed = new Set(["0", "4px", "6px", "8px", "12px", "14px", "50%", "999px", "var(--radius-lg)", "var(--radius-md)"]);
+    const allowed = new Set([
+      "0",
+      "4px",
+      "6px",
+      "8px",
+      "12px",
+      "14px",
+      "50%",
+      "999px",
+      "var(--radius)",
+      "var(--radius-md)",
+      "var(--radius-lg)",
+      "var(--radius-xl)",
+      "calc(var(--radius) + 4px)"
+    ]);
     expect(radii.filter((value) => !value.startsWith("0 ") && !allowed.has(value))).toEqual([]);
   });
 
@@ -726,5 +744,62 @@ describe("production frontend architecture", () => {
 
     expect(spacingOffenders).toEqual([]);
     expect(radiusOffenders).toEqual([]);
+  });
+
+  it("keeps Tailwind v3-compatible class names in production source", () => {
+    // 这些是 Tailwind v4 的类名/语法：在 v3 下不生成任何 CSS，写了等于没写
+    const deadTw4Tokens: Array<[RegExp, string]> = [
+      [/shadow-xs/, "shadow-xs (v3 应写 shadow-sm)"],
+      [/outline-hidden/, "outline-hidden (v3 应写 outline-none)"],
+      [/rounded-xs/, "rounded-xs (v3 应写 rounded-sm)"],
+      [/field-sizing-content/, "field-sizing-content (v3 无此能力)"],
+      [/data-highlighted:/, "data-highlighted: (v3 应写 data-[highlighted]:)"],
+      [/\*:\[svg\]:/, "*:[svg]: (v3 不支持任意子选择器变体)"]
+    ];
+    const offenders: string[] = [];
+    for (const { path, source } of productionFiles) {
+      for (const [pattern, reason] of deadTw4Tokens) {
+        if (pattern.test(source)) offenders.push(`${path}: ${reason}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps raw <button> elements out of business components", () => {
+    // shadcn Button 是唯一按钮原语；ui 目录内的原语实现（button/switch 等）不受限。
+    // 名单是存量迁移欠账，只许减少不许增加。
+    const legacyRawButtonAllowlist = new Set([
+      "src/components/onboarding/FirstRunDialog.svelte",
+      "src/components/tools/TranslationDialog.svelte",
+      "src/components/tools/TemplateManagerDialog.svelte",
+      "src/components/tools/BatchDialog.svelte",
+      "src/components/tools/MarkdownPreviewDialog.svelte",
+      "src/components/history/HistoryList.svelte"
+    ]);
+    const rawButtonUsers = productionFiles
+      .filter(({ path }) => path.endsWith(".svelte") && !path.includes("components/ui/"))
+      .filter(({ source }) => /<button[\s>]/.test(source))
+      .map(({ path }) => path);
+    expect(rawButtonUsers.filter((path) => !legacyRawButtonAllowlist.has(path))).toEqual([]);
+  });
+
+  it("keeps the theme system dual-track (explicit choice + OS follow) (CC Switch parity)", () => {
+    const styles = readFileSync(join(sourceRoot, "styles.css"), "utf8");
+    // 显式轨道：data-theme=dark 直接命中；跟随轨道：system + prefers-color-scheme
+    expect(styles).toContain(':root[data-theme="dark"]');
+    expect(styles).toMatch(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[\s\S]*\[data-theme="system"\]/);
+
+    const themeApplySource = readFileSync(
+      join(sourceRoot, "domain", "themeApply.ts"),
+      "utf8"
+    );
+    expect(themeApplySource).toContain("export function watchSystemTheme");
+    expect(themeApplySource).toContain("matchMedia");
+
+    // 主窗口与快捷面板都必须订阅系统主题切换，否则 OS 换肤后 UI 不跟随
+    for (const entry of ["App.svelte", "PanelApp.svelte"]) {
+      const source = readFileSync(join(sourceRoot, entry), "utf8");
+      expect(source).toContain("watchSystemTheme(");
+    }
   });
 });
