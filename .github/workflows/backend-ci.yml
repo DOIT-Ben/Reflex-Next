@@ -28,22 +28,22 @@ jobs:
       UV_FROZEN: "1"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10
         with:
           version: "0.11.13"
           enable-cache: true
           cache-dependency-glob: "**/uv.lock"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -55,7 +55,7 @@ jobs:
       - name: Cache pinned Cargo tools
         id: cargo-tools-cache
         if: ${{ inputs.run_heavy == true }}
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/cargo-audit.exe
@@ -122,7 +122,7 @@ jobs:
 
       - name: Upload SBOM evidence
         if: ${{ inputs.run_heavy == true }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reflex-next-sbom-${{ github.sha }}
           path: ${{ runner.temp }}\reflex-sbom

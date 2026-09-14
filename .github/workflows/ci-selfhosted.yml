@@ -27,7 +27,7 @@ jobs:
             'HTTP_PROXY=http://127.0.0.1:7897' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
           }
           Write-Host "proxy_ok=$proxyOk"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install pytest (host Python)
         shell: powershell
