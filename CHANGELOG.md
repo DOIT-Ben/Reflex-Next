@@ -91,10 +91,12 @@
 - CI 依赖的 GitHub Actions 升到当前主版本，消除 runner 上的
   「Node.js 20 is deprecated，以下 action 被强制跑在 Node.js 24」告警：
   `actions/checkout` v4→v7、`actions/setup-node` v4→v7、`actions/setup-python` v5→v7、
-  `actions/upload-artifact` v4→v7、`actions/cache` v4→v6、`astral-sh/setup-uv` v6→v10；
-  升级前逐个核对了 workflow 实际用到的输入（`python-version`/`node-version`/`cache`/
-  `cache-dependency-path`/`version`/`enable-cache`/`cache-dependency-glob`/`name`/
-  `path`/`if-no-files-found`/`retention-days`）在目标版本里仍然存在；
+  `actions/upload-artifact` v4→v7、`actions/cache` v4→v6、`astral-sh/setup-uv` v6→v10.1.0
+  （setup-uv 自 v7 起不再发布浮动大版本标签，必须写完整版本号，否则报
+  `unable to find version v10`）；升级前逐个核对了 workflow 实际用到的输入
+  （`python-version`/`node-version`/`cache`/`cache-dependency-path`/`version`/
+  `enable-cache`/`cache-dependency-glob`/`name`/`path`/`if-no-files-found`/
+  `retention-days`）在目标版本里仍然存在；
 - 按子智能体的对标审查返修一轮（逐条带实测证据，19 项）。修掉的严重项：
   设置页页头/正文/页脚横向错位 20px（`.ui-dialog-content` 的 20px 内边距没在
   page 形态归零，导致页头在 24px、正文在 44px）；历史左右两栏空白态内缩

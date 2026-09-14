@@ -36,7 +36,9 @@ jobs:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        # setup-uv 自 v7 起不再发布浮动大版本标签，写 @v10 会 "unable to find version v10"，
+        # 必须写完整版本号。
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           version: "0.11.13"
           enable-cache: true
