@@ -22,6 +22,14 @@
 
 ### 修复
 
+- 依赖审计门禁（release 级 `run_heavy` 才跑）此前无法通过：两个 npm 依赖的许可证
+  没被策略分类。`svelte-toolbelt@0.10.6` 上游 `package.json` 缺 `license` 字段，
+  锁文件里是空值被判为 `unknown`（实为 MIT，按仓库既有做法补
+  `licenses/package_overrides/npm` 条目，与 `argparse@2.0.1 -> Python-2.0` 等同款）；
+  `caniuse-lite` 的真实许可证是 `CC-BY-4.0`（autoprefixer / browserslist /
+  lightningcss 的构建期依赖，不进产物），此前未列入白名单被判为 `unclassified`，
+  现加入 `licenses/allowed_expressions/npm`。该许可证不在策略的
+  `forbidden_patterns`（AGPL/GPL3/SSPL/BUSL/Commons Clause/Elastic）之内；
 - 空状态收敛为唯一配方：`result-pane` 历史上存在 4 代互相覆盖的 `.center-state`
   规则（12/24、32px + 紫色径向光晕、回退到 12px、窗口作用域 700 字重），
   最终工作台渲染成 14px/12px 无边框、历史视图却是 18px/14px 虚线卡。删除全部
